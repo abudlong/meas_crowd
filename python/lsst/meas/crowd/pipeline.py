@@ -3,8 +3,10 @@
 # Developed for the LSST Data Management System.
 # See the COPYRIGHT file at the top-level directory of this distribution.
 
-"""Gaia-seeded, adaptive, iterative joint PSF-fitting pipeline (inner / outer loops, saturated and
-bright-star handling, PSF refinement, extended sources, residual diagnostics).
+"""Gaia-seeded, adaptive, iterative joint PSF-fitting pipeline.
+
+Inner and outer loops, saturated and bright-star handling, PSF refinement, extended sources
+and residual diagnostics.
 """
 
 import math
@@ -223,6 +225,7 @@ _IGNORED = {"n_outer_iterations", "n_inner_iterations", "outer_convergence_frac"
 
 
 def _params(cfg):
+    """Merge a configuration with the fitLib and seeded-pipeline defaults (unknown keys raise)."""
     P = dict(_LIB_DEFAULTS)
     P.update(SEEDED_DEFAULTS)
     unknown = set(cfg) - set(P) - _IGNORED
@@ -282,6 +285,7 @@ def _set_bf_fluxes(xy, amps):
 
 
 def _bf_reset():
+    """Clear the brightness term and the elliptical-source shapes, and the stamp cache."""
     _BF.update(r=None, prof=None, L0=None, tree=None, lf=None)
     _ELLIP.clear()
     _STAMP_CACHE.clear()
@@ -291,9 +295,11 @@ _ELLIP = {}       # source uid -> (axis ratio q <= 1, position angle [rad]) of a
 
 
 def _ellip_kernel(sa, q, th, prof="gauss"):
-    """Normalised elliptical profile: 'gauss' (major sigma sa) or 'exp' (exponential disk, major
-    scale length sa); minor axis q*sa, major axis at angle th.  The exponential is integrated over
-    5x5 sub-pixels (its centre is a cusp)."""
+    """Return a normalised elliptical 'gauss' or 'exp' profile.
+
+    Major-axis scale ``sa`` [px], axis ratio ``q``, major axis at angle ``th``.  The
+    exponential is integrated over 5x5 sub-pixels because its centre is a cusp.
+    """
     sa = max(sa, 0.15)
     sb = max(q * sa, 0.15)
     h = int(np.ceil((4 if prof == "gauss" else 7) * sa)) + 1
@@ -311,6 +317,7 @@ def _ellip_kernel(sa, q, th, prof="gauss"):
 
 
 def _set_ext_rule(S):
+    """Register the extended sources' broadening (size, shape, profile) with the stamp builder."""
     m = S["ext"] > 0
     ell = [tuple(_ELLIP.get(int(u), (1.0, 0.0, "gauss"))) + ("gauss",) for u in S["uid"][m]]
     qs = np.array([e[0] for e in ell])
@@ -321,22 +328,55 @@ def _set_ext_rule(S):
 
 
 def clear_stamp_cache():
+    """Empty the PSF stamp cache and the stamp-size rule.
+
+    Call after changing the PSF in place; a new PSF object gets its own cache automatically.
+    """
     _STAMP_CACHE.clear()
     _SIZE_RULE["tree"] = None
 
 
 def _crop_stamp(arr, fx0, fy0, x, y, half):
-    """Zero the stamp beyond radius `half` around (x, y) with a cosine taper over the outer
-    quarter.  The array keeps its shape (callers rely on it); zeros never enter the fit."""
+    """Zero a stamp beyond radius ``half`` around (x, y), with a cosine taper over the outer quarter.
+
+    The array keeps its shape (callers rely on it); the zeros never enter the fit.
+    """
     yy, xx = np.mgrid[fy0:fy0 + arr.shape[0], fx0:fx0 + arr.shape[1]]
     w = np.clip((half - np.hypot(xx - x, yy - y)) / (0.25 * half), 0.0, 1.0)
     return arr * (0.5 - 0.5 * np.cos(np.pi * w))
 
 
 def set_stamp_sizes(xy, amps, psf, point, noise, fwhm, floor_sigma=0.05, tol=1.5):
-    """Choose a stamp half-width per source: the smallest of a few tiers beyond which
-    amp * PSF stays below floor_sigma * noise.  Sources not in this list (new detections)
-    get the full stamp.  Returns the half-widths (-1 = full)."""
+    """Choose a PSF stamp half-width per source.
+
+    The smallest of a few tiers beyond which ``amp * PSF`` stays below ``floor_sigma * noise``,
+    so faint sources get small stamps.  Sources not in the list (new detections) get the full
+    stamp.
+
+    Parameters
+    ----------
+    xy : `numpy.ndarray`
+        Source positions, shape (N, 2).
+    amps : `numpy.ndarray`
+        Source amplitudes.
+    psf : `lsst.afw.detection.Psf`
+        PSF model.
+    point : `lsst.geom.Point2D`
+        Position at which the PSF profile is evaluated.
+    noise : `float`
+        Typical pixel noise.
+    fwhm : `float`
+        PSF FWHM [px].
+    floor_sigma : `float`, optional
+        Crop where the source's wing drops below this many noise sigma.
+    tol : `float`, optional
+        Positions within this many px of a listed source use its stamp size.
+
+    Returns
+    -------
+    half : `numpy.ndarray` [`int`]
+        Half-width per source (-1 = full stamp).
+    """
     xy = np.asarray(xy, float).reshape(-1, 2)
     if floor_sigma is None or not len(xy):
         _SIZE_RULE["tree"] = None
@@ -359,7 +399,7 @@ def set_stamp_sizes(xy, amps, psf, point, noise, fwhm, floor_sigma=0.05, tol=1.5
 
 
 def _psf_stamp_cached(psf, x, y, clip_bbox, taper=None):
-    """Same result as cutout_fit_lib.psf_stamp, cached on the exact (x, y)."""
+    """Return the same result as `fitLib.psf_stamp`, cached on the exact (x, y)."""
     ent = _STAMP_CACHE.get(id(psf))
     if ent is None or ent[0] is not psf:
         ent = (psf, OrderedDict())
@@ -419,7 +459,7 @@ def _psf_stamp_cached(psf, x, y, clip_bbox, taper=None):
 
 
 def _inv_diag(M):
-    """diag(M^-1) of a symmetric positive (semi)definite matrix."""
+    """Return diag(M^-1) of a symmetric positive (semi)definite matrix."""
     try:
         c, low = cho_factor(M, lower=True, check_finite=False)
         Linv = solve_triangular(np.tril(c), np.eye(len(M)), lower=True, check_finite=False)
@@ -429,9 +469,23 @@ def _inv_diag(M):
 
 
 def amp_snr_full_fast(fit, noise_scale=1.0):
-    """Drop-in for cutout_fit_lib.amp_snr_full: S/N = amp / sqrt(diag((A^T W A)^-1)),
-    computed block by block (independent groups of overlapping sources) with Cholesky
-    instead of one dense pinv of the whole matrix."""
+    """Return honest amplitude S/N values, computed block by block.
+
+    Drop-in for `fitLib.amp_snr_full`: ``S/N = amp / sqrt(diag((A^T W A)^-1))``, inverted per
+    independent group of overlapping sources with Cholesky instead of one dense pseudo-inverse.
+
+    Parameters
+    ----------
+    fit : `dict`
+        Joint fit (from `fitLib.joint_psf_fit_diag`).
+    noise_scale : `float`, optional
+        Empirical noise scale dividing the S/N.
+
+    Returns
+    -------
+    snr : `numpy.ndarray`
+        S/N per source.
+    """
     comps, var, good = fit["comps"], fit["variance"], fit["good"]
     n = len(comps)
     pix = -np.ones(good.shape, dtype=np.int64)
@@ -469,9 +523,11 @@ NNLS_MIN_SOURCES = 300            # below this lsq_linear is already fast (often
 
 
 def _nnls_normal(A, b):
-    """Exact bounded (x >= 0) least squares via the normal equations: with N = A^T A = R^T R,
-    ||Ax - b||^2 = ||Rx - c||^2 + const (c = R^-T A^T b), so NNLS runs on an n x n problem
-    instead of the (pixels x n) one."""
+    """Solve bounded (x >= 0) least squares exactly through the normal equations.
+
+    With ``N = A^T A = R^T R``, ``||Ax - b||^2 = ||Rx - c||^2 + const`` (``c = R^-T A^T b``), so
+    NNLS runs on an n x n problem instead of the (pixels x n) one.
+    """
     from scipy.optimize import nnls
     N = (A.T @ A).toarray()
     r = A.T @ b
@@ -492,7 +548,7 @@ def _nnls_normal(A, b):
 
 
 def _lsq_linear_fast(A, b, bounds=(-np.inf, np.inf), **kw):
-    """Patched into cutout_fit_lib: large non-negative joint fits use _nnls_normal."""
+    """Drop-in for scipy's lsq_linear that solves large non-negative joint fits with `_nnls_normal`."""
     from scipy.optimize import OptimizeResult
     from scipy.sparse import issparse
     try:
@@ -510,9 +566,26 @@ def _lsq_linear_fast(A, b, bounds=(-np.inf, np.inf), **kw):
 
 
 def profile(fn, *args, top=30, **kw):
-    """Run fn(*args, **kw) under cProfile and print where the time goes, e.g.
-        runs = cg.profile(cg.run_session_gaia, sess, cfg, max_outer=2)
-    Returns fn's result."""
+    """Run a function under cProfile and print where the time goes.
+
+    For example ``runs = crowd.profile(crowd.run_session_gaia, sess, cfg, max_outer=2)``.
+
+    Parameters
+    ----------
+    fn : callable
+        Function to profile.
+    *args
+        Positional arguments of ``fn``.
+    top : `int`, optional
+        Number of entries printed.
+    **kw
+        Keyword arguments of ``fn``.
+
+    Returns
+    -------
+    result : `object`
+        What ``fn`` returned.
+    """
     import cProfile
     import pstats
     pr = cProfile.Profile()
@@ -533,7 +606,7 @@ _FAST = {"on": True, "cache": {}, "verbose": True}   # fast C++/NumPy stamps for
 
 
 def _fast_for(psf):
-    """FastPsf for a spatially constant PSF that matches psf.computeImage, else None (cached)."""
+    """Return a validated FastPsf for a spatially constant PSF, else None (cached per PSF)."""
     if not _FAST["on"]:
         return None
     ent = _FAST["cache"].get(id(psf))
@@ -569,11 +642,12 @@ def _fast_for(psf):
 
 
 def _box(b):
+    """Convert (xmin, ymin, xmax, ymax) into an `lsst.geom.Box2I`."""
     return L.geom.Box2I(L.geom.Point2I(int(b[0]), int(b[1])), L.geom.Point2I(int(b[2]), int(b[3])))
 
 
 def _raw_psf_stamp(psf, x, y, taper):
-    """Full (unclipped) PSF stamp at (x, y): fast path for constant PSFs, else psf.computeImage."""
+    """Return the full PSF stamp at (x, y): fast path for constant PSFs, else psf.computeImage."""
     fast = _fast_for(psf)
     if fast is not None:
         arr, b = fast.stamp(x, y, (-10 ** 8, -10 ** 8, 10 ** 8, 10 ** 8), taper)
@@ -582,7 +656,7 @@ def _raw_psf_stamp(psf, x, y, taper):
 
 
 def _psf_derivatives_fast(psf, x, y, bbox_clip, eps=0.25):
-    """Drop-in for fitLib.compute_psf_derivatives using the fast path when possible."""
+    """Drop-in for `fitLib.compute_psf_derivatives` that uses the fast path when possible."""
     fast = _fast_for(psf)
     if fast is None:
         return _ORIG["compute_psf_derivatives"](psf, x, y, bbox_clip, eps)
@@ -594,7 +668,10 @@ def _psf_derivatives_fast(psf, x, y, bbox_clip, eps=0.25):
 
 
 def enable_speedups():
-    """Patch cutout_fit_lib with the cached psf_stamp and the fast honest S/N (idempotent)."""
+    """Patch fitLib with the cached / fast PSF stamps, fast S/N and fast NNLS (idempotent).
+
+    Called by the pipeline itself; also speeds up fitLib's own `fitLib.run_cutout_pipeline`.
+    """
     global _HUGE
     if "psf_stamp" not in _ORIG:
         _ORIG["psf_stamp"] = L.psf_stamp
@@ -609,6 +686,7 @@ def enable_speedups():
 
 
 def disable_speedups():
+    """Undo `enable_speedups` and empty the caches."""
     if "psf_stamp" in _ORIG:
         L.psf_stamp = _ORIG["psf_stamp"]
         L.amp_snr_full = _ORIG["amp_snr_full"]
@@ -622,6 +700,12 @@ def disable_speedups():
 # Source state: positions + seed bookkeeping, kept aligned through every filter
 # =====================================================================
 def _state(xy=None, seed=False, gaia=None, gmag=None):
+    """Return a new source state.
+
+    Keys: ``xy`` (N, 2) positions, ``seed`` (Gaia-seeded), ``ext`` (extended-source size, 0 =
+    point source), ``g`` (Gaia G), ``ref`` (Gaia reference position), ``gaia`` (catalogue row),
+    ``uid`` (unique id) and ``next_uid``; all arrays stay aligned through every filter.
+    """
     xy = np.asarray(xy if xy is not None else np.zeros((0, 2)), float).reshape(-1, 2)
     n = len(xy)
     g = np.full(n, np.nan) if gmag is None else np.asarray(gmag, float).reshape(n)
@@ -632,6 +716,7 @@ def _state(xy=None, seed=False, gaia=None, gmag=None):
 
 
 def _take(S, keep):
+    """Return the source state restricted to ``keep`` (index or boolean array)."""
     keep = np.asarray(keep)
     out = {k: S[k][keep] for k in ("xy", "seed", "ext", "g", "ref", "gaia", "uid")}
     out["next_uid"] = S["next_uid"]
@@ -639,6 +724,7 @@ def _take(S, keep):
 
 
 def _add(S, xy_new):
+    """Return the source state with non-Gaia sources appended at ``xy_new``."""
     xy_new = np.asarray(xy_new, float).reshape(-1, 2)
     m = len(xy_new)
     out = dict(xy=np.vstack([S["xy"], xy_new]), seed=np.concatenate([S["seed"], np.zeros(m, bool)]),
@@ -652,10 +738,12 @@ def _add(S, xy_new):
 
 
 def _xy(S):
+    """Return the source positions as a list of (x, y) tuples."""
     return [tuple(p) for p in S["xy"]]
 
 
 def _clamp_seeds(S, max_drift):
+    """Pull Gaia-seeded sources back to within ``max_drift`` px of their Gaia position (in place)."""
     if not max_drift or not S["seed"].any():
         return
     s = S["seed"]
@@ -668,8 +756,37 @@ def _clamp_seeds(S, max_drift):
 
 def estimate_gaia_offset(exposure, S, fwhm, bad_bitmask, noise, min_peak_snr=20.0,
                          min_stars=5, verbose=True):
-    """Median (data centroid - Gaia position) of bright, unsaturated, isolated-ish seeds.
-    Uses a background-subtracted windowed centroid. Returns (dx, dy, n_used)."""
+    """Measure the global offset between the image and the Gaia positions.
+
+    The median (data centroid - Gaia position) of bright, unsaturated, fairly isolated seeds,
+    from background-subtracted windowed centroids.
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        The cutout.
+    S : `dict`
+        Source state with the Gaia seeds (see ``_state``).
+    fwhm : `float`
+        PSF FWHM [px].
+    bad_bitmask : `int`
+        Mask bits of pixels to ignore.
+    noise : `float`
+        Typical pixel noise.
+    min_peak_snr : `float`, optional
+        Minimum peak S/N of a star used.
+    min_stars : `int`, optional
+        Minimum number of stars; otherwise no offset is applied.
+    verbose : `bool`, optional
+        Print the result.
+
+    Returns
+    -------
+    dx, dy : `float`
+        Offset (data - Gaia) [px]; 0 if too few stars.
+    n_used : `int`
+        Number of stars used.
+    """
     data = exposure.image.array
     bad = (exposure.mask.array & bad_bitmask) != 0
     bb = exposure.getBBox()
@@ -712,14 +829,17 @@ def estimate_gaia_offset(exposure, S, fwhm, bad_bitmask, noise, min_peak_snr=20.
 # Index-preserving versions of the cleaning steps (seeds protected)
 # =====================================================================
 def _fit(exposure, psf, S, bad_bitmask, var_model, fitkw):
+    """Run the joint fit of the source state's positions (extended sources broadened)."""
     _set_ext_rule(S)
     return L.joint_psf_fit_diag(exposure, psf, _xy(S), bad_bitmask, var_model=var_model, **fitkw)
 
 
 def _refine_subset(exposure, psf, S, fit, idx, max_shift, min_amp, freeze_sep, psf_sigma):
-    """One Gauss-Newton position step for the sources `idx`, against the CURRENT joint
-    residual (no model rebuild, unlike refine_peak_positions).  Sources fainter than
-    min_amp, extended ones, and ones with a brighter neighbour within freeze_sep stay put."""
+    """Make one Gauss-Newton position step for the sources ``idx`` against the current residual.
+
+    Sources fainter than ``min_amp``, extended ones and ones with a brighter neighbour within
+    ``freeze_sep`` stay put.  Returns the new positions of all sources.
+    """
     eb = exposure.getBBox()
     data, var, good, amps = exposure.image.array, fit["variance"], fit["good"], fit["amps"]
     resid = data - fit["model_full"]
@@ -759,9 +879,11 @@ def _refine_subset(exposure, psf, S, fit, idx, max_shift, min_amp, freeze_sep, p
 
 def _prune_merge(fit, S, min_snr, min_sep, bright, near_sep, near_snr, protect,
                  in_zone=None, zone_snr=None):
-    """prune_and_merge that keeps the bookkeeping: returns (alive mask, new positions).
-    Protected sources are never pruned; a non-protected source within min_sep of a
-    protected one is absorbed by it (the protected position is kept)."""
+    """Prune low-S/N sources and merge close pairs, keeping the bookkeeping; return (alive, positions).
+
+    Protected (Gaia) sources are never pruned; a non-protected source within ``min_sep`` of a
+    protected one is absorbed by it.
+    """
     var, amps, good = fit["variance"], fit["amps"], fit["good"]
     xy = S["xy"].copy()
     n = len(xy)
@@ -800,6 +922,7 @@ def _prune_merge(fit, S, min_snr, min_sep, bright, near_sep, near_snr, protect,
 
 
 def _eliminate_weak(exposure, psf, S, fit, bad_bitmask, P, fitkw, fwhm=None):
+    """Backward elimination on the honest S/N for non-Gaia sources (Gaia sources are kept)."""
     n0 = len(S["xy"])
     rounds = 0
     scale = L.empirical_noise_scale(fit, exposure)
@@ -834,8 +957,10 @@ def _eliminate_weak(exposure, psf, S, fit, bad_bitmask, P, fitkw, fwhm=None):
 
 def _shape_cut(exposure, psf, S, fit, bad_bitmask, P, fitkw, drop_frac=0.25, max_rounds=15,
                judge_uids=None, psf_sigma=None):
-    """judge_uids: only these sources are judged (None = all non-Gaia point sources).
-    Width failures that are too BROAD become extended sources if keep_extended."""
+    """Remove non-PSF-like non-Gaia sources; too-broad ones become extended sources if allowed.
+
+    ``judge_uids``: only these sources are judged (None = all non-Gaia point sources).
+    """
     kw = dict(P["shape_kwargs"] or {})
     mkw = {k: kw.pop(k) for k in ("bg_sigma", "width_scales", "min_pix") if k in kw}
     if not P["shape_snr_test"]:
@@ -887,7 +1012,7 @@ def _shape_cut(exposure, psf, S, fit, bad_bitmask, P, fitkw, drop_frac=0.25, max
 
 
 def _satlike(exposure):
-    """SAT | NEARSAT pixels (the latter if option B created that plane)."""
+    """Return the SAT (and NEARSAT, if present) pixels of an exposure."""
     m = exposure.mask
     out = (m.array & m.getPlaneBitMask("SAT")) != 0
     try:
@@ -898,9 +1023,26 @@ def _satlike(exposure):
 
 
 def saturation_level(exposure, P):
-    """(level, how) -- the saturation level in image units: near_sat_level if given, else the
-    median of the SAT-flagged pixels, unless those look interpolated (below the brightest
-    unflagged pixel), in which case the brightest unflagged pixel (a lower bound)."""
+    """Estimate the saturation level of an image.
+
+    ``near_sat_level`` if given; else the median of the SAT-flagged pixels, unless those look
+    interpolated (below the brightest unflagged pixel), in which case the brightest unflagged
+    pixel, a lower bound.
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        The image.
+    P : `dict`
+        Pipeline options (uses ``near_sat_level``).
+
+    Returns
+    -------
+    level : `float` or `None`
+        Saturation level in image units (None if it cannot be estimated).
+    how : `str`
+        How it was obtained.
+    """
     if P.get("near_sat_level"):
         return float(P["near_sat_level"]), "given (near_sat_level)"
     data = exposure.image.array
@@ -916,11 +1058,30 @@ def saturation_level(exposure, P):
 
 
 def measure_model_error(exposure, res, P, verbose=True):
-    """PSF model error eps (fraction of the model per pixel): around unsaturated point sources
-    with peak S/N >= model_err_min_snr, the residual variance beyond the pixel variance is
-    fitted as (eps * model)^2, from the robust (MAD) variance of residual/sigma in bins of
-    model value (expected 1 + eps^2 * model^2 / var).
-    Returns (eps, table) with rows (model, n_px, robust var of residual/sigma, model^2/var)."""
+    """Measure the PSF model error as a fraction of the model per pixel.
+
+    Around unsaturated point sources with peak S/N >= ``model_err_min_snr``, the robust (MAD)
+    variance of residual/sigma in bins of model value is fitted as ``1 + eps^2 * model^2 / var``.
+    Values not significant at 2 sigma give eps = 0.
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        The fitted exposure.
+    res : `dict`
+        Result of `run_inner_seeded`.
+    P : `dict`
+        Pipeline options.
+    verbose : `bool`, optional
+        Print the result.
+
+    Returns
+    -------
+    eps : `float`
+        Model error (0 if not significant).
+    table : `list` [`tuple`]
+        Per model bin: (model, number of pixels, robust variance of residual/sigma, model^2/var).
+    """
     fit = res["snaps"][-1]["fit"]
     S = res["S"]
     model = np.clip(res["model_full"], 0, None)
@@ -982,10 +1143,27 @@ def measure_model_error(exposure, res, P, verbose=True):
 
 
 def sat_zones(exposure, fwhm, P):
-    """Saturated-star zones.  Returns (centres, mask): centres = (N, 3) array of
-    (x, y, halo radius) per saturated blob, mask = bool image of the zone band, which
-    follows the SAT mask's shape (pixels within w of the blob,
-    w = sat_zone_fwhm*FWHM + sat_zone_scale*inscribed radius of the blob)."""
+    """Find the zones around saturated stars.
+
+    The zone band follows the SAT mask's shape: pixels within
+    ``w = sat_zone_fwhm * FWHM + sat_zone_scale * inscribed radius`` of each blob.
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        The cutout.
+    fwhm : `float`
+        PSF FWHM [px].
+    P : `dict`
+        Pipeline options (``sat_zone_*``).
+
+    Returns
+    -------
+    centres : `numpy.ndarray`
+        (x, y, halo radius) per saturated blob, shape (N, 3).
+    mask : `numpy.ndarray` [`bool`]
+        The zone band.
+    """
     from scipy.ndimage import label, center_of_mass, distance_transform_edt
     shape = exposure.image.array.shape
     empty = (np.zeros((0, 3)), np.zeros(shape, bool))
@@ -1018,7 +1196,22 @@ def sat_zones(exposure, fwhm, P):
 
 
 def sat_core_labels(exposure, fwhm, min_px=4):
-    """Label image of saturated cores, each grown by max(3 px, FWHM/2); 0 = none."""
+    """Label the saturated cores, each grown by max(3 px, FWHM/2).
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        The cutout.
+    fwhm : `float`
+        PSF FWHM [px].
+    min_px : `int`, optional
+        Ignore saturated blobs smaller than this (hot pixels, cosmic rays).
+
+    Returns
+    -------
+    labels : `numpy.ndarray` [`int`]
+        Core label per pixel (0 = none).
+    """
     from scipy.ndimage import label, binary_dilation
     sat = (exposure.mask.array & exposure.mask.getPlaneBitMask("SAT")) != 0
     lab = np.zeros(sat.shape, np.int32)
@@ -1037,6 +1230,7 @@ def sat_core_labels(exposure, fwhm, min_px=4):
 
 
 def _label_at(xy, lab, X0, Y0):
+    """Return the label image's value at each source position (0 outside)."""
     xy = np.asarray(xy, float).reshape(-1, 2)
     if not len(xy) or not lab.any():
         return np.zeros(len(xy), np.int32)
@@ -1049,11 +1243,12 @@ def _label_at(xy, lab, X0, Y0):
 
 
 def _one_per_core(S, amps, lab, X0, Y0):
-    """Boolean keep-mask: one source per saturated core.  If Gaia has a star there, keep
-    the BRIGHTEST Gaia star (G mag; its position is good to milliarcseconds, and the faint
-    Gaia entries around bright stars are usually spurious).  Otherwise keep the source
-    closest to the core's centre -- never pick by fitted flux, which is degenerate when
-    the centre is masked."""
+    """Return a keep-mask with one source per saturated core.
+
+    The brightest Gaia star if Gaia has one there (its position is good to milliarcseconds; the
+    faint Gaia entries around bright stars are usually spurious), otherwise the source closest to
+    the core's centre -- never by fitted flux, which is degenerate when the centre is masked.
+    """
     keep = np.ones(len(S["xy"]), bool)
     core = _label_at(S["xy"], lab, X0, Y0)
     for l in np.unique(core[core > 0]):
@@ -1072,9 +1267,11 @@ def _one_per_core(S, amps, lab, X0, Y0):
 
 
 def _refine_saturated(exposure, psf, S, fit, core_lab, X0, Y0, fwhm, n_iter=6, max_step=2.0):
-    """Gauss-Newton position fit of saturated stars on their UNSATURATED wings (annulus out
-    to ~3 FWHM beyond the core), holding all other sources fixed.  Skips stars with a
-    Gaia position.  Returns new positions for all sources and the number moved."""
+    """Fit the positions of saturated stars without Gaia positions on their unsaturated wings.
+
+    Gauss-Newton on an annulus out to ~3 FWHM beyond the core, other sources held fixed.  Returns
+    the new positions of all sources and the number moved.
+    """
     eb = exposure.getBBox()
     data, var, good = exposure.image.array, fit["variance"], fit["good"]
     amps = fit["amps"]
@@ -1124,6 +1321,7 @@ def _refine_saturated(exposure, psf, S, fit, core_lab, X0, Y0, fwhm, n_iter=6, m
 
 
 def _zone_flags(xy, zone_mask, X0, Y0):
+    """Return whether each source lies in the saturated-star zone band."""
     xy = np.asarray(xy, float).reshape(-1, 2)
     if not len(xy) or not zone_mask.any():
         return np.zeros(len(xy), bool)
@@ -1136,14 +1334,62 @@ def bright_star_corrections(exposure, S, fit, model, psf_peak, noise, fwhm, bad_
                             sigma_min=100.0, radius_fwhm=4.0, sweeps=2, radial=True,
                             zones=None, halo_modes=0, bright_modes=0, core_rings=(),
                             core_sigma=0.6, core_modes=0):
-    """Local linear correction for every bright (or saturated) star, on top of the joint
-    model, fitted on good pixels within radius_fwhm*FWHM:
-        residual ~ amp * (a*P + bx*dP/dx + by*dP/dy + cxx*d2P/dx2 + cyy*d2P/dy2 + cxy*d2P/dxdy)
-    i.e. flux, position (dipoles) and second-moment shape -- size AND ellipticity -- of
-    each bright star may differ slightly from the shared PSF.  Weighted by the PIXEL
-    variance (not the sys_frac-inflated one) so the core, where the mismatch is, counts.
-    Returns (correction image, dict j -> dict(x, y, snr, n_sat, flux, dx, dy, chi2_before,
-    chi2_after)).  Two sweeps, brightest first, for overlapping bright stars."""
+    """Fit local correction terms for every bright or saturated star.
+
+    On top of the joint model, within ``radius_fwhm`` FWHM, each bright star's residual is fitted
+    with ``amp * (a*P + bx*dP/dx + by*dP/dy + cxx*d2P/dx2 + cyy*d2P/dy2 + cxy*d2P/dxdy)`` (flux,
+    position, size and ellipticity), optional radial rings with angular modes (halo and wing
+    structure) and optional narrow core terms (core sharper than the PSF, possibly off-centre).
+    Weighted by the pixel variance (not the sys_frac-inflated one) so the core, where the
+    mismatch is, counts.  Two sweeps, brightest first, for overlapping bright stars.
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        The fitted exposure.
+    S : `dict`
+        Source state.
+    fit : `dict`
+        Joint fit.
+    model : `numpy.ndarray`
+        Joint model.
+    psf_peak : `float`
+        Peak value of the unit-flux PSF.
+    noise : `float`
+        Typical pixel noise.
+    fwhm : `float`
+        PSF FWHM [px].
+    bad_bitmask : `int`
+        Mask bits of pixels to ignore.
+    sigma_min : `float`, optional
+        Stars with peak S/N above this (or saturated) are corrected.
+    radius_fwhm : `float`, optional
+        Fit radius [FWHM].
+    sweeps : `int`, optional
+        Number of sweeps.
+    radial : `bool`, optional
+        Add radial ring terms.
+    zones : `numpy.ndarray`, optional
+        Saturated-star zones (see `sat_zones`); stars in them get halo terms out to the zone.
+    halo_modes : `int`, optional
+        Angular modes of the saturated stars' rings.
+    bright_modes : `int`, optional
+        Angular modes of the unsaturated stars' rings.
+    core_rings : `tuple` [`float`], optional
+        Radii [px] of the narrow core terms (unsaturated stars).
+    core_sigma : `float`, optional
+        Width [px] of the narrow core terms.
+    core_modes : `int`, optional
+        Angular modes of the narrow core terms.
+
+    Returns
+    -------
+    corr : `numpy.ndarray`
+        Correction image (add to the joint model).
+    info : `dict` [`int`, `dict`]
+        Per corrected star: ``x``, ``y``, ``snr``, ``n_sat``, ``flux``, ``dflux_pct``, ``dx``,
+        ``dy``, ``chi2_before``, ``chi2_after``.
+    """
     data, good = exposure.image.array, fit["good"]
     var = exposure.variance.array
     bb = exposure.getBBox()
@@ -1228,6 +1474,15 @@ def bright_star_corrections(exposure, S, fit, model, psf_peak, noise, fwhm, bad_
 
 
 def print_bright_corrections(info, max_rows=15):
+    """Print the table of bright-star corrections.
+
+    Parameters
+    ----------
+    info : `dict` [`int`, `dict`]
+        Second output of `bright_star_corrections`.
+    max_rows : `int`, optional
+        Number of (brightest) stars printed.
+    """
     if not info:
         print("  no bright stars corrected")
         return
@@ -1241,6 +1496,7 @@ def print_bright_corrections(info, max_rows=15):
 
 
 def _detect(working_residual, threshold, min_pixels):
+    """Detect positive footprints on the working residual (None if detection fails)."""
     cfg = L.SourceDetectionTask.ConfigClass()
     cfg.thresholdValue = threshold
     cfg.thresholdType = "pixel_stdev"
@@ -1257,6 +1513,7 @@ def _detect(working_residual, threshold, min_pixels):
 
 
 def _slim(fit):
+    """Return a fit without its large per-source arrays (for older snapshots)."""
     return {k: v for k, v in fit.items() if k not in ("comps", "chi2map", "group_map")}
 
 
@@ -1264,9 +1521,38 @@ def _slim(fit):
 # Adaptive inner loop
 # =====================================================================
 def ring_mimics(exposure, S, fit, model_full, P, fwhm, psf_peak, noise):
-    """Faint non-Gaia sources around bright stars that do NOT stand out from the azimuthal median
-    of the residual at their distance from the star (fakes absorbing a smooth wing excess).
-    Returns (indices to drop, n checked)."""
+    """Find faint non-Gaia sources that are fakes absorbing a bright star's wing excess.
+
+    A faint source near a bright star must stand out from the residual's wing level at its
+    distance from the star (including angular modes) and from the same spot rotated by 90, 180
+    and 270 degrees (four-fold diffraction structure).
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        The fitted exposure.
+    S : `dict`
+        Source state.
+    fit : `dict`
+        Joint fit.
+    model_full : `numpy.ndarray`
+        Model including the bright-star corrections.
+    P : `dict`
+        Pipeline options (``ring_*``).
+    fwhm : `float`
+        PSF FWHM [px].
+    psf_peak : `float`
+        Peak value of the unit-flux PSF.
+    noise : `float`
+        Typical pixel noise.
+
+    Returns
+    -------
+    drop : `list` [`int`]
+        Indices of the sources to remove.
+    n_checked : `int`
+        Number of sources checked.
+    """
     data = exposure.image.array
     var, good, amps = fit["variance"], fit["good"], fit["amps"]
     xy = S["xy"]
@@ -1368,11 +1654,49 @@ def ring_mimics(exposure, S, fit, model_full, P, fwhm, psf_peak, noise):
 
 
 def split_test(exposure, psf, S, fit, model_full, P, fwhm, psf_peak, noise, bad_bitmask, fitkw):
-    """Unresolved pairs: for each source with split_min_snr <= peak S/N < bright_corr_sigma, look
-    for a positive residual peak (matched-filter S/N >= split_peak_snr) 0.5-1.5 FWHM away and not
-    near another source; add a trial source there.  All trials are fitted together; a trial is
-    kept if the chi2 within 2 FWHM of it drops by >= split_dchi2 and its S/N >= min_snr.
-    Returns (S, fit, n_tried, n_kept); fit is the input object if nothing was kept."""
+    """Split unresolved pairs.
+
+    For each source with ``split_min_snr <= peak S/N < bright_corr_sigma``, a positive residual
+    peak (matched-filter S/N >= ``split_peak_snr``) 0.5-1.5 FWHM away and away from other sources
+    gets a trial source.  All trials are fitted together; a trial is kept if the chi2 within
+    2 FWHM drops by at least ``split_dchi2`` and its S/N is at least ``min_snr``.
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        The fitted exposure.
+    psf : `lsst.afw.detection.Psf`
+        PSF model.
+    S : `dict`
+        Source state.
+    fit : `dict`
+        Joint fit.
+    model_full : `numpy.ndarray`
+        Model including the bright-star corrections.
+    P : `dict`
+        Pipeline options (``split_*``).
+    fwhm : `float`
+        PSF FWHM [px].
+    psf_peak : `float`
+        Peak value of the unit-flux PSF.
+    noise : `float`
+        Typical pixel noise.
+    bad_bitmask : `int`
+        Mask bits of pixels to ignore.
+    fitkw : `dict`
+        Keyword arguments of the joint fit.
+
+    Returns
+    -------
+    S : `dict`
+        Source state with the kept second sources.
+    fit : `dict`
+        Joint fit (the input object if nothing was kept).
+    n_tried : `int`
+        Number of trial sources.
+    n_kept : `int`
+        Number kept.
+    """
     data = exposure.image.array
     var, good, amps = fit["variance"], fit["good"], fit["amps"]
     bb = exposure.getBBox()
@@ -1445,8 +1769,7 @@ def split_test(exposure, psf, S, fit, model_full, P, fwhm, psf_peak, noise, bad_
 
 
 def _ellip_model(psf, x, y, sa, q, th, shape, X0, Y0, prof="gauss"):
-    """Image (full-array shape) of a unit-flux PSF convolved with an elliptical profile
-    ('gauss' or 'exp'; major-axis scale sa [px], axis ratio q, angle th)."""
+    """Return the image of a unit-flux PSF convolved with an elliptical 'gauss' or 'exp' profile."""
     from scipy.signal import fftconvolve
     arr, bb = _raw_psf_stamp(psf, x, y, None)
     arr = fftconvolve(arr, _ellip_kernel(sa, q, th, prof), mode="same")
@@ -1462,14 +1785,60 @@ def _ellip_model(psf, x, y, sa, q, th, shape, X0, Y0, prof="gauss"):
 
 def ellip_test(exposure, psf, S, fit, model_full, P, fwhm, psf_peak, noise, bad_bitmask, fitkw,
                psf_sigma, verbose_ellip=True, only=None, explain=False):
-    """Small galaxies.  A badly fitted source (local chi2/px >= ellip_chi2_min, S/N ellip_min_snr ..
-    bright_corr_sigma) and the points within ellip_group_fwhm FWHM (at most one Gaia source) are
-    refitted with alternative models:
-        'one'      : ONE extended source replaces all of them
-        'star+gal' : the Gaia source stays a point, ONE extended source replaces the others
-    each with a 'gauss' or 'exp' (exponential disk) elliptical profile convolved with the PSF.
-    The best model by chi2 + 5 per fitted number must beat the point sources by >= ellip_dchi2.
-    Returns (S, fit, n_tried, n_kept)."""
+    """Model badly fitted sources as small galaxies.
+
+    A badly fitted source (local chi2/px >= ``ellip_chi2_min``, S/N between ``ellip_min_snr`` and
+    ``bright_corr_sigma``) and the points within ``ellip_group_fwhm`` FWHM (at most one Gaia
+    source) are refitted with alternative models: 'one' (one extended source replaces all of
+    them) and 'star+gal' (the Gaia source stays a point, one extended source replaces the
+    others), each with a Gaussian or exponential elliptical profile convolved with the PSF.  The
+    best model, penalised by 5 per extra fitted number, must beat the point sources by at least
+    ``ellip_dchi2``.
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        The fitted exposure.
+    psf : `lsst.afw.detection.Psf`
+        PSF model.
+    S : `dict`
+        Source state.
+    fit : `dict`
+        Joint fit.
+    model_full : `numpy.ndarray`
+        Model including the bright-star corrections.
+    P : `dict`
+        Pipeline options (``ellip_*``).
+    fwhm : `float`
+        PSF FWHM [px].
+    psf_peak : `float`
+        Peak value of the unit-flux PSF.
+    noise : `float`
+        Typical pixel noise.
+    bad_bitmask : `int`
+        Mask bits of pixels to ignore.
+    fitkw : `dict`
+        Keyword arguments of the joint fit.
+    psf_sigma : `float`
+        PSF sigma [px].
+    verbose_ellip : `bool`, optional
+        Print every model tried.
+    only : `list` [`int`], optional
+        Only try these source indices.
+    explain : `bool`, optional
+        Print why sources are not tried, and tracebacks of failed fits.
+
+    Returns
+    -------
+    S : `dict`
+        Source state with the extended sources.
+    fit : `dict`
+        Joint fit.
+    n_tried : `int`
+        Number of sources tried.
+    n_kept : `int`
+        Number of extended sources kept.
+    """
     from scipy.optimize import least_squares
     data = exposure.image.array
     var, good, amps = fit["variance"], fit["good"], fit["amps"]
@@ -1618,10 +1987,28 @@ def ellip_test(exposure, psf, S, fit, model_full, P, fwhm, psf_peak, noise, bad_
 
 
 def try_elliptical(run, xy, chi2_min=None, dchi2=None):
-    """Debug / what-if on a FINISHED run: try the elliptical-source test on the source nearest
-    to xy=(x, y) and print every step (why it is or is not tried, the fit, the chi2 change,
-    any error).  Does not change the run.  chi2_min / dchi2 override the trigger / bar.
-    Returns dict(kept, S, fit) -- S/fit with the elliptical source if it was kept."""
+    """Try the elliptical-source test on one source of a finished run, printing every step.
+
+    Shows why the source is or is not tried, the fitted models, the chi2 change and any error.
+    The run is not changed.
+
+    Parameters
+    ----------
+    run : `lsst.meas.crowd.session.CutoutRun`
+        A finished run.
+    xy : `tuple` [`float`, `float`]
+        Position; the nearest source is tested.
+    chi2_min : `float`, optional
+        Override the trigger (``ellip_chi2_min``).
+    dchi2 : `float`, optional
+        Override the acceptance bar (``ellip_dchi2``).
+
+    Returns
+    -------
+    result : `dict` or `None`
+        ``kept``, ``S`` and ``fit`` (with the extended source if it was kept); None if the run's
+        last fit has no per-source stamps.
+    """
     if not _ORIG or _HUGE is None:
         enable_speedups()
     final = run.outer_history[-1]
@@ -1659,10 +2046,42 @@ def try_elliptical(run, xy, chi2_min=None, dchi2=None):
 
 
 def final_position_polish(exposure, psf, S, fit, bad_bitmask, P, fitkw, fwhm, psf_sigma):
-    """Re-optimise ALL source positions jointly: Gauss-Newton steps (capped at final_polish_cap px,
-    Gaia drift limit kept) + refit, repeated while the total chi2 drops.  Fixes dipoles left by
-    positions that went stale when neighbours were added or removed.
-    Returns (S, fit, info) -- fit is the input object if nothing improved."""
+    """Re-optimise all source positions jointly.
+
+    Gauss-Newton steps (capped at ``final_polish_cap`` px, Gaia drift limit kept) and refit,
+    repeated while the total chi2 drops.  Fixes dipoles from positions that went stale when
+    neighbours were added or removed.
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        The fitted exposure.
+    psf : `lsst.afw.detection.Psf`
+        PSF model.
+    S : `dict`
+        Source state.
+    fit : `dict`
+        Joint fit of ``S``.
+    bad_bitmask : `int`
+        Mask bits of pixels to ignore.
+    P : `dict`
+        Pipeline options (``final_polish_*``).
+    fitkw : `dict`
+        Keyword arguments of the joint fit.
+    fwhm : `float`
+        PSF FWHM [px].
+    psf_sigma : `float`
+        PSF sigma [px].
+
+    Returns
+    -------
+    S : `dict`
+        Source state with the polished positions.
+    fit : `dict`
+        Joint fit (the input object if nothing improved).
+    info : `dict`
+        ``rounds``, ``moved``, ``chi0`` and ``chi1`` (total chi2 before / after).
+    """
     data = exposure.image.array
 
     def chi_all(f):
@@ -1694,10 +2113,40 @@ def final_position_polish(exposure, psf, S, fit, bad_bitmask, P, fitkw, fwhm, ps
 
 def run_inner_seeded(exposure, psf, bad_bitmask, S, P, outer_idx=0, threshold_start=None,
                      shape_now=False, timer=None):
-    """One outer pass: warm fit of S (Gaia seeds or the previous pass), then
-    detect -> add -> joint fit -> refine -> clean, repeated until the residual check says
-    stop.  Returns a result dict compatible with run_inner_loop_verbose's (plus 'S',
-    'adaptive', 'is_seed', 'gaia_index')."""
+    """Run one outer pass of the seeded pipeline.
+
+    A warm fit of the current sources (Gaia seeds or the previous pass), then detect -> add ->
+    joint fit -> refine -> clean, repeated until the residual check says stop; then the halo,
+    ring, position-polish, pair-split and galaxy tests.
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        Background-subtracted cutout.
+    psf : `lsst.afw.detection.Psf`
+        PSF model.
+    bad_bitmask : `int`
+        Mask bits of pixels to ignore.
+    S : `dict`
+        Starting source state.
+    P : `dict`
+        Pipeline options.
+    outer_idx : `int`, optional
+        Outer-pass index.
+    threshold_start : `float`, optional
+        First detection threshold [sigma].
+    shape_now : `bool`, optional
+        Apply the shape cut in this pass.
+    timer : `lsst.meas.crowd.fitLib.StepTimer`, optional
+        Timer collecting the step durations.
+
+    Returns
+    -------
+    result : `dict`
+        Compatible with `fitLib.run_inner_loop_verbose`'s result (``model_full``,
+        ``residual_full``, ``peaks``, ``amps``, histories, ``snaps``), plus ``S``,
+        ``bright_corr``, ``adaptive`` (the loop decisions), ``is_seed`` and ``gaia_index``.
+    """
     timer = timer or L.TIMER
     bbox = exposure.getBBox()
     ny, nx = bbox.getHeight(), bbox.getWidth()
@@ -1750,7 +2199,7 @@ def run_inner_seeded(exposure, psf, bad_bitmask, S, P, outer_idx=0, threshold_st
     stamp_pt = bbox.getCenter()
 
     def corrected(fit):
-        """model incl. bright-star correction terms; also updates the stamp-size rule"""
+        """Return the model with the bright-star correction terms (updates the stamp sizes)."""
         nonlocal bcorr
         set_stamp_sizes(S["xy"], fit["amps"], psf, stamp_pt, noise, fwhm, P["stamp_floor_sigma"])
         _set_bf_fluxes(S["xy"], fit["amps"])
@@ -2121,7 +2570,30 @@ def run_inner_seeded(exposure, psf, bad_bitmask, S, P, outer_idx=0, threshold_st
 # Adaptive outer loop
 # =====================================================================
 def select_psf_stars(exposure, res, fwhm, psf_peak, noise, P, verbose=True):
-    """Indices of clean, bright, isolated, unsaturated point sources for the PSF stack."""
+    """Select clean, bright, isolated, unsaturated point sources for the PSF stack.
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        The fitted exposure.
+    res : `dict`
+        Result of `run_inner_seeded`.
+    fwhm : `float`
+        PSF FWHM [px].
+    psf_peak : `float`
+        Peak value of the unit-flux PSF.
+    noise : `float`
+        Typical pixel noise.
+    P : `dict`
+        Pipeline options (``psf_stack_*``).
+    verbose : `bool`, optional
+        Print the selection.
+
+    Returns
+    -------
+    idx : `numpy.ndarray` [`int`]
+        Indices of the selected stars, brightest first.
+    """
     S = res["S"]
     fit = res["snaps"][-1]["fit"]
     amps = fit["amps"]
@@ -2159,6 +2631,7 @@ def select_psf_stars(exposure, res, fwhm, psf_peak, noise, P, verbose=True):
 
 
 def _star_mask(shape, X0, Y0, pos, r):
+    """Return the pixels within ``r`` px of any of the positions."""
     yy, xx = np.mgrid[Y0:Y0 + shape[0], X0:X0 + shape[1]]
     m = np.zeros(shape, bool)
     for x, y in pos:
@@ -2167,21 +2640,46 @@ def _star_mask(shape, X0, Y0, pos, r):
 
 
 def _chi2_on(exposure, f, m):
+    """Return the mean chi2 per pixel of a fit over a pixel mask."""
     m = m & f["good"]
     return float(np.mean((exposure.image.array - f["model_full"])[m] ** 2
                          / exposure.variance.array[m])) if m.any() else np.nan
 
 
 def refine_psf_clean(exposure, psf, res, bad_bitmask, P, fitkw, n_cycles=3, verbose=True):
-    """Residual-stack PSF update from clean stars, CROSS-VALIDATED.
+    """Update the PSF from the residual stack of clean stars, cross-validated.
 
-    The clean stars are split into two halves A and B (alternating in brightness).  Each
-    cycle builds a correction from A and judges it on B's pixels, and vice versa.  Only if
-    the held-out chi2 improves (>= psf_cv_min_gain) is the correction from ALL stars applied.
-    This stops the PSF absorbing the pixel noise of the stars it was built from (which
-    always looks like an improvement on those same stars and shows up as speckle around
-    every bright star).  Corrections are also smoothed (psf_smooth_px) and soft-thresholded
-    at psf_soft_sigma."""
+    The clean stars are split into two halves A and B (alternating in brightness).  Each cycle
+    builds a correction from A and judges it on B's pixels, and vice versa; only if the held-out
+    chi2 improves by at least ``psf_cv_min_gain`` is the correction from all stars applied.  This
+    stops the PSF absorbing the pixel noise of its own stars, which shows up as speckle around
+    every bright star.  Corrections are smoothed (``psf_smooth_px``) and soft-thresholded
+    (``psf_soft_sigma``).
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        The fitted exposure.
+    psf : `lsst.afw.detection.Psf`
+        Current PSF.
+    res : `dict`
+        Result of `run_inner_seeded`.
+    bad_bitmask : `int`
+        Mask bits of pixels to ignore.
+    P : `dict`
+        Pipeline options.
+    fitkw : `dict`
+        Keyword arguments of the joint fit.
+    n_cycles : `int`, optional
+        Maximum number of correction cycles.
+    verbose : `bool`, optional
+        Print each cycle.
+
+    Returns
+    -------
+    psf : `lsst.afw.detection.Psf`
+        The updated PSF (the input PSF if no cycle was kept).
+    """
     from scipy.ndimage import gaussian_filter
     bb = exposure.getBBox()
     c = bb.getCenter()
@@ -2245,8 +2743,11 @@ def refine_psf_clean(exposure, psf, res, bad_bitmask, P, fitkw, n_cycles=3, verb
 
 
 def _residual_stack(resid, good, xy, amps, idx, X0, Y0, half, with_err=False):
-    """Median over stars idx of resid / flux, sampled at each star's sub-pixel position on a
-    (2*half+1)^2 grid centred on it (same grid as the PSF kernel image).  NaN where < 3 stars."""
+    """Return the median residual/flux of stars on a grid centred on each (and optionally its error).
+
+    Sampled at each star's sub-pixel position on a (2*half+1)^2 grid; NaN where fewer than three
+    stars contribute.
+    """
     from scipy.ndimage import map_coordinates
     u = np.arange(-half, half + 1)
     V, U = np.meshgrid(u, u, indexing="ij")
@@ -2272,13 +2773,36 @@ def _residual_stack(resid, good, xy, amps, idx, X0, Y0, half, with_err=False):
 
 
 def refine_psf_median(exposure, psf, res, bad_bitmask, P, fitkw, fit0=None, verbose=True):
-    """Correct the PSF CORE with the median residual/flux of the bright clean stars.
+    """Correct the PSF core with the median residual/flux of the bright clean stars.
 
-    The median is robust to neighbours, cosmic rays and per-star noise, so what it keeps is
-    the shape error SHARED by the bright stars (the pattern show_bright_star_stack shows) --
-    which the mean-based clean-star stack (soft threshold, fainter stars) can miss.
-    Applied within psf_core_radius_fwhm*FWHM (cosine taper), smoothed by psf_smooth_px, and
-    cross-validated: built from half the stars, judged on the other half's pixels."""
+    The median is robust to neighbours, cosmic rays and per-star noise, so it keeps the shape
+    error shared by the bright stars.  Applied within ``psf_core_radius_fwhm`` FWHM (cosine
+    taper), soft-thresholded, smoothed and cross-validated on two halves of the stars.
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        The fitted exposure.
+    psf : `lsst.afw.detection.Psf`
+        Current PSF.
+    res : `dict`
+        Result of `run_inner_seeded`.
+    bad_bitmask : `int`
+        Mask bits of pixels to ignore.
+    P : `dict`
+        Pipeline options (``psf_core_*``).
+    fitkw : `dict`
+        Keyword arguments of the joint fit.
+    fit0 : `dict`, optional
+        Joint fit with ``psf`` (computed if not given).
+    verbose : `bool`, optional
+        Print each cycle.
+
+    Returns
+    -------
+    psf : `lsst.afw.detection.Psf`
+        The corrected PSF (the input PSF if no correction was kept).
+    """
     from scipy.ndimage import gaussian_filter
     bb = exposure.getBBox()
     c = bb.getCenter()
@@ -2354,15 +2878,33 @@ def refine_psf_median(exposure, psf, res, bad_bitmask, P, fitkw, fit0=None, verb
 
 
 def smooth_psf_kernel(kernel, fwhm, core_fwhm=1.5, sigma=1.0, max_pattern=1.5):
-    """Hole-free, smooth version of a PSF kernel.
+    """Return a hole-free, smooth version of a PSF kernel.
 
-    Inside core_fwhm*FWHM the kernel is kept (well measured).  Outside, it is rebuilt as
-        radial profile(r) * exp(angular pattern)
-    with the profile = 1-px ring MEDIANS (a few holed pixels cannot pull it down), forced to
-    decrease monotonically outwards, and the pattern = log(kernel / profile) median-filtered
-    (5x5: removes isolated holes / hot pixels) and Gaussian-smoothed (sigma px), clipped to
-    +-max_pattern in log (factor ~4.5).  Smooth, real structure (ellipticity, lobes, spikes
-    wider than ~2 px) survives; pixel-scale defects do not.  Blended over 2 px, renormalised."""
+    Inside ``core_fwhm`` FWHM the kernel is kept.  Outside it is rebuilt as
+    ``radial profile(r) * exp(angular pattern)``: the profile is the median of each 1-px ring
+    (so a few holed pixels cannot pull it down), forced to decrease outwards; the pattern is
+    ``log(kernel / profile)`` median-filtered over 5x5 px (removes isolated holes and hot pixels),
+    smoothed by ``sigma`` px and clipped to +-``max_pattern``.  Smooth structure (ellipticity,
+    lobes, spikes wider than ~2 px) survives; pixel-scale defects do not.
+
+    Parameters
+    ----------
+    kernel : `numpy.ndarray`
+        PSF kernel (odd size, centred).
+    fwhm : `float`
+        PSF FWHM [px].
+    core_fwhm : `float`, optional
+        Radius kept unchanged [FWHM].
+    sigma : `float`, optional
+        Smoothing of the angular pattern [px].
+    max_pattern : `float`, optional
+        Clip of the log angular pattern.
+
+    Returns
+    -------
+    kernel : `numpy.ndarray`
+        Smoothed, non-negative kernel summing to 1.
+    """
     from scipy.ndimage import median_filter, gaussian_filter
     k = np.asarray(kernel, float)
     H = k.shape[0] // 2
@@ -2389,7 +2931,26 @@ def smooth_psf_kernel(kernel, fwhm, core_fwhm=1.5, sigma=1.0, max_pattern=1.5):
 
 
 def regularize_psf(psf, point, P, verbose=True, label=""):
-    """LSST PSF with its kernel passed through smooth_psf_kernel (no-op if psf_regularize off)."""
+    """Return the PSF with its kernel passed through `smooth_psf_kernel`.
+
+    Parameters
+    ----------
+    psf : `lsst.afw.detection.Psf`
+        PSF.
+    point : `lsst.geom.Point2D`
+        Position at which the kernel is taken.
+    P : `dict`
+        Pipeline options (``psf_regularize``, ``psf_reg_*``); no-op if regularisation is off.
+    verbose : `bool`, optional
+        Print how much flux moved.
+    label : `str`, optional
+        Suffix for the printed line.
+
+    Returns
+    -------
+    psf : `lsst.afw.detection.Psf`
+        The regularised (constant) PSF, or the input PSF.
+    """
     if not P.get("psf_regularize"):
         return psf
     k = psf.computeKernelImage(point).array.astype(float)
@@ -2406,7 +2967,7 @@ def regularize_psf(psf, point, P, verbose=True, label=""):
 
 
 def _radial_profile(img, ok, x, y, X0, Y0, edges):
-    """Median of img in annuli around (x, y) (detector px); NaN where < 5 good pixels."""
+    """Return the median of an image in annuli around (x, y); NaN where fewer than 5 good pixels."""
     R = edges[-1]
     ix0, iy0 = int(round(x)) - X0, int(round(y)) - Y0
     xa, xb = max(ix0 - int(R) - 1, 0), min(ix0 + int(R) + 2, img.shape[1])
@@ -2426,7 +2987,7 @@ def _radial_profile(img, ok, x, y, X0, Y0, edges):
 
 
 def _azimuthal_mean(k):
-    """Image of the azimuthal mean of k (1-px annuli about the centre)."""
+    """Return the image of a kernel's azimuthal mean (1-px annuli about the centre)."""
     h = k.shape[0] // 2
     u = np.arange(-h, h + 1)
     rb = np.round(np.hypot(*np.meshgrid(u, u))).astype(int)
@@ -2435,8 +2996,7 @@ def _azimuthal_mean(k):
 
 
 def _angular_pattern(k, support):
-    """k / (its ring average), i.e. the angular modulation (1 = circular); 1 beyond `support`
-    px or where the ring average is not positive.  Clipped to [0, 50]."""
+    """Return a kernel's angular modulation, kernel / ring average (1 beyond ``support`` px)."""
     h = k.shape[0] // 2
     u = np.arange(-h, h + 1)
     R = np.hypot(*np.meshgrid(u, u))
@@ -2447,9 +3007,32 @@ def _angular_pattern(k, support):
 
 
 def extend_psf_wings_keep(psf, point, size=81, blend=(12.0, 16.0), keep_angular=False, verbose=True):
-    """Like cutout_fit_lib.extend_psf_wings (Moffat tail out to size x size), but only the
-    kernel's azimuthal mean is replaced by the Moffat beyond the blend radius -- diffraction
-    spikes and other non-circular structure in the kernel are kept."""
+    """Extend a PSF with a Moffat tail, optionally keeping its angular structure.
+
+    Like `fitLib.extend_psf_wings`, but with ``keep_angular`` only the kernel's azimuthal mean is
+    replaced by the Moffat beyond the blend radius, so spikes and other non-circular structure
+    are kept.
+
+    Parameters
+    ----------
+    psf : `lsst.afw.detection.Psf`
+        PSF.
+    point : `lsst.geom.Point2D`
+        Position at which the kernel is taken.
+    size : `int`, optional
+        Size of the extended kernel [px].
+    blend : `tuple` [`float`, `float`], optional
+        Radial range of the cross-fade to the Moffat [px].
+    keep_angular : `bool`, optional
+        Keep the kernel's angular pattern in the tail.
+    verbose : `bool`, optional
+        Print the fitted tail.
+
+    Returns
+    -------
+    psf : `lsst.afw.detection.Psf`
+        The extended constant PSF (the input PSF if the fit fails).
+    """
     kernel = psf.computeKernelImage(point).array.astype(float).copy()
     try:
         _, info = L.extend_kernel_with_moffat(kernel, new_size=size)
@@ -2477,14 +3060,32 @@ def extend_psf_wings_keep(psf, point, size=81, blend=(12.0, 16.0), keep_angular=
 
 
 def wing_profile_psf(exposure, res, psf, P, verbose=True):
-    """PSF whose outer wings are MEASURED from the stars.
+    """Return a PSF whose outer wings are measured from the stars.
 
-    Neighbour-subtracted radial profiles: unsaturated bright stars (peak S/N >= wing_min_snr),
-    divided by their fitted flux, give the normalised profile where they have signal;
-    saturated stars (unknown flux) are scaled to that profile on the radii where both are
-    measured and extend it outwards.  A Moffat is fitted to the combined profile beyond
-    1.5 FWHM and replaces the kernel beyond ~2.5 FWHM (core kept), then renormalised.
-    Returns a new PSF, or None if there are too few stars."""
+    Neighbour-subtracted radial profiles of unsaturated bright stars (peak S/N >=
+    ``wing_min_snr``), divided by their flux, give the normalised profile where they have signal;
+    saturated stars are scaled to it where both are measured and extend it outwards.  A Moffat
+    fitted to the combined profile replaces the kernel beyond ``wing_blend_fwhm``.  Degenerate fits
+    are rejected.
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        The fitted exposure.
+    res : `dict`
+        Result of `run_inner_seeded`.
+    psf : `lsst.afw.detection.Psf`
+        Current PSF.
+    P : `dict`
+        Pipeline options (``wing_*``, ``psf_wing_size``).
+    verbose : `bool`, optional
+        Print the fitted profile.
+
+    Returns
+    -------
+    psf : `lsst.afw.detection.Psf` or `None`
+        The new PSF, or None if there are too few stars or the fit is degenerate.
+    """
     import warnings
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)      # all-NaN annuli are expected
@@ -2492,6 +3093,7 @@ def wing_profile_psf(exposure, res, psf, P, verbose=True):
 
 
 def _wing_profile_psf(exposure, res, psf, P, verbose=True):
+    """Implement `wing_profile_psf` (warnings about empty annuli are silenced by the caller)."""
     from scipy.optimize import curve_fit
     bb = exposure.getBBox()
     c = bb.getCenter()
@@ -2594,8 +3196,27 @@ _SPATIAL = {}      # id(psf) -> (psf, Kx, Ky): gradient terms of a spatially var
 
 
 def spatial_kernel_psf(K0, Kx, Ky, xc, yc, scale):
-    """LSST PSF  K(x, y) = K0 + (x-xc)/scale * Kx + (y-yc)/scale * Ky  (a LinearCombinationKernel
-    with linear spatial functions -- the same machinery as the PCA PSF)."""
+    """Build a linearly varying LSST PSF.
+
+    ``K(x, y) = K0 + (x - xc)/scale * Kx + (y - yc)/scale * Ky``, as a LinearCombinationKernel
+    with linear spatial functions (the same machinery as the PCA PSF).
+
+    Parameters
+    ----------
+    K0 : `numpy.ndarray`
+        Kernel at (xc, yc).
+    Kx, Ky : `numpy.ndarray`
+        Kernel change per ``scale`` px in x and y.
+    xc, yc : `float`
+        Reference position.
+    scale : `float`
+        Length scale [px].
+
+    Returns
+    -------
+    psf : `lsst.meas.algorithms.KernelPsf`
+        The spatially varying PSF.
+    """
     import lsst.afw.math as afwMath
     import lsst.afw.image as afwImage
     kernels = [afwMath.FixedKernel(afwImage.makeImageFromArray(np.ascontiguousarray(k, dtype=np.float64)))
@@ -2619,10 +3240,7 @@ def spatial_kernel_psf(K0, Kx, Ky, xc, yc, scale):
 
 def _psf_gradient(data, model, var, good, xy0, pos, amps, kernel, xc, yc, scale,
                   max_radius=20, soft_sigma=1.0):
-    """Per-pixel weighted fit of the stars' normalised residual stamps:
-       R_j(u) = a(u) + bx(u) * dx_j + by(u) * dy_j,   dx_j = (x_j - xc)/scale, ...
-    Returns (bx, by, n_stars): the PSF change per unit (scaled) x and y, soft-thresholded,
-    tapered beyond max_radius, zero-sum, with position-degenerate parts removed."""
+    """Fit the stars' normalised residual stamps per pixel as a + bx*dx + by*dy; return (bx, by, n)."""
     from scipy.ndimage import map_coordinates
     h = kernel.shape[0] // 2
     u = np.arange(-h, h + 1)
@@ -2672,10 +3290,38 @@ def _psf_gradient(data, model, var, good, xy0, pos, amps, kernel, xc, yc, scale,
 
 def refine_psf_spatial(exposure, psf_old, psf_new, res, bad_bitmask, P, fitkw, step=0.8,
                        verbose=True):
-    """Add (or update) a linear spatial variation to psf_new, measured from the clean stars'
-    residuals in `res` (fitted with psf_old).  CROSS-VALIDATED like refine_psf_clean: the
-    gradient from half A is judged on half B and vice versa; kept only if the held-out chi2
-    drops by >= psf_spatial_min_gain compared with the constant psf_new."""
+    """Add or update a linear spatial variation of the PSF, cross-validated.
+
+    Measured from the clean stars' residuals in ``res`` (fitted with ``psf_old``); the gradient
+    from half A is judged on half B and vice versa, and kept only if the held-out chi2 drops by at
+    least ``psf_spatial_min_gain`` compared with the constant ``psf_new``.
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        The fitted exposure.
+    psf_old : `lsst.afw.detection.Psf`
+        PSF the residuals were fitted with.
+    psf_new : `lsst.afw.detection.Psf`
+        Constant PSF to add the variation to.
+    res : `dict`
+        Result of `run_inner_seeded`.
+    bad_bitmask : `int`
+        Mask bits of pixels to ignore.
+    P : `dict`
+        Pipeline options (``psf_spatial_*``).
+    fitkw : `dict`
+        Keyword arguments of the joint fit.
+    step : `float`, optional
+        Fraction of the measured gradient applied.
+    verbose : `bool`, optional
+        Print the result.
+
+    Returns
+    -------
+    psf : `lsst.afw.detection.Psf`
+        The varying PSF, or ``psf_new`` if the variation was not kept.
+    """
     from scipy.ndimage import gaussian_filter
     bb = exposure.getBBox()
     c = bb.getCenter()
@@ -2736,16 +3382,35 @@ def refine_psf_spatial(exposure, psf_old, psf_new, res, bad_bitmask, P, fitkw, s
 
 
 def fit_brightness_term(exposure, psf, res, bad_bitmask, P, fitkw, verbose=True):
-    """Measure / update the brightness-dependent PSF term (brighter-fatter).
+    """Measure or update the brightness-dependent PSF term (brighter-fatter).
 
-    Isolated, unsaturated stars with peak S/N >= bf_min_snr: 1-px ring means of their
-    residual / flux out to bf_radius_fwhm*FWHM.  Per ring, a weighted fit
-        residual/flux = A(r) + B(r) * (log10 flux - L0)
-    gives the slope B(r): how the profile changes per dex of brightness.  B is smoothed,
-    tapered to 0 at the outer radius and made flux-neutral (fluxes stay fluxes); the
-    intercept A is left to the PSF itself.  The update is built from half of the stars and
-    judged on the other half (both ways); kept only if the held-out chi2 improves.
-    Returns the fraction of flux moved per dex (0 if nothing changed)."""
+    From isolated, unsaturated stars with peak S/N >= ``bf_min_snr``: per 1-px ring, a weighted
+    fit ``residual/flux = A(r) + B(r) * (log10 flux - L0)`` gives the slope B(r), smoothed,
+    tapered and made flux-neutral.  Built from half of the stars and judged on the other half;
+    kept only if the held-out chi2 improves.
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        The fitted exposure.
+    psf : `lsst.afw.detection.Psf`
+        Current PSF.
+    res : `dict`
+        Result of `run_inner_seeded`.
+    bad_bitmask : `int`
+        Mask bits of pixels to ignore.
+    P : `dict`
+        Pipeline options (``bf_*``).
+    fitkw : `dict`
+        Keyword arguments of the joint fit.
+    verbose : `bool`, optional
+        Print the result.
+
+    Returns
+    -------
+    moved : `float`
+        Fraction of the flux moved per dex of brightness (0 if nothing changed).
+    """
     from scipy.ndimage import gaussian_filter1d
     bb = exposure.getBBox()
     c = bb.getCenter()
@@ -2862,6 +3527,7 @@ def fit_brightness_term(exposure, psf, res, bad_bitmask, P, fitkw, verbose=True)
 
 
 def _kernel_change(psf_old, psf_new, point):
+    """Return the relative L2 change between two PSFs' kernels at a point."""
     a = psf_old.computeKernelImage(point).array
     b = psf_new.computeKernelImage(point).array
     h = min(a.shape[0], b.shape[0]) // 2
@@ -2872,6 +3538,13 @@ def _kernel_change(psf_old, psf_new, point):
 
 
 def print_timing(timer=None):
+    """Print the time spent per pipeline step.
+
+    Parameters
+    ----------
+    timer : `lsst.meas.crowd.fitLib.StepTimer`, optional
+        Timer (default: fitLib's ``TIMER``).
+    """
     timer = timer or L.TIMER
     tot, cnt = defaultdict(float), defaultdict(int)
     for r in timer.records:
@@ -2886,10 +3559,41 @@ def print_timing(timer=None):
 
 def run_seeded_pipeline(exposure_crop, psf, bad_bitmask, seeds=None, seed_gaia_index=None,
                         starCat=None, bgImage=None, viz=False, seed_gmag=None, **cfg):
-    """Gaia-seeded, adaptive replacement for cutout_fit_lib.run_cutout_pipeline on the
-    WHOLE exposure_crop.  seeds: (N, 2) detector-pixel positions (None/empty = no seeds).
-    cfg: run_cutout_pipeline keys + SEEDED_DEFAULTS keys.  Returns outer_history (same
-    layout as run_cutout_pipeline, plus 'psf_change' and result['adaptive'])."""
+    """Run the Gaia-seeded adaptive pipeline on a whole cutout.
+
+    The replacement for `fitLib.run_cutout_pipeline`: outer passes of `run_inner_seeded`, with
+    background refit and PSF refinement in between, until the source list and the PSF stop
+    changing.
+
+    Parameters
+    ----------
+    exposure_crop : `lsst.afw.image.Exposure`
+        Cutout before background subtraction.
+    psf : `lsst.afw.detection.Psf`
+        Initial PSF.
+    bad_bitmask : `int`
+        Mask bits of pixels to ignore.
+    seeds : `numpy.ndarray`, optional
+        Seed positions (detector px), shape (N, 2); None or empty = no seeds.
+    seed_gaia_index : `numpy.ndarray`, optional
+        Gaia catalogue row of each seed.
+    starCat : `lsst.afw.table.SourceCatalog`, optional
+        Detector-level PSF stars.
+    bgImage : `lsst.afw.image.Image`, optional
+        Detector-level background, subtracted in the first pass.
+    viz : `bool`, optional
+        Draw the per-pass overview.
+    seed_gmag : `numpy.ndarray`, optional
+        Gaia G magnitude of each seed.
+    **cfg
+        Configuration: `fitLib.run_cutout_pipeline` keys and ``SEEDED_DEFAULTS`` keys.
+
+    Returns
+    -------
+    outer_history : `list` [`dict`]
+        One dict per outer pass (as `fitLib.run_cutout_pipeline`'s, plus ``psf_change``,
+        ``model_err``, ``bf`` and ``result['adaptive']``).
+    """
     P = _params(cfg)
     _FAST["on"] = bool(P["fast_stamps"])
     _FAST["cache"].clear()
@@ -3151,8 +3855,41 @@ def run_seeded_pipeline(exposure_crop, psf, bad_bitmask, seeds=None, seed_gaia_i
 def run_cutout_gaia(raw_crop, psf, bad_bitmask, gaia_tbl=None, config=None, interior_bbox=None,
                     starCat=None, bgImage=None, viz=False, name="cutout", gmag_max=None,
                     **overrides):
-    """Seeded adaptive run on ONE cropped exposure. Returns a cutout_notebook.CutoutRun
-    whose catalog also has from_gaia / gaia_source_id / gaia_G / gaia_dx / gaia_dy."""
+    """Run the seeded adaptive pipeline on one cropped exposure.
+
+    Parameters
+    ----------
+    raw_crop : `lsst.afw.image.Exposure`
+        Cutout before background subtraction.
+    psf : `lsst.afw.detection.Psf`
+        Initial PSF.
+    bad_bitmask : `int`
+        Mask bits of pixels to ignore.
+    gaia_tbl : `astropy.table.Table`, optional
+        Gaia catalogue (see `lsst.meas.crowd.gaiaSeeds.gaia_catalog`); None = no seeds.
+    config : `dict`, optional
+        Pipeline configuration.
+    interior_bbox : `lsst.geom.Box2I`, optional
+        The requested box without padding (default: the whole cutout).
+    starCat : `lsst.afw.table.SourceCatalog`, optional
+        Detector-level PSF stars.
+    bgImage : `lsst.afw.image.Image`, optional
+        Detector-level background.
+    viz : `bool`, optional
+        Draw the per-pass overview.
+    name : `str`, optional
+        Cutout name.
+    gmag_max : `float`, optional
+        Only seed Gaia sources brighter than this G magnitude.
+    **overrides
+        Configuration overrides.
+
+    Returns
+    -------
+    run : `lsst.meas.crowd.session.CutoutRun`
+        The result; its catalogue also has ``from_gaia``, ``gaia_source_id``, ``gaia_G``,
+        ``gaia_dx`` and ``gaia_dy``.
+    """
     from . import session as cn
     cfg = cn.make_config(config, **overrides)
     P = _params(cfg)
@@ -3205,7 +3942,7 @@ _PAR = {}
 
 
 def _par_worker(name):
-    """Runs in a forked child: inherits the session from _PAR, no pickling of inputs."""
+    """Fit one cutout in a forked worker process (inherits the session, nothing is pickled)."""
     import pickle
     from . import session as cn
     session, config, out_dir, gmag_max, overrides = _PAR["args"]
@@ -3228,23 +3965,43 @@ def _par_worker(name):
 
 def check_bright_neighbours(run, bright_snr=300.0, within_fwhm=4.0, flux_ratio=5.0,
                             n_controls=7, plot=True, max_show=16, verbose=True, similar_min=3):
-    """Are the sources sitting on the edges of bright stars real?
+    """Test whether sources on the edges of bright stars are real.
 
-    For every source within `within_fwhm` FWHM of a star at least `flux_ratio` times
-    brighter (and with peak S/N >= bright_snr), compare its PSF-weighted flux with the flux
-    the residual has at CONTROL positions: the same distance from the bright star, rotated
-    by 45-degree steps.  A mismatch pattern of the bright star (rings, spikes, lobes) puts
-    similar "flux" at several angles; a real star is significantly brighter than its
-    controls.  significance = (flux - median(control flux)) / max(flux error, control scatter)
+    For every source within ``within_fwhm`` FWHM of a star at least ``flux_ratio`` times brighter
+    (with peak S/N >= ``bright_snr``), its PSF-weighted flux is compared with the residual's flux
+    at control positions at the same distance from the bright star, rotated in 45-degree steps.
+    A mismatch pattern of the bright star (rings, spikes, lobes) puts similar flux at several
+    angles; a real star is significantly brighter than its controls.  Verdicts: 'Gaia' (real by
+    construction), 'real' (significance >= 5 and at most one similar angle), 'probable'
+    (significance >= 3, or two similar angles), 'doubtful' (significance < 3, or similar flux at
+    >= ``similar_min`` angles).
 
-    verdict: 'Gaia'       Gaia star (real by construction)
-             'doubtful'   comparable flux (>= half) at >= similar_min (3) control angles:
-                          repeating halo pattern
-             'real'       significance >= 5 and at most 1 similar angle
-             'probable'   3 <= significance (or 2 similar angles -- can be chance)
-             'probable'   3 <= significance < 5
-             'doubtful'   significance < 3  -- indistinguishable from the bright star's halo
-    Returns an astropy Table (also shows thumbnails of the non-Gaia ones if plot=True)."""
+    Parameters
+    ----------
+    run : `lsst.meas.crowd.session.CutoutRun`
+        A finished run.
+    bright_snr : `float`, optional
+        Minimum peak S/N of a bright star.
+    within_fwhm : `float`, optional
+        Neighbour radius [FWHM].
+    flux_ratio : `float`, optional
+        Minimum brightness ratio of the bright star to its neighbour.
+    n_controls : `int`, optional
+        Number of control angles.
+    plot : `bool`, optional
+        Show thumbnails of the non-Gaia neighbours.
+    max_show : `int`, optional
+        Maximum number of thumbnails.
+    verbose : `bool`, optional
+        Print the table.
+    similar_min : `int`, optional
+        Number of similar control angles that makes a source doubtful.
+
+    Returns
+    -------
+    table : `astropy.table.Table`
+        One row per neighbour: position, flux, significance, number of similar angles, verdict.
+    """
     final = run.outer_history[-1]
     exp, res = final["exposure"], final["result"]
     S, fit = res["S"], res["snaps"][-1]["fit"]
@@ -3402,20 +4159,32 @@ def check_bright_neighbours(run, bright_snr=300.0, within_fwhm=4.0, flux_ratio=5
 
 
 def diagnose_residual(run, bright_snr=300.0, disk_fwhm=3.0, plot=True):
-    """Is what is left around bright stars NOISE or MODEL ERROR?
+    """Decide whether what is left around bright stars is noise or model error.
 
-    For three regions -- empty sky, bright-star disks (within disk_fwhm FWHM of stars with
-    peak S/N >= bright_snr; bad / grey / saturated-zone pixels excluded) and everything else
-    on sources -- it reports
-      sigma_z    robust std of residual/sigma (1 = matches the variance plane)
-      coherence  robust std of the 3x3-averaged residual/sigma, x3, divided by sigma_z, squared.
-                 White (pixel-to-pixel) noise gives 1; correlated noise a bit more (see the
-                 sky value); smooth structure the model misses gives clearly more.
-    Bright disks with sigma_z > 1 but coherence ~ the sky value = pixel-scale noise (the
-    star's own photon noise, larger than the variance plane says): no model can remove it.
-    Coherence clearly above the sky value = real structure left to model.
-    Also prints the pixel-to-pixel scatter vs model flux (k = extra variance per unit flux).
-    Returns a dict of the numbers."""
+    For empty sky, bright-star disks (within ``disk_fwhm`` FWHM of stars with peak S/N >=
+    ``bright_snr``) and other source pixels: ``sigma_z`` (robust std of residual/sigma; 1 =
+    matches the variance plane) and ``coherence`` (robust std of the 3x3-averaged residual/sigma,
+    x3, over sigma_z, squared; white noise gives 1).  Also the pixel-to-pixel scatter against
+    model flux, which measures missing photon noise.
+
+    Parameters
+    ----------
+    run : `lsst.meas.crowd.session.CutoutRun`
+        A finished run.
+    bright_snr : `float`, optional
+        Minimum peak S/N of a bright star.
+    disk_fwhm : `float`, optional
+        Radius of the bright-star disks [FWHM].
+    plot : `bool`, optional
+        Show residual/sigma, its 3x3 average and its matched-filter S/N.
+
+    Returns
+    -------
+    result : `dict`
+        Per region ``sigma_z``, ``coherence`` and pixel count; ``highfreq`` (pixel-to-pixel
+        scatter vs model flux, with ``k``) and ``noise_share`` (fraction of the bright-disk excess
+        explained by missing photon noise).
+    """
     from scipy.ndimage import uniform_filter
     final = run.outer_history[-1]
     exp, res = final["exposure"], final["result"]
@@ -3528,8 +4297,24 @@ EXCLUDED_COLOR = "#8c8c8c"      # grey: unmodeled flux next to bad pixels (not i
 
 
 def modeled_near(modeled, bad, fwhm):
-    """Pixels closer to a modelled (near-saturated) core than to any other masked pixel, within
-    reach -- residual blobs there are not grown into the grey area."""
+    """Return the pixels closer to a modelled (near-saturated) core than to any other masked pixel.
+
+    Residual blobs there are not grown into the excluded area by `unmodeled_near_mask`.
+
+    Parameters
+    ----------
+    modeled : `numpy.ndarray` [`bool`]
+        Masked pixels whose star is in the model.
+    bad : `numpy.ndarray` [`bool`]
+        All masked pixels.
+    fwhm : `float`
+        PSF FWHM [px] (unused; kept for a uniform signature).
+
+    Returns
+    -------
+    near : `numpy.ndarray` [`bool`]
+        Pixels nearer to a modelled core than to other masked pixels.
+    """
     from scipy.ndimage import distance_transform_edt
     if not modeled.any():
         return np.zeros(bad.shape, bool)
@@ -3541,13 +4326,37 @@ def modeled_near(modeled, bad, fwhm):
 
 def unmodeled_near_mask(resid, var, bad, fwhm, pad_fwhm=1.5, grow_snr=2.5, reach_fwhm=4.0,
                         modeled=None):
-    """Pixels whose residual cannot be judged because a source there is (partly) under the
-    bad-pixel mask: everything within pad_fwhm*FWHM of a bad pixel, plus any positive
-    residual blob (matched-filter S/N > grow_snr) that touches that pad, limited to
-    reach_fwhm*FWHM from the mask.
-    modeled: masked pixels whose star IS in the model (near-saturated cores fitted from their
-    wings) -- nothing is greyed around those: the residual next to them is real information
-    (wing-fit quality, missed neighbours) and is shown and counted."""
+    """Find the pixels whose residual cannot be judged because a source there is partly masked.
+
+    Everything within ``pad_fwhm`` FWHM of a bad pixel, plus any positive residual blob
+    (matched-filter S/N > ``grow_snr``) touching that pad, out to ``reach_fwhm`` FWHM from the
+    mask.  Masked cores whose star is in the model (``modeled``, near-saturated cores fitted from
+    their wings) get no pad: the residual next to them is real information.
+
+    Parameters
+    ----------
+    resid : `numpy.ndarray`
+        Residual image.
+    var : `numpy.ndarray`
+        Variance image.
+    bad : `numpy.ndarray` [`bool`]
+        Bad pixels.
+    fwhm : `float`
+        PSF FWHM [px].
+    pad_fwhm : `float`, optional
+        Pad around bad pixels [FWHM].
+    grow_snr : `float`, optional
+        Matched-filter S/N of residual blobs grown into the excluded area.
+    reach_fwhm : `float`, optional
+        Maximum distance of the excluded area from the mask [FWHM].
+    modeled : `numpy.ndarray` [`bool`], optional
+        Masked pixels whose star is in the model.
+
+    Returns
+    -------
+    excluded : `numpy.ndarray` [`bool`]
+        Pixels to exclude (not including the bad pixels themselves).
+    """
     from scipy.ndimage import distance_transform_edt, label
     if not bad.any():
         return np.zeros(bad.shape, bool)
@@ -3568,11 +4377,39 @@ def unmodeled_near_mask(resid, var, bad, fwhm, pad_fwhm=1.5, grow_snr=2.5, reach
 
 def run_session_gaia(session, config=None, names=None, out_dir=None, viz=False, plot_final=True,
                      gmag_max=None, n_jobs=1, plot_kwargs=None, **overrides):
-    """Run every (or the named) cutout of a Session with Gaia seeds. Calls attach_gaia()
-    first if session.gaia is missing. Returns {name: CutoutRun}.
-    n_jobs > 1 runs cutouts in parallel worker processes (Linux fork; one core each).
-    Results that cannot be sent back are still saved under out_dir (set it!).
-    plot_kwargs: passed to plot_final_comparison, e.g. dict(circles="none")."""
+    """Run the seeded pipeline on every (or the named) cutout of a session.
+
+    Calls `lsst.meas.crowd.gaiaSeeds.attach_gaia` first if the session has no Gaia catalogue.
+
+    Parameters
+    ----------
+    session : `lsst.meas.crowd.session.Session`
+        The session.
+    config : `dict`, optional
+        Pipeline configuration.
+    names : `list` [`str`], optional
+        Cutouts to run (default: all).
+    out_dir : `str`, optional
+        Save each run under ``<out_dir>/visit<V>_det<D>/<name>/``; needed with ``n_jobs > 1``,
+        since results that cannot be sent back are only on disk.
+    viz : `bool`, optional
+        Draw the per-pass overview.
+    plot_final : `bool`, optional
+        Plot the final comparison of each cutout.
+    gmag_max : `float`, optional
+        Only seed Gaia sources brighter than this G magnitude.
+    n_jobs : `int`, optional
+        Fit cutouts in this many parallel worker processes (Linux fork; one core each).
+    plot_kwargs : `dict`, optional
+        Keyword arguments of `lsst.meas.crowd.plotting.plot_final_comparison`.
+    **overrides
+        Configuration overrides (e.g. ``max_outer=3``).
+
+    Returns
+    -------
+    runs : `dict` [`str`, `lsst.meas.crowd.session.CutoutRun`]
+        The results by cutout name.
+    """
     from . import session as cn
     import matplotlib.pyplot as plt
     from .plotting import plot_final_comparison
@@ -3640,7 +4477,13 @@ def run_session_gaia(session, config=None, names=None, out_dir=None, viz=False, 
 
 
 def report(run):
-    """What the adaptive loops did, pass by pass."""
+    """Print what the adaptive loops did, pass by pass.
+
+    Parameters
+    ----------
+    run : `lsst.meas.crowd.session.CutoutRun`
+        A finished run.
+    """
     hist = getattr(run, "outer_history", run)
     for i, h in enumerate(hist, 1):
         ad = h["result"]["adaptive"]

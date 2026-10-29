@@ -6,9 +6,8 @@
 # Vendored from the original notebook module cutout_fit_lib.py (behaviour unchanged; only the
 # imports of the sibling modules were made package-relative).
 
-"""
-cutout_fit_lib.py
-=================
+"""Crowded-field iterative joint PSF fitting (the original cutout_fit_lib.py).
+
 Crowded-field iterative joint PSF-fit pipeline, extracted verbatim from
 pipelineAnalysis-update5.ipynb (inner loop, outer loop, cutout analysis,
 final-comparison and representative-source plotting).
@@ -94,6 +93,20 @@ from scipy.ndimage import label, binary_dilation, center_of_mass
 # =====================================================================
 
 def bbox_to_slices(bbox, parent_bbox):
+    """Convert a box into array slices relative to a parent box.
+
+    Parameters
+    ----------
+    bbox : `lsst.geom.Box2I`
+        Box to convert.
+    parent_bbox : `lsst.geom.Box2I`
+        Box of the array the slices index (its origin is pixel [0, 0]).
+
+    Returns
+    -------
+    slices : `tuple` [`slice`, `slice`]
+        (y slice, x slice) selecting ``bbox`` from an array covering ``parent_bbox``.
+    """
     x0 = bbox.getMinX() - parent_bbox.getMinX()
     y0 = bbox.getMinY() - parent_bbox.getMinY()
     x1 = x0 + bbox.getWidth()
@@ -102,19 +115,31 @@ def bbox_to_slices(bbox, parent_bbox):
 
 
 def collapse_saturated_peaks(peak_positions, exposure, sat_bitmask=None, dilate_iters=2):
-    """
-    Collapse every peak on/near a saturated blob into ONE representative
-    peak per blob, using a flux-weighted centroid from the unsaturated
-    ring just outside the saturated core (the flat top itself carries no
-    usable position/flux info).
+    """Collapse every peak on or near a saturated blob into one peak per blob.
 
-    Without this, noise on the saturated flat top produces many spurious
-    near-duplicate peaks feeding the joint fit -- their PSF stamps are
-    nearly identical, so lsqr can't distinguish them and splits the true
-    amplitude across them somewhat arbitrarily. That shows up as a
-    blocky, high-frequency noise patch in the model image, tiled across
-    roughly the union of their stamp bboxes, well beyond just the
-    saturated core.
+    The representative position is a flux-weighted centroid from the unsaturated ring just
+    outside the saturated core (the flat top carries no usable position or flux information).
+    Without this, noise on the saturated flat top produces many near-duplicate peaks whose PSF
+    stamps are almost identical; the joint fit then splits the true amplitude between them
+    arbitrarily, which shows up as a blocky, high-frequency patch in the model image.
+
+    Parameters
+    ----------
+    peak_positions : `list` [`tuple` [`float`, `float`]]
+        Peak (x, y) positions in parent pixel coordinates.
+    exposure : `lsst.afw.image.Exposure`
+        Exposure the peaks were detected on.
+    sat_bitmask : `int`, optional
+        Mask bits of saturated pixels (default: the SAT plane).
+    dilate_iters : `int`, optional
+        Number of dilations of the saturated region when assigning peaks to a blob.
+
+    Returns
+    -------
+    peaks : `list` [`tuple` [`float`, `float`]]
+        Peaks with every saturated blob reduced to one representative peak.
+    n_removed : `int`
+        Number of peaks removed.
     """
     if sat_bitmask is None:
         sat_bitmask = exposure.mask.getPlaneBitMask("SAT")
@@ -172,10 +197,25 @@ def collapse_saturated_peaks(peak_positions, exposure, sat_bitmask=None, dilate_
 
 
 def merge_close_peaks(peak_positions, exposure, min_separation=None):
-    """Collapse peaks closer than min_separation, keeping the brightest-pixel
-    representative. Prevents near-duplicate columns (mainly from residual
-    detection artifacts / re-detecting the same wings) from destabilizing
-    the joint solve."""
+    """Merge peaks closer than ``min_separation``, keeping the brightest pixel's peak.
+
+    Prevents near-duplicate columns in the design matrix (mostly from re-detecting the same
+    wings) from destabilising the joint solve.
+
+    Parameters
+    ----------
+    peak_positions : `list` [`tuple` [`float`, `float`]]
+        Peak (x, y) positions in parent pixel coordinates.
+    exposure : `lsst.afw.image.Exposure`
+        Exposure whose pixel values rank the peaks.
+    min_separation : `float`, optional
+        Merge radius [px] (default: twice the PSF sigma).
+
+    Returns
+    -------
+    merged_positions : `list` [`tuple` [`float`, `float`]]
+        Surviving peak positions.
+    """
     if len(peak_positions) == 0:
         return []
     if min_separation is None:
@@ -227,34 +267,35 @@ def merge_close_peaks(peak_positions, exposure, min_separation=None):
 
 
 def joint_psf_fit(exposure, psf, peak_positions, bad_bitmask, amp_zero_tol=1e-6):
-    """
-    Simultaneous amplitude fit for all peak_positions via one sparse
-    weighted BOUND-CONSTRAINED least-squares solve against the ORIGINAL
-    exposure.
+    """Fit all PSF amplitudes simultaneously with a non-negative least-squares solve.
 
-    Previously this used unconstrained `lsqr` followed by
-    `np.clip(amps, 0, None)`. That's not equivalent to a non-negative fit:
-    when two PSF stamps overlap (a faint source near a brighter one, or
-    just correlated columns in a crowded field), the unconstrained solve
-    is free to assign one of them a negative coefficient to compensate,
-    and clipping it to 0 afterward doesn't let the OTHER coefficients
-    re-adjust to make up for it. The zeroed source's real flux is then
-    skipped entirely when building model_full (see `if amps[j] <= 0:
-    continue` below) and stays fully in the residual, unsubtracted --
-    while the global residual std, dominated by the rest of the image,
-    barely moves. That's how a source can sit there every pass, visibly
-    present in the data, invisible in the model, while the loop still
-    reports convergence.
+    One sparse, weighted, bound-constrained solve against the original exposure.  Unlike an
+    unconstrained solve followed by clipping, ``lsq_linear`` with bounds (0, inf) lets the other
+    amplitudes re-adjust when one source is pushed to zero, so overlapping sources get a real
+    non-negative amplitude instead of one of them being dropped from the model.
 
-    `lsq_linear` with bounds=(0, inf) solves the properly-constrained
-    problem instead, so overlapping/blended sources get a real
-    non-negative amplitude distributed correctly across the design
-    matrix rather than one of them being arbitrarily zeroed out.
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        Image to fit (image, variance and mask planes are used).
+    psf : `lsst.afw.detection.Psf`
+        PSF model.
+    peak_positions : `list` [`tuple` [`float`, `float`]]
+        Source (x, y) positions in parent pixel coordinates.
+    bad_bitmask : `int`
+        Mask bits of pixels to ignore.
+    amp_zero_tol : `float`, optional
+        Amplitudes at or below this count as zero.
 
-    Returns (amps, model_full, n_at_zero_bound) -- the last value is how
-    many peaks converged to (numerically) zero amplitude this pass, useful
-    for spotting sources that are still failing to fit rather than being
-    genuinely absent.
+    Returns
+    -------
+    amps : `numpy.ndarray`
+        Fitted amplitudes (fluxes), one per position.
+    model_full : `numpy.ndarray`
+        Model image over the exposure's box.
+    n_at_zero_bound : `int`
+        Number of sources that converged to (numerically) zero amplitude -- sources that still
+        fail to fit rather than being absent.
     """
     exp_bbox = exposure.getBBox()
     ny, nx = exp_bbox.getHeight(), exp_bbox.getWidth()
@@ -338,31 +379,47 @@ def iterative_joint_detection(
     convergence_frac=0.02,    # stop if residual std improves by less than this fraction
     verbose=True,
 ):
-    """
-    Iteratively:
-      1. detect on the current residual (threshold decreasing each pass, so
-         fainter sources are only searched for once brighter ones are gone),
-      2. collapse spurious multi-peak detections on saturated cores into one
-         representative peak per saturated blob,
-      3. merge the new peaks in with every peak found so far,
-      4. jointly refit ALL peaks against the ORIGINAL exposure with a
-         bound-constrained (non-negative) solve, so overlapping/blended
-         peaks get a real amplitude instead of one being zeroed out
-         arbitrarily (every pass is a full re-solve, so noise/errors from
-         an early pass don't get baked in and compounded),
-      5. rebuild the residual from that full refit.
+    """Detect, fit and subtract iteratively until the residual stops yielding new sources.
 
-    Stops when a pass turns up ~no new peaks, or the residual std stops
-    improving meaningfully. Also prints, each pass, how many peaks
-    converged to zero amplitude in the joint fit -- watch this number: if
-    it's large or not shrinking, real sources are being fit down to
-    nothing rather than genuinely being absent, and the global residual
-    std can still look "converged" while that's happening.
+    Each pass: (1) detect on the current residual with a decreasing threshold, so fainter
+    sources are searched for once brighter ones are gone; (2) collapse multiple peaks on
+    saturated cores; (3) merge the new peaks with all peaks found so far; (4) refit all of them
+    jointly against the original exposure with a non-negative solve; (5) rebuild the residual.
+    Every pass is a full re-solve, so errors from an early pass are not compounded.  The number
+    of zero-amplitude sources is printed each pass: if it is large or not shrinking, real
+    sources are being fitted down to nothing.
 
-    Also tracks, in `first_seen`, the iteration index at which each final
-    peak position was first introduced (keyed by position rounded to 0.1
-    px), so downstream plotting can color/label detections by which pass
-    found them.
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        Image to fit.
+    psf : `lsst.afw.detection.Psf`
+        PSF model.
+    bad_bitmask : `int`
+        Mask bits of pixels to ignore.
+    n_iterations : `int`, optional
+        Maximum number of passes.
+    threshold_start : `float`, optional
+        Detection threshold [sigma] of the first pass.
+    threshold_step : `float`, optional
+        Change of the threshold per pass (negative: decreasing).
+    threshold_min : `float`, optional
+        Lowest detection threshold [sigma].
+    min_pixels : `int`, optional
+        Minimum footprint size of a detection.
+    min_new_peaks : `int`, optional
+        Stop when a pass finds fewer new peaks than this.
+    convergence_frac : `float`, optional
+        Stop when the residual standard deviation improves by less than this fraction.
+    verbose : `bool`, optional
+        Print progress.
+
+    Returns
+    -------
+    result : `dict`
+        ``model_full``, ``residual_full``, ``peaks``, ``amps``, the per-pass histories
+        (``resid_std_history``, ``n_peaks_history``, ``n_zero_amp_history``) and ``first_seen``
+        (pass index at which each peak, keyed by its position rounded to 0.1 px, was found).
     """
     exp_bbox = exposure.getBBox()
 
@@ -492,33 +549,40 @@ def plot_tiled_comparison(
     row_select='max_flux',
     stretch='log'
 ):
-    """
-    Grid of (data, model, residual[, row profile]) panels, one set per
-    tile_size x tile_size block, covering the full image.
+    """Plot data, model and residual (and a row profile) for every tile of an image.
 
-    global_scale controls only the data/model panels: True uses one shared
-    vmin/vmax/log-norm across all tiles; False lets each tile rescale
-    locally.
+    The data and model panels share one colour scale when ``global_scale`` is True; the
+    residual panel always scales to its own tile.  With ``show_row_profile`` a fourth panel
+    shows data and model along one row of the tile (marked with a dashed cyan line), so the
+    model can be compared with the data through a crowded section.
 
-    The residual panel ALWAYS scales to the current cutout -- its colorbar
-    range is recomputed per tile from that tile's own residual pixels.
-
-    show_row_profile adds a 4th panel: a horizontal line profile (data vs.
-    model, with the residual overlaid) through one row of the tile, so you
-    can see directly how well the model tracks the data through a crowded
-    section of the cutout rather than just eyeballing the 2D residual map.
-
-    row_select picks WHICH row of each tile to slice:
-      - 'max_flux' (default): the row with the highest total data counts
-        in this tile -- i.e. the row cutting through the most/brightest
-        sources, which is usually the most informative "crowded section."
-      - an int: a fixed row index, LOCAL to each tile (0 at the tile's
-        bottom edge).
-      - a callable: called as row_select(tile_data) and must return a
-        local row index.
-
-    The chosen row is marked with a dashed cyan line on the data and
-    model panels for reference.
+    Parameters
+    ----------
+    data_full, model_full, residual_full : `numpy.ndarray`
+        Data, model and residual images (same shape).
+    n_sources : `int`, optional
+        Number of sources, for the title.
+    n_passes : `int`, optional
+        Number of detection passes, for the title.
+    tile_size : `int`, optional
+        Tile size [px].
+    cmap_img : `str`, optional
+        Colour map of the data and model panels (default: 'mako' if available, else 'viridis').
+    global_scale : `bool`, optional
+        One colour scale for all data / model panels instead of one per tile.
+    skip_empty : `bool`, optional
+        Skip tiles whose data standard deviation is below ``empty_std_thresh``.
+    empty_std_thresh : `float`, optional
+        See ``skip_empty``.
+    figsize_per_panel : `float`, optional
+        Size of one panel [inches].
+    show_row_profile : `bool`, optional
+        Add the row-profile panel.
+    row_select : `str`, `int` or callable, optional
+        Row of each tile to profile: 'max_flux' (the row with the most flux), a row index local
+        to the tile, or a function ``row_select(tile_data) -> row index``.
+    stretch : `str`, optional
+        Stretch of the data / model colour scale.
     """
     if cmap_img is None:
         cmap_img = 'mako' if 'mako' in plt.colormaps() else 'viridis'
@@ -624,15 +688,23 @@ def plot_tiled_comparison(
 # =====================================================================
 
 def plot_detections_by_iteration(exposure_crop, result_iter):
-    """
-    Scatter every fitted peak on top of the crop, colored/marker-coded by
-    which detection pass first found it. Peaks whose final joint-fit
-    amplitude landed at (numerically) zero -- i.e. hit the non-negativity
-    bound in joint_psf_fit -- are flagged as failed fits with a red 'x'.
-    These are exactly the peaks to look at if sources still seem to be
-    missing from the model: they were detected, but the joint fit could
-    not give them a positive amplitude, most likely because of overlap
-    with a brighter neighbor's PSF stamp.
+    """Plot every fitted peak over the image, coded by the pass that first found it.
+
+    Peaks whose final amplitude is (numerically) zero -- they hit the non-negativity bound --
+    are marked as failed fits with a red 'x'; they are the ones to inspect if sources seem to
+    be missing from the model.
+
+    Parameters
+    ----------
+    exposure_crop : `lsst.afw.image.Exposure`
+        Image the pipeline ran on.
+    result_iter : `dict`
+        Output of `iterative_joint_detection`.
+
+    Returns
+    -------
+    sources_tbl : `astropy.table.Table`
+        Positions, amplitudes and detection pass of the sources.
     """
     xy0 = exposure_crop.getXY0()  # (x0, y0) of this crop in the original exposure's frame
     x0, y0 = xy0.getX(), xy0.getY()
@@ -702,25 +774,32 @@ def plot_detections_by_iteration(exposure_crop, result_iter):
 
 def mask_sources_from_model(exposure, model_full, noise_sigma=None,
                              n_sigma=4.0, dilate_iters=1, verbose=True):
-    """
-    Flag every pixel where the current joint-fit model has non-negligible
-    flux as DETECTED, so the next background fit treats it as source, not
-    sky.
+    """Flag pixels where the joint-fit model has significant flux as DETECTED.
 
-    Uses the joint model (built from ALL peaks across ALL inner passes)
-    rather than raw detection footprints -- by the time the inner loop has
-    converged, this is the best available source mask, including sources
-    too faint for the very first background/PSF pass to have known about.
+    The next background fit then treats them as source, not sky.  The joint model contains all
+    sources found so far, including ones too faint for the first background pass.  A loose
+    threshold flags most of the image and starves the background fit; if the printed masked
+    fraction climbs much above ~50 %, tighten ``n_sigma`` or ``dilate_iters``.
 
-    n_sigma/dilate_iters default to a fairly tight mask (4 sigma, 1 px
-    dilation). The joint-fit model includes broad PSF wings, so a looser
-    threshold (e.g. 2 sigma) + heavier dilation (e.g. 3 iters) can end up
-    flagging the majority of the image as "source," starving the
-    background fit and the subsequent star selector/PSF determiner of
-    usable pixels/candidates. If you see the masked fraction below climb
-    much past ~50%, tighten n_sigma and/or dilate_iters further.
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        Exposure whose mask is modified in place.
+    model_full : `numpy.ndarray`
+        Model image over the exposure's box.
+    noise_sigma : `float`, optional
+        Pixel noise (default: sqrt of the median variance).
+    n_sigma : `float`, optional
+        Model pixels above ``n_sigma * noise_sigma`` are flagged.
+    dilate_iters : `int`, optional
+        Number of dilations of the flagged region.
+    verbose : `bool`, optional
+        Print the masked fraction.
 
-    Modifies exposure.mask in place. Returns the boolean source mask.
+    Returns
+    -------
+    src_mask : `numpy.ndarray` [`bool`]
+        The flagged pixels.
     """
     if noise_sigma is None:
         noise_sigma = np.sqrt(np.nanmedian(exposure.variance.array))
@@ -749,23 +828,31 @@ def refit_background(exposure, algorithm='AKIMA_SPLINE', bin_size=32,
                       use_approx=True,
                       stats_mask=("BAD", "SAT", "EDGE", "NO_DATA", "DETECTED",
                                   "CR", "INTRP")):
-    """
-    Re-derive the background on `exposure` (already mask-flagged by
-    mask_sources_from_model), ignoring flagged pixels. Subtracts it in
-    place, exactly like your original background.run(exposure) call.
+    """Re-derive the background ignoring masked pixels and subtract it in place.
 
-    use_approx=True fits a smooth Chebyshev polynomial surface to the
-    binned background statistics (SubtractBackgroundConfig.useApprox)
-    instead of spline-interpolating between bin centers -- generally more
-    robust to a noisy/sparse binned-stats grid (e.g. from the large
-    masked fraction here) than the spline algorithms. When True, the
-    `algorithm` field below is not used (it only applies to the
-    non-approx interpolation path); it's left in place so you can flip
-    use_approx back to False without losing that setting.
+    Pass a fresh clone of the raw (never background-subtracted) exposure, already flagged by
+    `mask_sources_from_model`, or the background is subtracted twice.
 
-    IMPORTANT: pass a fresh clone of the RAW (never-background-subtracted)
-    exposure here, not something already background-subtracted, or you'll
-    double-subtract.
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        Exposure to background-subtract in place.
+    algorithm : `str`, optional
+        Interpolation algorithm (only used when ``use_approx`` is False).
+    bin_size : `int`, optional
+        Background bin size [px].
+    use_approx : `bool`, optional
+        Fit a smooth Chebyshev surface to the binned statistics instead of interpolating;
+        more robust when many pixels are masked.
+    stats_mask : `tuple` [`str`], optional
+        Mask planes ignored when computing the background statistics.
+
+    Returns
+    -------
+    exposure : `lsst.afw.image.Exposure`
+        The background-subtracted exposure (same object).
+    background : `lsst.afw.image.Image`
+        The subtracted background image.
     """
     bg_config = SubtractBackgroundConfig()
     bg_config.algorithm = algorithm
@@ -787,29 +874,35 @@ def refit_background(exposure, algorithm='AKIMA_SPLINE', bin_size=32,
 def catalog_from_peaks(exposure, peak_positions, schema, measureTask,
                         stamp_radius=15, exclude_positions=None,
                         exclude_radius=5.0, verbose=True):
-    """
-    Build a measured SourceCatalog directly from raw (x, y) peak
-    positions -- e.g. the full converged peak list from
-    iterative_joint_detection, which by the end of outer pass 1 already
-    includes far more (and fainter) sources than a single fresh
-    SourceDetectionTask pass on the redetermined background will
-    rediscover on its own.
+    """Build a measured SourceCatalog from raw (x, y) peak positions.
 
-    Each peak gets a circular footprint of radius `stamp_radius` and a
-    single Peak record, then the WHOLE catalog is run through the same
-    `measureTask` used on the fresh detections, so the resulting fields
-    (centroid, shape, flux) are directly comparable/mergeable with them
-    and usable by ObjectSizeStarSelectorTask.
+    Each peak gets a circular footprint and one Peak record, and the catalogue is measured with
+    the same ``measureTask`` as fresh detections, so the fields are comparable and usable by the
+    star selector.
 
-    `schema` must be the SAME schema object already used to build
-    `measureTask` (and, if you're merging with a freshly-detected
-    catalog, the same one used there too) -- SourceCatalog can only be
-    combined/compared when schemas match.
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        Exposure to measure on.
+    peak_positions : `list` [`tuple` [`float`, `float`]]
+        Peak positions in parent pixel coordinates.
+    schema : `lsst.afw.table.Schema`
+        The schema used to build ``measureTask``.
+    measureTask : `lsst.meas.base.SingleFrameMeasurementTask`
+        Measurement task.
+    stamp_radius : `int`, optional
+        Footprint radius [px].
+    exclude_positions : `list` [`tuple` [`float`, `float`]], optional
+        Skip peaks within ``exclude_radius`` of these positions (e.g. existing detections).
+    exclude_radius : `float`, optional
+        See ``exclude_positions`` [px].
+    verbose : `bool`, optional
+        Print how many peaks were skipped.
 
-    exclude_positions optionally skips peaks within exclude_radius of an
-    existing position (e.g. sources the fresh detection pass already
-    found), to avoid feeding the star selector near-duplicate entries
-    for the same physical source.
+    Returns
+    -------
+    catalog : `lsst.afw.table.SourceCatalog`
+        The measured catalogue.
     """
     table = afwTable.SourceTable.make(schema)
     catalog = afwTable.SourceCatalog(table)
@@ -866,15 +959,24 @@ import math
 # =====================================================================
 
 def _set_psf_determiner_kernel_size(psf_determiner_config, kernel_size, verbose=True):
-    """
-    Sets whatever size-related field(s) actually exist on this stack's
-    PcaPsfDeterminerConfig to kernel_size. stampSize (present on every
-    checked version) controls the rendered OUTPUT eigen-image size. Some
-    stack versions additionally expose kernelSizeMin/kernelSizeMax,
-    bounding the region actually used DURING the fit -- but not all do
-    (confirmed absent on this stack, which only has stampSize plus the
-    unrelated sizeCellX/sizeCellY grid-partitioning fields), so each is
-    set only if present rather than assumed.
+    """Set the size fields that exist on this stack's PcaPsfDeterminerConfig.
+
+    ``stampSize`` always; ``kernelSizeMin`` / ``kernelSizeMax`` only where present (they are
+    absent on some stack versions).
+
+    Parameters
+    ----------
+    psf_determiner_config : `lsst.meas.algorithms.PcaPsfDeterminerConfig`
+        Config to modify in place.
+    kernel_size : `int`
+        Kernel size [px].
+    verbose : `bool`, optional
+        Print the extra fields that were set.
+
+    Returns
+    -------
+    psf_determiner_config : `lsst.meas.algorithms.PcaPsfDeterminerConfig`
+        The same config.
     """
     psf_determiner_config.stampSize = kernel_size
 
@@ -895,16 +997,22 @@ def _set_psf_determiner_kernel_size(psf_determiner_config, kernel_size, verbose=
 # =====================================================================
 
 def _filter_valid_psf_candidates(psfCandidateList, verbose=True):
-    """
-    Drop candidates with an unusable postage stamp (NaN/inf pixels, or an
-    empty/all-zero stamp). Do NOT check chi2/amplitude/status here --
-    those are still at their pre-fit defaults (chi2=DBL_MAX, amplitude=0,
-    status=UNKNOWN) until PcaPsfDeterminerTask.determinePsf() actually
-    runs, so filtering on them here would reject every candidate
-    unconditionally. Candidates whose stamp extraction genuinely failed
-    (LengthError -- box doesn't fit in the exposure) are already dropped
-    inside MakePsfCandidatesTask.run() itself, so there's nothing left
-    to filter for that failure mode.
+    """Drop PSF candidates whose postage stamp is unusable (non-finite or empty).
+
+    chi2 / amplitude / status are not checked: they keep their pre-fit defaults until the PSF
+    determiner runs.
+
+    Parameters
+    ----------
+    psfCandidateList : `list`
+        PSF candidates from MakePsfCandidatesTask.
+    verbose : `bool`, optional
+        Print the dropped candidates.
+
+    Returns
+    -------
+    good : `list`
+        Candidates with a usable stamp.
     """
     good = []
     n_bad = 0
@@ -942,44 +1050,52 @@ def redetect_and_refit_psf(exposure, det_threshold=3.0, det_min_pixels=2,
                             force_include_star_positions=None,
                             peak_stamp_radius=15,
                             verbose=True):
-    """
-    Full detect -> deblend -> measure -> select stars -> determine PSF
-    pass, mirroring your original one-shot pipeline. Run this at the top
-    of every outer iteration so the star selector and PSF determiner see
-    the newly-cleaned background (and any newly detectable stars) instead
-    of reusing the very first pass's PSF forever.
+    """Detect, deblend, measure, select stars and determine a new PSF.
 
-    extra_peak_positions: optional list of (x, y) -- e.g. the FULL
-    converged peak catalog from the previous outer pass's
-    iterative_joint_detection run. Folded in via catalog_from_peaks()
-    before star selection runs.
+    Mirrors the original one-shot pipeline, so each outer pass works on the newly cleaned
+    background.  Extra peak positions (e.g. the previous pass's converged catalogue) are added
+    before star selection; forced star positions are appended after selection, bypassing its
+    cuts.  Candidates with failed stamps are filtered out before the PSF determiner runs (even
+    one can make it reject the whole set).  If too few candidates survive, the exposure's
+    current PSF is kept and a "NOT updated" note is printed.
 
-    force_include_star_positions: optional list of (x, y) -- e.g. the
-    ORIGINAL PSF star candidate positions from before this outer-loop
-    script ever ran. Measured fresh via catalog_from_peaks() and appended
-    onto starCat AFTER selection, bypassing the selector's cuts entirely.
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        Background-subtracted exposure.
+    det_threshold : `float`, optional
+        Detection threshold [sigma].
+    det_min_pixels : `int`, optional
+        Minimum footprint size.
+    det_local_bg_bin : `int`, optional
+        Bin size of the temporary local background [px].
+    det_bg_bin : `int`, optional
+        Bin size of the detection background [px].
+    star_selector_config : `lsst.meas.algorithms.ObjectSizeStarSelectorConfig`, optional
+        Star selector configuration.
+    psf_determiner_config : `lsst.meas.algorithms.PcaPsfDeterminerConfig`, optional
+        PSF determiner configuration.
+    kernel_size : `int`, optional
+        PSF kernel size [px], used for both the candidates and the determiner.
+    extra_peak_positions : `list` [`tuple` [`float`, `float`]], optional
+        Additional peaks measured and offered to the star selector.
+    force_include_star_positions : `list` [`tuple` [`float`, `float`]], optional
+        Star positions appended to the selected stars regardless of the selector's cuts.
+    peak_stamp_radius : `int`, optional
+        Footprint radius of the extra / forced peaks [px].
+    verbose : `bool`, optional
+        Print progress.
 
-    kernel_size is set explicitly and IDENTICALLY on MakePsfCandidatesTask
-    (kernelSize) and PcaPsfDeterminerTask (via
-    _set_psf_determiner_kernel_size, which sets stampSize always, plus
-    kernelSizeMin/kernelSizeMax only where those fields actually exist on
-    this stack's config).
-
-    Before determinePsf() is called, psfCandidateList is filtered through
-    _filter_valid_psf_candidates() to drop any candidate whose stamp
-    extraction failed (status=UNKNOWN, chi2=inf, amplitude=0) --
-    MakePsfCandidatesTask logs these ("Could not get stamp for
-    psfCandidate...") but does not remove them on its own, and even one
-    can poison PcaPsfDeterminerTask's internal eigen-fit and cause it to
-    reject the WHOLE set ("No viable PSF candidates survive").
-
-    If too few viable candidates survive anyway, this falls back to
-    keeping the exposure's current PSF rather than crashing the outer
-    loop, and prints an explicit NOT-updated note with the FWHM
-    comparison so it's visible directly in the log which passes actually
-    changed the PSF.
-
-    Returns (psf_new, sources, starCat, cellSet).
+    Returns
+    -------
+    psf_new : `lsst.afw.detection.Psf`
+        The new PSF (or the current one if it could not be determined).
+    sources : `lsst.afw.table.SourceCatalog`
+        Measured detections.
+    starCat : `lsst.afw.table.SourceCatalog`
+        Selected PSF stars.
+    cellSet : `lsst.afw.math.SpatialCellSet`
+        PSF candidates used by the determiner.
     """
     installPsfTask = InstallGaussianPsfTask()
     installPsfTask.run(exposure)
@@ -1125,40 +1241,43 @@ def outer_loop_psf_background_refinement(
     psf_kernel_size=41,
     verbose=True,
 ):
-    """
-    Outer pass 0: run your existing inner loop (iterative_joint_detection)
-    once, using whatever background/PSF you already derived.
+    """Alternate inner-loop fits with background and PSF re-derivation.
 
-    Outer pass k>0: use pass k-1's converged model_full to mask out every
-    known source on a fresh clone of the RAW image, re-derive the
-    background, redetect/reselect/redetermine the PSF (using both the
-    full converged peak catalog from pass k-1 AND, forced in regardless of
-    selector cuts, the original star positions from `initial_star_cat`),
-    then rerun the inner loop from scratch against the new exposure/PSF.
+    Pass 0 runs `iterative_joint_detection` with the current background and PSF.  Pass k > 0
+    masks every known source (from pass k-1's model) on a fresh clone of the raw image,
+    re-derives the background, re-determines the PSF (offering pass k-1's catalogue and forcing
+    in ``initial_star_cat``) and reruns the inner loop.
 
-    initial_star_cat: optional SourceCatalog -- pass in whatever
-    ObjectSizeStarSelectorTask produced in your pipeline-setup notebook
-    BEFORE this script ran. Its positions get re-measured fresh on each
-    outer pass's new background and forced into the PSF candidate list
-    every time.
+    Parameters
+    ----------
+    raw_exposure_crop : `lsst.afw.image.Exposure`
+        Crop before any background subtraction.
+    psf_initial : `lsst.afw.detection.Psf`
+        PSF of the first pass.
+    bad_bitmask : `int`
+        Mask bits of pixels to ignore.
+    initial_star_cat : `lsst.afw.table.SourceCatalog`, optional
+        Star selector output whose positions are forced into every PSF determination.
+    n_outer_iterations : `int`, optional
+        Maximum number of outer passes.
+    n_inner_iterations : `int`, optional
+        Maximum number of inner passes (when ``inner_kwargs`` is not given).
+    inner_kwargs : `dict`, optional
+        Keyword arguments of `iterative_joint_detection`.
+    outer_convergence_frac : `float`, optional
+        Stop when the residual standard deviation improves by less than this fraction.
+    bg_use_approx : `bool`, optional
+        See `refit_background`.
+    psf_kernel_size : `int`, optional
+        PSF kernel size [px].
+    verbose : `bool`, optional
+        Print progress.
 
-    NOTE: if your log shows most of these positions being "skipped out of
-    bounds" every pass, double check that initial_star_cat is really the
-    small star-selector output (not a full detection catalog) and that
-    its centroids are in the same frame as raw_exposure_crop's bbox.
-
-    Stops at n_outer_iterations, or earlier if the inner loop's final
-    residual std stops improving by more than outer_convergence_frac
-    between consecutive outer passes.
-
-    `raw_exposure_crop` should be the crop BEFORE any background
-    subtraction (or, if you only have the already-subtracted version,
-    at minimum re-clone it fresh each outer pass so passes don't
-    compound background-subtraction errors on top of each other).
-
-    Returns a list of dicts, one per outer pass, each with:
-      'psf', 'exposure', 'result' (the iterative_joint_detection output),
-      'resid_std', 'n_peaks'.
+    Returns
+    -------
+    outer_history : `list` [`dict`]
+        One dict per outer pass: ``psf``, ``exposure``, ``result`` (inner-loop output),
+        ``resid_std``, ``n_peaks``.
     """
     if inner_kwargs is None:
         inner_kwargs = dict(n_iterations=n_inner_iterations, threshold_start=8.0,
@@ -1239,12 +1358,20 @@ def outer_loop_psf_background_refinement(
 # =====================================================================
 
 def _extract_peak_xy(peaks):
-    """
-    Best-effort extraction of (x, y) arrays from result['peaks'], whose
-    exact type/schema isn't known here. Tries, in order: afw-style
-    getX()/getY(), plain .x/.y attributes, dict-like with 'x'/'y' keys,
-    and finally indexable (x, y) pairs. Adjust this if your peak format
-    doesn't match any of these.
+    """Extract (x, y) arrays from peaks of unknown type.
+
+    Tries afw-style ``getX()``/``getY()``, ``.x``/``.y`` attributes, dicts with 'x'/'y' keys and
+    finally indexable (x, y) pairs.
+
+    Parameters
+    ----------
+    peaks : iterable
+        The peaks.
+
+    Returns
+    -------
+    xs, ys : `numpy.ndarray`
+        Peak coordinates.
     """
     xs, ys = [], []
     for p in peaks:
@@ -1264,7 +1391,15 @@ def _extract_peak_xy(peaks):
 
 
 def plot_psf_models_by_outer_pass(outer_history, exposure_center=None):
-    """Rendered PSF kernel image (at the crop center) used in each outer pass."""
+    """Plot the PSF kernel image used in each outer pass.
+
+    Parameters
+    ----------
+    outer_history : `list` [`dict`]
+        Outer-loop history (each entry has ``psf`` and ``exposure``).
+    exposure_center : `lsst.geom.Point2D`, optional
+        Position at which to render the kernel (default: the exposure centre).
+    """
     n = len(outer_history)
     fig, axes = plt.subplots(1, n, figsize=(4 * n, 4))
     if n == 1:
@@ -1284,10 +1419,14 @@ def plot_psf_models_by_outer_pass(outer_history, exposure_center=None):
 
 
 def plot_background_by_outer_pass(outer_history):
-    """
-    Background image re-derived going INTO each outer pass. Pass 1 has no
-    separately-tracked background here (it uses whatever background your
-    original pipeline-setup notebook already subtracted), so it's skipped.
+    """Plot the background re-derived going into each outer pass.
+
+    The first pass uses the background subtracted before the pipeline ran and is skipped.
+
+    Parameters
+    ----------
+    outer_history : `list` [`dict`]
+        Outer-loop history (entries may have ``bg_image``).
     """
     passes_with_bg = [(i, h) for i, h in enumerate(outer_history)
                        if h.get("bg_image") is not None]
@@ -1312,7 +1451,17 @@ def plot_background_by_outer_pass(outer_history):
 
 
 def plot_sources_overlaid_by_pass(outer_history, marker_size=25, vmin_pct=5, vmax_pct=99):
-    """Data image per outer pass with converged peak positions overlaid."""
+    """Plot the data of each outer pass with its converged peak positions.
+
+    Parameters
+    ----------
+    outer_history : `list` [`dict`]
+        Outer-loop history.
+    marker_size : `float`, optional
+        Marker size.
+    vmin_pct, vmax_pct : `float`, optional
+        Percentiles of the display range.
+    """
     n = len(outer_history)
     fig, axes = plt.subplots(1, n, figsize=(5 * n, 5))
     if n == 1:
@@ -1350,7 +1499,13 @@ def plot_sources_overlaid_by_pass(outer_history, marker_size=25, vmin_pct=5, vma
     plt.show()
 
 def plot_outer_loop_summary(outer_history):
-    """Residual std and total peak count vs outer pass, side by side."""
+    """Plot the residual standard deviation and the source count against outer pass.
+
+    Parameters
+    ----------
+    outer_history : `list` [`dict`]
+        Outer-loop history (entries have ``resid_std`` and ``n_peaks``).
+    """
     n_outer = len(outer_history)
     passes = np.arange(1, n_outer + 1)
     resid_stds = [h['resid_std'] for h in outer_history]
@@ -1376,7 +1531,20 @@ def plot_outer_loop_summary(outer_history):
 
 
 def plot_psf_fwhm_by_outer_pass(outer_history, exposure_center=None):
-    """FWHM (at the crop center) of the PSF used in each outer pass."""
+    """Plot the FWHM of the PSF used in each outer pass.
+
+    Parameters
+    ----------
+    outer_history : `list` [`dict`]
+        Outer-loop history.
+    exposure_center : `lsst.geom.Point2D`, optional
+        Position at which to evaluate the PSF (default: the exposure centre).
+
+    Returns
+    -------
+    fwhms : `list` [`float`]
+        FWHM [px] per outer pass.
+    """
     fwhms = []
     for h in outer_history:
         point = exposure_center or h['exposure'].getBBox().getCenter()
@@ -1492,14 +1660,39 @@ _TEXT_OUTLINE = [pe.withStroke(linewidth=2.5, foreground='k')]
 # =====================================================================
 
 class StepTimer:
-    """Collects (label, seconds, outer, inner, kind) records."""
+    """Collect timing records of pipeline steps.
+
+    Each record is a dict with ``label``, ``seconds``, ``outer``, ``inner`` and ``kind``
+    ('compute' or 'viz').
+    """
 
     def __init__(self):
+        """Start an empty timer."""
         self.records = []
         self.t_start = time.perf_counter()
 
     @contextmanager
     def step(self, label, outer=None, inner=None, kind='compute', verbose=False):
+        """Time a block of code (context manager).
+
+        Parameters
+        ----------
+        label : `str`
+            Step name.
+        outer : `int`, optional
+            Outer-pass index.
+        inner : `int`, optional
+            Inner-iteration index.
+        kind : `str`, optional
+            'compute' or 'viz'.
+        verbose : `bool`, optional
+            Print the elapsed time.
+
+        Yields
+        ------
+        rec : `dict`
+            The record; ``seconds`` is filled in when the block exits.
+        """
         rec = dict(label=label, seconds=0.0, outer=outer, inner=inner, kind=kind)
         t0 = time.perf_counter()
         try:
@@ -1511,10 +1704,26 @@ class StepTimer:
                 print(f"    [time] {label}: {rec['seconds']:.3f}s")
 
     def add(self, label, seconds, outer=None, inner=None, kind='compute'):
+        """Add a record with a known duration.
+
+        Parameters
+        ----------
+        label : `str`
+            Step name.
+        seconds : `float`
+            Duration [s].
+        outer : `int`, optional
+            Outer-pass index.
+        inner : `int`, optional
+            Inner-iteration index.
+        kind : `str`, optional
+            'compute' or 'viz'.
+        """
         self.records.append(dict(label=label, seconds=seconds, outer=outer,
                                  inner=inner, kind=kind))
 
     def reset(self):
+        """Remove all records and restart the clock."""
         self.records.clear()
         self.t_start = time.perf_counter()
 
@@ -1523,7 +1732,13 @@ TIMER = StepTimer()
 
 
 def plot_timing_summary(timer=TIMER):
-    """Bar chart of total time per step + stacked time per inner iteration."""
+    """Plot the total time per step and the time per inner iteration.
+
+    Parameters
+    ----------
+    timer : `StepTimer`, optional
+        Timer to summarise (default: the module-level ``TIMER``).
+    """
     comp = [r for r in timer.records if r['kind'] == 'compute']
     viz = [r for r in timer.records if r['kind'] == 'viz']
     if not comp:
@@ -1580,7 +1795,25 @@ def plot_timing_summary(timer=TIMER):
 # =====================================================================
 
 def make_cutout(exposure_crop, x_range=(0, 100), y_range=(0, 100)):
-    """Sub-exposure in coordinates RELATIVE to exposure_crop's own corner."""
+    """Cut a sub-exposure out of a crop, in coordinates relative to the crop's corner.
+
+    Parameters
+    ----------
+    exposure_crop : `lsst.afw.image.Exposure`
+        The crop.
+    x_range, y_range : `tuple` [`int`, `int`], optional
+        Pixel ranges relative to the crop's origin (end exclusive).
+
+    Returns
+    -------
+    cutout : `lsst.afw.image.Exposure`
+        A deep copy of the sub-exposure.
+
+    Raises
+    ------
+    TypeError
+        Raised if ``exposure_crop`` is not an Exposure.
+    """
     if not hasattr(exposure_crop, 'getXY0'):
         raise TypeError(
             "make_cutout() got a "
@@ -1596,22 +1829,26 @@ def make_cutout(exposure_crop, x_range=(0, 100), y_range=(0, 100)):
 
 
 def _extent(bbox):
+    """Return the matplotlib extent (pixel edges) of a box."""
     return (bbox.getMinX() - 0.5, bbox.getMaxX() + 0.5,
             bbox.getMinY() - 0.5, bbox.getMaxY() + 0.5)
 
 
 def _coords(bbox):
+    """Return the pixel x and y coordinates covered by a box."""
     xs = bbox.getMinX() + np.arange(bbox.getWidth())
     ys = bbox.getMinY() + np.arange(bbox.getHeight())
     return xs, ys
 
 
 def _data_norm(arr):
+    """Return a log-stretch display normalisation for an image."""
     return simple_norm(arr, vmin=np.nanmin(arr), vmax=np.nanpercentile(arr, 99.5),
                        stretch='log')
 
 
 def _overlay_bad(ax, bad, extent):
+    """Overlay bad pixels in translucent red."""
     if bad is None or not bad.any():
         return
     ax.imshow(np.ma.masked_where(~bad, np.ones(bad.shape)), extent=extent,
@@ -1620,19 +1857,23 @@ def _overlay_bad(ax, bad, extent):
 
 
 def _clean_axes(ax):
+    """Turn the axis grid off."""
     ax.grid(False)
 
 
 def _peaks_array(peaks):
+    """Return peaks as an (N, 2) float array."""
     return np.asarray(peaks, dtype=float).reshape(-1, 2)
 
 
 def _fwhm(psf_obj, point):
+    """Return the FWHM [px] of a PSF at a point, from its second moments."""
     shape = psf_obj.computeShape(point)
     return 2.355 * np.sqrt(0.5 * (shape.getIxx() + shape.getIyy()))
 
 
 def _footprints_to_mask(footprints, exposure):
+    """Rasterise detection footprints into a boolean mask over an exposure."""
     bbox = exposure.getBBox()
     m = np.zeros((bbox.getHeight(), bbox.getWidth()), bool)
     try:
@@ -1649,7 +1890,7 @@ def _footprints_to_mask(footprints, exposure):
 
 
 def _match_prev_amps(peaks, prev_peaks, prev_amps, tol=1.5):
-    """For each current peak, amplitude from the previous iteration (nan if none)."""
+    """Return each peak's amplitude from the previous iteration (NaN if it is new)."""
     out = np.full(len(peaks), np.nan)
     if len(peaks) == 0 or len(prev_peaks) == 0:
         return out
@@ -1667,12 +1908,29 @@ WING_TAPER = (0.8, 1.0)
 
 
 def psf_stamp(psf, x, y, clip_bbox, taper=None):
-    """PSF stamp at (x, y), clipped to clip_bbox, with the far wings tamed.
+    """Render the PSF at (x, y), clipped to a box, with its far wings tamed.
 
-    (1) subtract the median of the outermost pixel ring (edge pedestal) and
-    (2) taper radially to zero, so each source ends smoothly in a disc instead of a
+    With ``taper`` the median of the outermost pixel ring (edge pedestal) is subtracted and the
+    stamp is tapered radially to zero, so each source ends smoothly in a disc instead of a
     hard-edged square.
-    Returns (array, bbox_clipped) or (None, bbox) if the stamp misses clip_bbox.
+
+    Parameters
+    ----------
+    psf : `lsst.afw.detection.Psf`
+        PSF model.
+    x, y : `float`
+        Position in parent pixel coordinates.
+    clip_bbox : `lsst.geom.Box2I`
+        Box to clip the stamp to.
+    taper : `tuple` [`float`, `float`], optional
+        Inner and outer taper radii as fractions of the stamp half-size.
+
+    Returns
+    -------
+    stamp : `numpy.ndarray` or `None`
+        The clipped stamp, or None if it misses ``clip_bbox``.
+    bbox : `lsst.geom.Box2I`
+        Box of the clipped stamp.
     """
     img = psf.computeImage(geom.Point2D(x, y))
     full = img.getBBox()
@@ -1697,8 +1955,26 @@ def psf_stamp(psf, x, y, clip_bbox, taper=None):
 
 
 def drop_masked_peaks(peaks, exposure, planes=('EDGE', 'NO_DATA')):
-    """Drop peaks sitting on EDGE / NO_DATA pixels. SAT is deliberately NOT in the
-    default list so saturated stars are kept."""
+    """Drop peaks on EDGE / NO_DATA pixels.
+
+    SAT is deliberately not in the default list, so saturated stars are kept.
+
+    Parameters
+    ----------
+    peaks : `list` [`tuple` [`float`, `float`]]
+        Peak positions in parent pixel coordinates.
+    exposure : `lsst.afw.image.Exposure`
+        Exposure providing the mask.
+    planes : `tuple` [`str`], optional
+        Mask planes that reject a peak.
+
+    Returns
+    -------
+    keep : `list` [`tuple` [`float`, `float`]]
+        Remaining peaks.
+    n_dropped : `int`
+        Number of peaks dropped.
+    """
     mk = exposure.mask
     planes_present = mk.getMaskPlaneDict()
     bits = 0
@@ -1717,8 +1993,24 @@ def drop_masked_peaks(peaks, exposure, planes=('EDGE', 'NO_DATA')):
 
 
 def drop_out_of_bounds(peaks, exposure, margin=0.0):
-    """Drop peaks outside the exposure bbox expanded by `margin` px. A NEGATIVE margin
-    insets the box (drops sources within |margin| px of the border)."""
+    """Drop peaks outside the exposure's box grown by ``margin`` px.
+
+    Parameters
+    ----------
+    peaks : `list` [`tuple` [`float`, `float`]]
+        Peak positions in parent pixel coordinates.
+    exposure : `lsst.afw.image.Exposure`
+        Exposure providing the box.
+    margin : `float`, optional
+        Growth of the box [px]; a negative margin drops peaks within ``|margin|`` px of the edge.
+
+    Returns
+    -------
+    keep : `list` [`tuple` [`float`, `float`]]
+        Remaining peaks.
+    n_dropped : `int`
+        Number of peaks dropped.
+    """
     bb = exposure.getBBox()
     x0, x1 = bb.getMinX() - margin, bb.getMaxX() + margin
     y0, y1 = bb.getMinY() - margin, bb.getMaxY() + margin
@@ -1729,7 +2021,27 @@ def drop_out_of_bounds(peaks, exposure, margin=0.0):
 # ---- over-counting guards ---------------------------------------------
 
 def effective_variance(exposure, model=None, frac=0.03, poisson_k=0.0):
-    """Pixel variance + (frac * model)^2 + poisson_k * model."""
+    """Return the variance used to weight the fit.
+
+    ``variance + (frac * model)**2 + poisson_k * model``: the pixel variance plus a fractional
+    model-error term and missing photon noise.
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        Exposure providing the variance plane.
+    model : `numpy.ndarray`, optional
+        Current model image (no extra terms if None).
+    frac : `float`, optional
+        Fractional model error.
+    poisson_k : `float`, optional
+        Extra variance per unit model flux.
+
+    Returns
+    -------
+    var : `numpy.ndarray`
+        The effective variance.
+    """
     var = exposure.variance.array.copy()
     if model is not None:
         m = np.clip(model, 0, None)
@@ -1738,7 +2050,26 @@ def effective_variance(exposure, model=None, frac=0.03, poisson_k=0.0):
 
 
 def reject_near_bright(new_peaks, old_peaks, old_is_bright, min_sep):
-    """Drop new peaks within min_sep px of an existing BRIGHT source."""
+    """Drop new peaks within ``min_sep`` px of an existing bright source.
+
+    Parameters
+    ----------
+    new_peaks : `list` [`tuple` [`float`, `float`]]
+        Candidate peaks.
+    old_peaks : array-like
+        Existing source positions, shape (N, 2).
+    old_is_bright : array-like [`bool`]
+        Which existing sources are bright.
+    min_sep : `float`
+        Rejection radius [px].
+
+    Returns
+    -------
+    keep : `list` [`tuple` [`float`, `float`]]
+        Remaining candidates.
+    n_rejected : `int`
+        Number of candidates rejected.
+    """
     old = np.asarray(old_peaks, float).reshape(-1, 2)[np.asarray(old_is_bright, bool)]
     if len(old) == 0 or len(new_peaks) == 0:
         return list(new_peaks), 0
@@ -1749,10 +2080,35 @@ def reject_near_bright(new_peaks, old_peaks, old_is_bright, min_sep):
 
 def prune_and_merge(fit, peaks, min_snr=5.0, min_sep=3.0,
                     bright_flags=None, near_bright_sep=None, near_bright_snr=8.0):
-    """Drop low-S/N sources, then merge pairs closer than min_sep px (brighter one
-    survives, at the amplitude-weighted position). Sources within near_bright_sep px of
-    a BRIGHT source must reach near_bright_snr instead of min_snr.
-    Uses the cheap diagonal-only S/N; the honest S/N is applied by eliminate_weak()."""
+    """Drop low-S/N sources, then merge pairs closer than ``min_sep`` px.
+
+    The brighter source of a pair survives at the amplitude-weighted position.  Sources within
+    ``near_bright_sep`` px of a bright source must reach ``near_bright_snr`` instead of
+    ``min_snr``.  Uses the cheap diagonal-only S/N; the honest S/N is applied by
+    `eliminate_weak`.
+
+    Parameters
+    ----------
+    fit : `dict`
+        Joint fit (from `joint_psf_fit_diag`) of ``peaks``.
+    peaks : array-like
+        Source positions, shape (N, 2).
+    min_snr : `float`, optional
+        Minimum S/N.
+    min_sep : `float`, optional
+        Merge radius [px].
+    bright_flags : array-like [`bool`], optional
+        Which sources are bright.
+    near_bright_sep : `float`, optional
+        Radius around bright sources with the stricter S/N cut [px].
+    near_bright_snr : `float`, optional
+        S/N required near bright sources.
+
+    Returns
+    -------
+    peaks : `list` [`tuple` [`float`, `float`]]
+        Surviving source positions.
+    """
     var, amps = fit['variance'], fit['amps']
     peaks = np.asarray(peaks, float).copy()
     snr = np.zeros(len(peaks))
@@ -1793,7 +2149,7 @@ def prune_and_merge(fit, peaks, min_snr=5.0, min_sep=3.0,
 # ---- honest S/N + backward elimination ---------------------------------
 
 def _pixel_noise_scale(fit, exposure, model_frac=0.01):
-    """Robust std of (resid / sigma_eff) on sky-dominated pixels, floored at 1."""
+    """Return the robust standard deviation of residual / sigma on sky pixels (at least 1)."""
     resid = exposure.image.array - fit['model_full']
     z = resid / np.sqrt(fit['variance'])
     mmax = fit['model_full'].max()
@@ -1805,10 +2161,11 @@ def _pixel_noise_scale(fit, exposure, model_frac=0.01):
 
 
 def _matched_filter_noise_scale(fit, exposure, core_half=10, floor_sigma=0.25):
-    """Robust std of the matched-filter S/N map of the residual on source-free sky.
-    Unlike the pixel MAD, this includes pixel-to-pixel noise correlation (warped coadds,
-    covariance the variance plane ignores). Returns 1.0 if there are too few clean
-    pixels or no PSF."""
+    """Return the robust standard deviation of the residual's matched-filter S/N on sky pixels.
+
+    Unlike the pixel scale this includes pixel-to-pixel noise correlation that the variance
+    plane ignores.  Returns 1.0 if there are too few clean pixels or no PSF.
+    """
     psf = exposure.getPsf()
     if psf is None:
         return 1.0
@@ -1839,10 +2196,27 @@ MATCHED_NOISE_WEIGHT = 0.5
 
 def empirical_noise_scale(fit, exposure, model_frac=0.01, matched=True,
                           weight=None):
-    """matched=True : scale for S/N values: the pixel scale, moved `weight` of the way
-                      toward the matched-filter scale when that is larger (floored at 1).
-                      weight=None uses MATCHED_NOISE_WEIGHT.
-       matched=False: pixel-level scale only (use for chi2)."""
+    """Return the empirical noise scale of a fit's residual.
+
+    Parameters
+    ----------
+    fit : `dict`
+        Joint fit (from `joint_psf_fit_diag`).
+    exposure : `lsst.afw.image.Exposure`
+        The fitted exposure.
+    model_frac : `float`, optional
+        Pixels with model below this fraction of the model maximum count as sky.
+    matched : `bool`, optional
+        True: scale for S/N values -- the pixel scale moved ``weight`` of the way towards the
+        matched-filter scale when that is larger.  False: the pixel scale only (for chi2).
+    weight : `float`, optional
+        See ``matched`` (default ``MATCHED_NOISE_WEIGHT``).
+
+    Returns
+    -------
+    scale : `float`
+        Noise scale (at least 1).
+    """
     s = _pixel_noise_scale(fit, exposure, model_frac)
     if matched:
         w = MATCHED_NOISE_WEIGHT if weight is None else weight
@@ -1853,8 +2227,23 @@ def empirical_noise_scale(fit, exposure, model_frac=0.01, matched=True,
 
 
 def amp_snr_full(fit, noise_scale=1.0):
-    """S/N = amp / sqrt(diag(N^-1)), N = A^T W A over ALL sources (includes the
-    covariance between overlapping sources), divided by the empirical noise scale."""
+    """Return honest amplitude S/N values, including the covariance of overlapping sources.
+
+    ``S/N = amp / sqrt(diag(N^-1))`` with ``N = A^T W A`` over all sources, divided by the
+    empirical noise scale.
+
+    Parameters
+    ----------
+    fit : `dict`
+        Joint fit (from `joint_psf_fit_diag`).
+    noise_scale : `float`, optional
+        Empirical noise scale dividing the S/N.
+
+    Returns
+    -------
+    snr : `numpy.ndarray`
+        S/N per source.
+    """
     comps, var, good = fit['comps'], fit['variance'], fit['good']
     n = len(comps)
     pix = -np.ones(good.shape, dtype=np.int64)
@@ -1879,9 +2268,40 @@ def amp_snr_full(fit, noise_scale=1.0):
 
 def eliminate_weak(exposure, psf, peaks, fit, bad_bitmask, min_snr=5.0,
                    drop_frac=0.25, max_rounds=30, **fitkw):
-    """Backward elimination: drop the weakest ~drop_frac of the sub-threshold sources
-    (at least one), re-solve, repeat until all have honest S/N >= min_snr.
-    `fit` MUST correspond to `peaks`. Never removes the last source."""
+    """Remove sources below ``min_snr`` by backward elimination.
+
+    Each round drops the weakest ~``drop_frac`` of the sub-threshold sources (at least one) and
+    re-solves, until every source has an honest S/N of at least ``min_snr``.  The last source is
+    never removed.
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        The fitted exposure.
+    psf : `lsst.afw.detection.Psf`
+        PSF model.
+    peaks : `list` [`tuple` [`float`, `float`]]
+        Source positions; ``fit`` must correspond to them.
+    fit : `dict`
+        Joint fit of ``peaks``.
+    bad_bitmask : `int`
+        Mask bits of pixels to ignore.
+    min_snr : `float`, optional
+        Minimum honest S/N.
+    drop_frac : `float`, optional
+        Fraction of the failing sources dropped per round.
+    max_rounds : `int`, optional
+        Maximum number of rounds.
+    **fitkw
+        Keyword arguments of `joint_psf_fit_diag`.
+
+    Returns
+    -------
+    peaks : `list` [`tuple` [`float`, `float`]]
+        Surviving source positions.
+    fit : `dict`
+        Joint fit of the survivors.
+    """
     peaks = [tuple(p) for p in peaks]
     n0 = len(peaks)
     scale = empirical_noise_scale(fit, exposure)
@@ -1907,7 +2327,7 @@ def eliminate_weak(exposure, psf, peaks, fit, bad_bitmask, min_snr=5.0,
 # ---- NEW: PSF-shape constraint -----------------------------------------
 
 def _fit_with_plane(T, D, w, dx, dy):
-    """Weighted LSQ of D ~ a*T + c + gx*dx + gy*dy. Returns (a, a/sigma_a, chi2)."""
+    """Fit ``D ~ a*T + c + gx*dx + gy*dy`` by weighted least squares; return (a, a/sigma_a, chi2)."""
     A = np.column_stack([T, np.ones_like(T), dx, dy]) * w[:, None]
     b = D * w
     try:
@@ -1921,12 +2341,35 @@ def _fit_with_plane(T, D, w, dx, dy):
 
 def shape_metrics(exposure, psf, peaks, fit, noise_scale=1.0, chi2_scale=None,
                   bg_sigma=4.0, width_scales=(0.6, 0.75, 1.0, 1.3, 1.7), min_pix=15):
-    """Per-source shape metrics. `fit` must correspond to `peaks` (same order).
-    noise_scale : divides the S/N values (matched-filter calibrated).
-    chi2_scale  : divides chi2 (pixel-level calibrated); defaults to noise_scale.
-    Returns dict of arrays: snr (local-plane, noise-scaled), chi2red, best_scale,
-    dchi2_width (>0: data prefer best_scale over the PSF width), contrast.
-    NaN = not judged."""
+    """Measure how PSF-like each source is.
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        The fitted exposure.
+    psf : `lsst.afw.detection.Psf`
+        PSF model.
+    peaks : `list` [`tuple` [`float`, `float`]]
+        Source positions; ``fit`` must correspond to them (same order).
+    fit : `dict`
+        Joint fit of ``peaks``.
+    noise_scale : `float`, optional
+        Divides the S/N values (matched-filter calibrated).
+    chi2_scale : `float`, optional
+        Divides chi2 (pixel-level calibrated; default ``noise_scale``).
+    bg_sigma : `float`, optional
+        Fit radius in units of the PSF sigma.
+    width_scales : `tuple` [`float`], optional
+        Trial PSF width scale factors.
+    min_pix : `int`, optional
+        Minimum number of good pixels to judge a source.
+
+    Returns
+    -------
+    metrics : `dict` [`str`, `numpy.ndarray`]
+        ``snr`` (local, noise-scaled), ``chi2red``, ``best_scale``, ``dchi2_width`` (> 0: the
+        data prefer ``best_scale`` over the PSF width) and ``contrast``; NaN = not judged.
+    """
     cs = noise_scale if chi2_scale is None else chi2_scale
     bbox = exposure.getBBox()
     X0, Y0 = bbox.getMinX(), bbox.getMinY()
@@ -1992,14 +2435,43 @@ def shape_metrics(exposure, psf, peaks, fit, noise_scale=1.0, chi2_scale=None,
 def judge_shape(m, min_snr_local=5.0, chi2_max=2.0, width_range=(0.75, 1.35),
                 dchi2_width=9.0, trust_snr=30.0, min_contrast=20.0,
                 weak_snr=10.0, dchi2_width_weak=4.0):
-    """Returns (fail_mask, score, flags). Higher score = worse; orders the elimination.
-    flags = dict of per-test boolean arrays (snr / chi2 / width / contrast).
-    min_contrast: peak of the source / neighbours' model flux at its position must exceed
-    this (None / 0 = off). 20 ~ (5% wing error) x (4x margin).
-    weak_snr / dchi2_width_weak: untrusted sources with local S/N < weak_snr use the
-    looser width threshold dchi2_width_weak instead of dchi2_width.
-    Sources with local S/N >= trust_snr (incl. saturated ones) skip chi2 / width /
-    contrast."""
+    """Decide which sources fail the PSF-shape tests.
+
+    Sources with local S/N of at least ``trust_snr`` (including saturated ones) skip the chi2,
+    width and contrast tests.  Untrusted sources with S/N below ``weak_snr`` use the looser
+    width threshold ``dchi2_width_weak``.
+
+    Parameters
+    ----------
+    m : `dict` [`str`, `numpy.ndarray`]
+        Output of `shape_metrics`.
+    min_snr_local : `float`, optional
+        Minimum local S/N.
+    chi2_max : `float`, optional
+        Maximum reduced chi2.
+    width_range : `tuple` [`float`, `float`], optional
+        Allowed range of the best-fitting width scale.
+    dchi2_width : `float`, optional
+        Improvement in chi2 needed to reject on width.
+    trust_snr : `float`, optional
+        S/N above which a source is trusted.
+    min_contrast : `float`, optional
+        Minimum ratio of the source's peak to the neighbours' model flux at its position (None
+        or 0 = off); 20 ~ (5 % wing error) x (4x margin).
+    weak_snr : `float`, optional
+        S/N below which ``dchi2_width_weak`` applies.
+    dchi2_width_weak : `float`, optional
+        Width threshold for weak sources.
+
+    Returns
+    -------
+    fail : `numpy.ndarray` [`bool`]
+        Sources failing any test.
+    score : `numpy.ndarray`
+        Badness score (higher = worse); orders the elimination.
+    flags : `dict` [`str`, `numpy.ndarray`]
+        Per-test failures: ``snr``, ``chi2``, ``width``, ``contrast``.
+    """
     snr, chi2 = m['snr'], m['chi2red']
     bs, dw = m['best_scale'], m['dchi2_width']
     con = m['contrast']
@@ -2027,9 +2499,40 @@ def judge_shape(m, min_snr_local=5.0, chi2_max=2.0, width_range=(0.75, 1.35),
 
 def eliminate_nonpsf(exposure, psf, peaks, fit, bad_bitmask, shape_kwargs=None,
                      drop_frac=0.25, max_rounds=15, verbose=True, **fitkw):
-    """Backward elimination of sources that fail the PSF-shape test.
-    `fit` MUST correspond to `peaks`. fitkw -> joint_psf_fit_diag.
-    Returns (peaks, fit, rejected) with rejected = [(x, y, score), ...]."""
+    """Remove sources that fail the PSF-shape test by backward elimination.
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        The fitted exposure.
+    psf : `lsst.afw.detection.Psf`
+        PSF model.
+    peaks : `list` [`tuple` [`float`, `float`]]
+        Source positions; ``fit`` must correspond to them.
+    fit : `dict`
+        Joint fit of ``peaks``.
+    bad_bitmask : `int`
+        Mask bits of pixels to ignore.
+    shape_kwargs : `dict`, optional
+        Keyword arguments of `shape_metrics` and `judge_shape`.
+    drop_frac : `float`, optional
+        Fraction of the failing sources dropped per round.
+    max_rounds : `int`, optional
+        Maximum number of rounds.
+    verbose : `bool`, optional
+        Print the rejected sources.
+    **fitkw
+        Keyword arguments of `joint_psf_fit_diag`.
+
+    Returns
+    -------
+    peaks : `list` [`tuple` [`float`, `float`]]
+        Surviving source positions.
+    fit : `dict`
+        Joint fit of the survivors.
+    rejected : `list` [`tuple` [`float`, `float`, `float`]]
+        (x, y, score) of the removed sources.
+    """
     kw = dict(shape_kwargs or {})
     mkw = {k: kw.pop(k) for k in ('bg_sigma', 'width_scales', 'min_pix') if k in kw}
     peaks = [tuple(p) for p in peaks]
@@ -2082,7 +2585,19 @@ def eliminate_nonpsf(exposure, psf, peaks, fit, bad_bitmask, shape_kwargs=None,
 
 def plot_shape_rejects(exposure, rejected_by_iter, peaks=None,
                        title='sources removed by shape cut'):
-    """Rejected positions (magenta x) over the data; peaks = kept sources (cyan)."""
+    """Plot the sources removed by the shape cut over the data.
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        The fitted exposure.
+    rejected_by_iter : `list` [`list` [`tuple`]]
+        Per iteration, the (x, y, score) of rejected sources (magenta x).
+    peaks : array-like, optional
+        Kept source positions (cyan).
+    title : `str`, optional
+        Plot title.
+    """
     bbox = exposure.getBBox()
     data = exposure.image.array
     rej = np.array([(x, y) for r in rejected_by_iter for (x, y, _) in r]).reshape(-1, 2)
@@ -2105,7 +2620,25 @@ def plot_shape_rejects(exposure, rejected_by_iter, peaks=None,
 # ---- colour-coding / circle helpers ---------------------------------
 
 def select_source_pages(snap, source_view='all', sources_per_page=6, max_pages=None):
-    """Which sources get per-source pages (list of lists of source indices)."""
+    """Choose the sources that get per-source pages.
+
+    Parameters
+    ----------
+    snap : `dict`
+        Inner-loop snapshot (``fit``, ``prev_amp``, ``is_new``).
+    source_view : `str`, optional
+        'all', 'new' (added this iteration) or 'changed' (new, or amplitude changed by more
+        than 10 %).
+    sources_per_page : `int`, optional
+        Sources per page.
+    max_pages : `int`, optional
+        Maximum number of pages (None = no limit).
+
+    Returns
+    -------
+    pages : `list` [`list` [`int`]]
+        Source indices per page, brightest first.
+    """
     amps, prev_amp, is_new = snap['fit']['amps'], snap['prev_amp'], snap['is_new']
     idx = np.arange(len(amps))
     if source_view == 'new':
@@ -2121,11 +2654,24 @@ def select_source_pages(snap, source_view='all', sources_per_page=6, max_pages=N
 
 
 def source_colors(pages):
+    """Assign each source on the pages a colour from ``SRC_PALETTE``.
+
+    Parameters
+    ----------
+    pages : `list` [`list` [`int`]]
+        Output of `select_source_pages`.
+
+    Returns
+    -------
+    colors : `dict` [`int`, `str`]
+        Colour per source index.
+    """
     flat = [j for page in pages for j in page]
     return {j: SRC_PALETTE[k % len(SRC_PALETTE)] for k, j in enumerate(flat)}
 
 
 def _view_window(bbox, px, py, view_half):
+    """Return the (unclipped) array index of a source and the clipped window around it."""
     X0, Y0 = bbox.getMinX(), bbox.getMinY()
     ix, iy = int(round(px)) - X0, int(round(py)) - Y0
     xa, xb = max(ix - view_half, 0), min(ix + view_half + 1, bbox.getWidth())
@@ -2134,6 +2680,7 @@ def _view_window(bbox, px, py, view_half):
 
 
 def _circle_radius(exposure, circle_radius=None):
+    """Return the marker radius: the given one, else 0.75 FWHM, else 5 px."""
     if circle_radius is not None:
         return circle_radius
     try:
@@ -2143,6 +2690,7 @@ def _circle_radius(exposure, circle_radius=None):
 
 
 def _mark_source(ax, x, y, color, radius, label=None):
+    """Draw a circle (and optional label) at a source."""
     ax.add_patch(patches.Circle((x, y), radius, fill=False, ec=color, lw=1.8,
                                 path_effects=_OUTLINE, zorder=6))
     if label is not None:
@@ -2151,6 +2699,7 @@ def _mark_source(ax, x, y, color, radius, label=None):
 
 
 def _frame_axes(ax, color, lw=3.0):
+    """Colour the frame of an axes."""
     for s in ax.spines.values():
         s.set_edgecolor(color)
         s.set_linewidth(lw)
@@ -2163,17 +2712,41 @@ def _frame_axes(ax, color, lw=3.0):
 def joint_psf_fit_diag(exposure, psf, peak_positions, bad_bitmask,
                        amp_zero_tol=1e-6, support_frac=0.01,
                        var_model=None, sys_frac=0.03, poisson_k=0.0):
-    """
-    Weighted, non-negative-amplitude, one sparse solve against the ORIGINAL exposure,
-    keeping everything needed to visualize what the fit did:
+    """Fit all PSF amplitudes in one non-negative solve, keeping what is needed for diagnostics.
 
-      comps[j]   : dict(j, amp, stamp, sig, ys, xs, bbox_parent) -- FIT REGION of source j,
-                   `sig` = pixels where the stamp exceeds support_frac*peak.
-      group_labels / group_map / group_chi2 : coupled-source groups + reduced chi2.
-      timings    : build_A / lsq_linear / build_model seconds.
-      variance   : the EFFECTIVE variance used.
+    Weighted, non-negative, one sparse solve against the original exposure.  PSF stamps are not
+    clipped at zero (clipping would add a positive pedestal).
 
-    PSF stamps are NOT clipped at zero (clipping adds a positive pedestal).
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        Image to fit.
+    psf : `lsst.afw.detection.Psf`
+        PSF model.
+    peak_positions : `list` [`tuple` [`float`, `float`]]
+        Source positions in parent pixel coordinates.
+    bad_bitmask : `int`
+        Mask bits of pixels to ignore.
+    amp_zero_tol : `float`, optional
+        Amplitudes at or below this count as zero.
+    support_frac : `float`, optional
+        A source's significant support is where its stamp exceeds this fraction of its peak.
+    var_model : `numpy.ndarray`, optional
+        Model image used for the model-dependent variance terms (see `effective_variance`).
+    sys_frac : `float`, optional
+        Fractional model error added to the variance.
+    poisson_k : `float`, optional
+        Extra variance per unit model flux.
+
+    Returns
+    -------
+    fit : `dict`
+        ``amps``, ``model_full``, ``n_at_zero``; ``comps`` (per source a dict with ``stamp``,
+        ``sig`` (significant support), ``ys``/``xs`` (slices of its fit region), ``amp``,
+        ``bbox_parent``, or None if the stamp misses the image); coupled-source groups
+        (``group_labels``, ``n_groups``, ``group_map``, ``group_chi2``); ``good`` (pixels
+        used), ``chi2map``, ``variance`` (the effective variance), ``timings`` and the solver
+        status (``lsq_status``, ``lsq_nit``, ``lsq_cost``).
     """
     exp_bbox = exposure.getBBox()
     ny, nx = exp_bbox.getHeight(), exp_bbox.getWidth()
@@ -2264,12 +2837,29 @@ def joint_psf_fit_diag(exposure, psf, peak_positions, bad_bitmask,
 # =====================================================================
 
 def compute_psf_derivatives(psf, x, y, bbox_clip, eps=0.25):
-    """Central-difference d(PSF)/dx, d(PSF)/dy stamps.
+    """Compute central-difference derivative stamps dP/dx and dP/dy.
 
-    computeImage() rounds its bbox to the pixel nearest the requested point, so the
-    stamps at (x+-eps, y) and (x, y+-eps) do NOT necessarily share a bbox. Intersect
-    ALL stamps' boxes (and the exposure clip) FIRST, then index each image.
-    Returns (None, None, empty_bbox) if the stamps don't overlap enough.
+    ``computeImage`` centres its box on the pixel nearest the requested point, so the stamps at
+    (x +- eps, y) and (x, y +- eps) need not share a box; all five boxes (and the clip box) are
+    intersected first.
+
+    Parameters
+    ----------
+    psf : `lsst.afw.detection.Psf`
+        PSF model.
+    x, y : `float`
+        Position in parent pixel coordinates.
+    bbox_clip : `lsst.geom.Box2I`
+        Box to clip to.
+    eps : `float`, optional
+        Finite-difference step [px].
+
+    Returns
+    -------
+    dpdx, dpdy : `numpy.ndarray` or `None`
+        Derivative stamps over ``bbox``, or None if the boxes do not overlap.
+    bbox : `lsst.geom.Box2I`
+        The common box.
     """
     img_c = psf.computeImage(geom.Point2D(x, y))
     img_xp = psf.computeImage(geom.Point2D(x + eps, y))
@@ -2290,10 +2880,29 @@ def compute_psf_derivatives(psf, x, y, bbox_clip, eps=0.25):
 
 
 def windowed_centroid(image_array, xy0, x, y, half_width, max_frac_of_window=0.9):
-    """Flux-weighted centroid in a (2*half_width+1)-px box around (x, y), in the
-    parent/absolute pixel frame (xy0 = corner of the array). Negative pixels are
-    clipped to 0. Falls back to (x, y) if there is too little positive flux or the
-    centroid lands too close to the window edge (dominated by a neighbour)."""
+    """Return the flux-weighted centroid in a box around (x, y).
+
+    Negative pixels are clipped to zero.  Falls back to (x, y) if there is too little positive
+    flux or the centroid lands too close to the window edge (dominated by a neighbour).
+
+    Parameters
+    ----------
+    image_array : `numpy.ndarray`
+        Image.
+    xy0 : `tuple` [`int`, `int`]
+        Parent pixel coordinates of ``image_array[0, 0]``.
+    x, y : `float`
+        Starting position in parent pixel coordinates.
+    half_width : `int`
+        Half-size of the box [px].
+    max_frac_of_window : `float`, optional
+        Reject centroids further than this fraction of ``half_width`` from the start.
+
+    Returns
+    -------
+    cx, cy : `float`
+        Centroid in parent pixel coordinates.
+    """
     x0, y0 = xy0
     ny, nx = image_array.shape
     ix, iy = int(round(x - x0)), int(round(y - y0))
@@ -2318,20 +2927,45 @@ def refine_peak_positions(exposure, psf, peaks, amps, bad_bitmask,
                           min_amp_for_refine=50.0, max_shift=0.6, n_subiters=3,
                           min_good_pixels=10, core_radius_sigma=2.5,
                           variance=None, freeze_sep=None):
-    """Nudge each well-detected source's (x, y) toward the position that minimizes its
-    local residual, holding all OTHER sources fixed (linearized Gauss-Newton).
+    """Move each well-detected source towards the position that minimises its residual.
 
-    Over its core pixels, weighted by 1/sigma:
-        (data - full_model) ~= dA * P + a * dx * dP/dx + a * dy * dP/dy
-    The target is the CURRENT residual (not "data minus neighbours"); the dA column
-    absorbs amplitude error so it doesn't leak into the position. Only the position
-    part is applied; the caller re-solves amplitudes.
+    Linearised Gauss-Newton with all other sources held fixed: over the source's core pixels,
+    weighted by 1/sigma, ``(data - model) ~ dA * P + a * dx * dP/dx + a * dy * dP/dy``.  The dA
+    column absorbs amplitude errors so they do not leak into the position; only the position
+    step is applied and the caller re-solves the amplitudes.
 
-    variance   : effective variance array (defaults to the exposure's).
-    freeze_sep : sources with a BRIGHTER neighbour within this many px keep their
-                 position (it is degenerate with the neighbour's amplitude).
-    Sources fainter than min_amp_for_refine keep their position. Per-substep shift is
-    capped at max_shift px.
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        The fitted exposure.
+    psf : `lsst.afw.detection.Psf`
+        PSF model.
+    peaks : `list` [`tuple` [`float`, `float`]]
+        Source positions.
+    amps : array-like
+        Source amplitudes.
+    bad_bitmask : `int`
+        Mask bits of pixels to ignore.
+    min_amp_for_refine : `float`, optional
+        Fainter sources keep their position.
+    max_shift : `float`, optional
+        Maximum shift per sub-step [px].
+    n_subiters : `int`, optional
+        Number of Gauss-Newton sub-steps.
+    min_good_pixels : `int`, optional
+        Minimum number of good core pixels.
+    core_radius_sigma : `float`, optional
+        Core radius in units of the PSF sigma.
+    variance : `numpy.ndarray`, optional
+        Effective variance (default: the exposure's variance plane).
+    freeze_sep : `float`, optional
+        Sources with a brighter neighbour within this many px keep their position (it is
+        degenerate with the neighbour's amplitude).
+
+    Returns
+    -------
+    peaks : `list` [`tuple` [`float`, `float`]]
+        Refined positions.
     """
     exp_bbox = exposure.getBBox()
     data, mask = exposure.image.array, exposure.mask.array
@@ -2391,13 +3025,33 @@ def refine_peak_positions(exposure, psf, peaks, amps, bad_bitmask,
 
 
 def redetect_and_refit_psf_adaptive(exposure, kernel_sizes=(41, 27, 21, 15, 11), **kwargs):
-    """Wraps redetect_and_refit_psf (defined elsewhere in your session). Tries kernel
-    sizes from largest to smallest, because MakePsfCandidatesTask drops every candidate
-    whose full kernel_size stamp touches masked/edge pixels; on a small cutout a large
-    kernel can drop ALL of them. Returns the first size that gives an updated PSF.
+    """Run `redetect_and_refit_psf`, trying kernel sizes from largest to smallest.
 
-    Returns (psf_new, sources, starCat, cellSet, kernel_size_used); kernel_size_used is
-    None if every attempt failed (previous PSF kept)."""
+    MakePsfCandidatesTask drops every candidate whose stamp touches masked or edge pixels; on a
+    small cutout a large kernel can drop all of them.
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        Background-subtracted exposure.
+    kernel_sizes : `tuple` [`int`], optional
+        Kernel sizes to try [px].
+    **kwargs
+        Keyword arguments of `redetect_and_refit_psf`.
+
+    Returns
+    -------
+    psf_new : `lsst.afw.detection.Psf`
+        The new PSF (the previous one if every attempt failed).
+    sources : `lsst.afw.table.SourceCatalog` or `None`
+        Measured detections.
+    starCat : `lsst.afw.table.SourceCatalog` or `None`
+        Selected PSF stars.
+    cellSet : `lsst.afw.math.SpatialCellSet` or `None`
+        PSF candidates.
+    kernel_size : `int` or `None`
+        Kernel size that worked (None if all failed).
+    """
     psf_prev = exposure.getPsf()
     fwhm_prev = _fwhm(psf_prev, exposure.getBBox().getCenter())
     for ks in kernel_sizes:
@@ -2431,6 +3085,29 @@ def redetect_and_refit_psf_adaptive(exposure, kernel_sizes=(41, 27, 21, 15, 11),
 
 def plot_iteration_overview(exposure, snap, hist, outer_idx, norm_data,
                             colors=None, view_half=20, circle_radius=None):
+    """Plot the overview of one inner iteration.
+
+    Detection input, detections, fitted sources, model, residual and the iteration histories.
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        The fitted exposure.
+    snap : `dict`
+        Inner-loop snapshot of the iteration.
+    hist : `dict`
+        Histories (``resid_std``, ``n_peaks``, ``n_zero``).
+    outer_idx : `int`
+        Outer-pass index.
+    norm_data : `astropy.visualization.ImageNormalize`
+        Display normalisation of the data.
+    colors : `dict` [`int`, `str`], optional
+        Colours of the sources with per-source pages.
+    view_half : `int`, optional
+        Half-size of the per-source windows [px].
+    circle_radius : `float`, optional
+        Marker radius [px].
+    """
     colors = colors or {}
     radius = _circle_radius(exposure, circle_radius)
     bbox = exposure.getBBox()
@@ -2596,9 +3273,12 @@ def plot_iteration_overview(exposure, snap, hist, outer_idx, norm_data,
 def plot_source_pages(exposure, snap, outer_idx, pages=None, colors=None,
                       source_view='all', sources_per_page=6, max_pages=None,
                       view_half=20, circle_radius=None):
-    """One row per source, each with its own colour (matching overview panel 2):
-    data | model | residual | x-section | y-section. Dashed box = PSF stamp used by
-    the solver, gold = significant support."""
+    """Plot one row per source: data | model | residual | x-section | y-section.
+
+    Superseded by the second definition of this function further down (kept from the
+    notebook).  Each source has its own colour (matching overview panel 2); the dashed box is
+    the PSF stamp used by the solver, gold the significant support.
+    """
     bbox = exposure.getBBox()
     X0, Y0 = bbox.getMinX(), bbox.getMinY()
     ny, nx = bbox.getHeight(), bbox.getWidth()
@@ -2749,26 +3429,100 @@ def run_inner_loop_verbose(exposure, psf, bad_bitmask, outer_idx=0,
                            edge_margin_fwhm=0.5, use_eliminate_weak=True,
                            use_shape_cut=True, shape_kwargs=None,
                            timer=TIMER, verbose=True, initial_peaks=None):
-    """Instrumented copy of iterative_joint_detection. Returns the same dict keys
-    plus 'snaps' (one dict per iteration with everything needed for plotting).
+    """Run the instrumented inner loop (detect, fit, refine, prune, repeat).
 
-    Over-counting guards:
-      sys_frac          fractional PSF-shape error added in quadrature to the variance
-      min_snr           S/N floor (cheap version in prune_and_merge, honest version in
-                        eliminate_weak)
-      prune_sep_sigma   pairs closer than this many PSF sigma are merged after refinement
-      reject_fwhm       new peaks within this many FWHM of a bright source are discarded
-      near_bright_fwhm / near_bright_snr  stricter S/N next to bright stars
-      bright_peak_sigma "bright" = peak flux above this many noise sigma
-      freeze_fwhm       sources with a brighter neighbour within this many FWHM keep
-                        their position during centroid refinement
-      edge_margin_fwhm  drop sources closer than this many FWHM to the cutout edge
-      use_eliminate_weak  backward elimination on the honest S/N
-      use_shape_cut     NEW: backward elimination on PSF-likeness (eliminate_nonpsf)
-      shape_kwargs      NEW: dict passed to judge_shape / shape_metrics, e.g.
-                        dict(min_snr_local=5.5, chi2_max=2, width_range=(0.75, 1.35),
-                             dchi2_width=9, trust_snr=30, min_contrast=20,
-                             weak_snr=10, dchi2_width_weak=4, bg_sigma=4)
+    An instrumented version of `iterative_joint_detection` with centroid refinement and guards
+    against over-counting sources.
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        Image to fit.
+    psf : `lsst.afw.detection.Psf`
+        PSF model.
+    bad_bitmask : `int`
+        Mask bits of pixels to ignore.
+    outer_idx : `int`, optional
+        Outer-pass index (for labels).
+    n_iterations : `int`, optional
+        Maximum number of iterations.
+    threshold_start, threshold_step, threshold_min : `float`, optional
+        Detection threshold schedule [sigma].
+    min_pixels : `int`, optional
+        Minimum footprint size.
+    min_new_peaks : `int`, optional
+        Stop when an iteration adds fewer peaks than this.
+    convergence_frac : `float`, optional
+        Stop when the residual standard deviation improves by less than this fraction.
+    viz : `bool`, optional
+        Draw diagnostics.
+    plot_every : `int`, optional
+        Draw every n-th iteration (the last always).
+    source_view : `str`, optional
+        See `select_source_pages`.
+    sources_per_page : `int`, optional
+        See `select_source_pages`.
+    max_pages_per_iter : `int`, optional
+        Maximum per-source pages per iteration.
+    view_half : `int`, optional
+        Half-size of the per-source windows [px].
+    support_frac : `float`, optional
+        See `joint_psf_fit_diag`.
+    refine_centroids : `bool`, optional
+        Refine positions (`refine_peak_positions`).
+    centroid_min_amp : `float`, optional
+        Fainter sources keep their position.
+    n_centroid_rounds : `int`, optional
+        Maximum centroid rounds per iteration.
+    centroid_shift_tol : `float`, optional
+        Stop centroiding when the largest shift is below this [px].
+    centroid_shift_schedule : `list` [`float`], optional
+        Maximum shift per round [px].
+    coarse_centroid : `bool`, optional
+        Start new peaks from a windowed centroid.
+    coarse_centroid_hw_sigma : `float`, optional
+        Half-width of that window in PSF sigma.
+    merge_separation_sigma : `float`, optional
+        Merge new peaks closer than this many PSF sigma.
+    sys_frac : `float`, optional
+        Fractional PSF-shape error added in quadrature to the variance.
+    min_snr : `float`, optional
+        S/N floor (cheap version in `prune_and_merge`, honest one in `eliminate_weak`).
+    prune_sep_sigma : `float`, optional
+        Pairs closer than this many PSF sigma are merged after refinement.
+    reject_fwhm : `float`, optional
+        New peaks within this many FWHM of a bright source are discarded.
+    bright_peak_sigma : `float`, optional
+        A source is bright if its peak exceeds this many noise sigma.
+    freeze_fwhm : `float`, optional
+        Sources with a brighter neighbour within this many FWHM keep their position.
+    poisson_k : `float`, optional
+        Extra variance per unit model flux.
+    near_bright_fwhm : `float`, optional
+        Radius around bright stars with the stricter S/N cut [FWHM].
+    near_bright_snr : `float`, optional
+        S/N required there.
+    edge_margin_fwhm : `float`, optional
+        Drop sources closer than this many FWHM to the edge.
+    use_eliminate_weak : `bool`, optional
+        Backward elimination on the honest S/N.
+    use_shape_cut : `bool`, optional
+        Backward elimination on PSF-likeness (`eliminate_nonpsf`).
+    shape_kwargs : `dict`, optional
+        Keyword arguments of `shape_metrics` / `judge_shape`.
+    timer : `StepTimer`, optional
+        Timer collecting the step durations.
+    verbose : `bool`, optional
+        Print progress.
+    initial_peaks : `list` [`tuple` [`float`, `float`]], optional
+        Warm-start source positions.
+
+    Returns
+    -------
+    result : `dict`
+        ``model_full``, ``residual_full``, ``peaks``, ``amps``, the histories
+        (``resid_std_history``, ``n_peaks_history``, ``n_zero_amp_history``), ``first_seen`` and
+        ``snaps`` (one dict per iteration with everything needed for plotting).
     """
     exp_bbox = exposure.getBBox()
     ny, nx = exp_bbox.getHeight(), exp_bbox.getWidth()
@@ -3063,7 +3817,15 @@ def run_inner_loop_verbose(exposure, psf, bad_bitmask, outer_idx=0,
 # =====================================================================
 
 def plot_amplitude_evolution(result, outer_idx=0):
-    """Amplitude of every FINAL source vs inner iteration (nan before it existed)."""
+    """Plot the amplitude of every final source against inner iteration.
+
+    Parameters
+    ----------
+    result : `dict`
+        Inner-loop result with ``snaps``.
+    outer_idx : `int`, optional
+        Outer-pass index (for the title).
+    """
     snaps = result['snaps']
     if not snaps:
         return
@@ -3100,8 +3862,22 @@ def plot_amplitude_evolution(result, outer_idx=0):
 
 
 def plot_source_evolution(exposure, result, outer_idx=0, view_half=20):
-    """x cross-section of the model (top) and residual (bottom) at EVERY iteration,
-    for the brightest / median / dimmest final sources."""
+    """Plot model and residual cross-sections of three sources at every iteration.
+
+    The brightest, median and faintest final sources: the x cross-section of the model (top)
+    and of the residual (bottom).
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        The fitted exposure.
+    result : `dict`
+        Inner-loop result with ``snaps``.
+    outer_idx : `int`, optional
+        Outer-pass index (for the title).
+    view_half : `int`, optional
+        Half-length of the cross-sections [px].
+    """
     snaps = result['snaps']
     if not snaps:
         return
@@ -3146,6 +3922,19 @@ def plot_source_evolution(exposure, result, outer_idx=0, view_half=20):
 # =====================================================================
 
 def plot_cutout_setup(cutout, psf, bad_bitmask, star_positions=None):
+    """Plot the cutout before fitting: data, sigma map, mask planes and PSF.
+
+    Parameters
+    ----------
+    cutout : `lsst.afw.image.Exposure`
+        The cutout.
+    psf : `lsst.afw.detection.Psf`
+        PSF model.
+    bad_bitmask : `int`
+        Mask bits of bad pixels (shown in red).
+    star_positions : array-like, optional
+        Original PSF star positions to mark.
+    """
     bbox = cutout.getBBox()
     ext = _extent(bbox)
     data = cutout.image.array
@@ -3189,6 +3978,32 @@ def plot_cutout_setup(cutout, psf, bad_bitmask, star_positions=None):
 
 def plot_outer_step_background(raw_exp, exp_next, src_mask, model_full, bg_next, bg_prev,
                                outer_idx):
+    """Plot the background refit of one outer step.
+
+    Input image, model and source mask, new and previous background, and the result.
+
+    Parameters
+    ----------
+    raw_exp : `lsst.afw.image.Exposure`
+        Input to the background refit.
+    exp_next : `lsst.afw.image.Exposure`
+        Background-subtracted result.
+    src_mask : `numpy.ndarray` [`bool`]
+        Source mask used.
+    model_full : `numpy.ndarray`
+        Joint-fit model.
+    bg_next : `lsst.afw.image.Image` or `None`
+        New background.
+    bg_prev : `lsst.afw.image.Image` or `None`
+        Previous background.
+    outer_idx : `int`
+        Outer-pass index.
+
+    Returns
+    -------
+    norm : `astropy.visualization.ImageNormalize`
+        Display normalisation used for the images.
+    """
     bbox = raw_exp.getBBox()
     ext = _extent(bbox)
     xs, ys = _coords(bbox)
@@ -3249,6 +4064,17 @@ def plot_outer_step_background(raw_exp, exp_next, src_mask, model_full, bg_next,
 
 
 def plot_psf_candidate_stamps(cellSet, max_stamps=24, title=''):
+    """Plot the PSF candidate stamps, used ones first.
+
+    Parameters
+    ----------
+    cellSet : `lsst.afw.math.SpatialCellSet` or `None`
+        PSF candidates.
+    max_stamps : `int`, optional
+        Maximum number of stamps.
+    title : `str`, optional
+        Title suffix.
+    """
     if cellSet is None:
         print("  (no cellSet -- PSF determination did not run, nothing to show)")
         return
@@ -3278,6 +4104,25 @@ def plot_psf_candidate_stamps(cellSet, max_stamps=24, title=''):
 
 def plot_outer_step_psf(exp_next, sources, starCat, forced_positions, psf_prev, psf_new,
                         psf_updated, outer_idx):
+    """Plot the PSF refit of one outer step: star selection and old vs new PSF.
+
+    Parameters
+    ----------
+    exp_next : `lsst.afw.image.Exposure`
+        Background-subtracted exposure.
+    sources : `lsst.afw.table.SourceCatalog` or `None`
+        Fresh detections.
+    starCat : `lsst.afw.table.SourceCatalog` or `None`
+        PSF candidates.
+    forced_positions : array-like or `None`
+        Forced original star positions.
+    psf_prev, psf_new : `lsst.afw.detection.Psf`
+        Previous and new PSF.
+    psf_updated : `bool`
+        Whether the PSF was updated.
+    outer_idx : `int`
+        Outer-pass index.
+    """
     bbox = exp_next.getBBox()
     ext = _extent(bbox)
     data = exp_next.image.array
@@ -3349,10 +4194,32 @@ def plot_outer_step_psf(exp_next, sources, starCat, forced_positions, psf_prev, 
 # or let the pipeline do it each outer pass with refit_psf='stack'.
 
 def highfreq_noise_check_arrays(resid, variance, model, good, nbins=6, verbose=True):
-    """Compare PIXEL-TO-PIXEL scatter of the residual with the variance plane, binned
-    by model flux. ratio ~ 1 everywhere -> variance fine; ratio growing with model flux
-    -> variance lacks source Poisson noise. Returns dict(flux, ratio, k) where k is the
-    extra variance per unit model flux (var_true ~ var + k * model)."""
+    """Compare the residual's pixel-to-pixel scatter with the variance plane.
+
+    Binned by model flux: ratio ~ 1 everywhere means the variance is right; a ratio growing with
+    model flux means the variance lacks source photon noise.
+
+    Parameters
+    ----------
+    resid : `numpy.ndarray`
+        Residual image.
+    variance : `numpy.ndarray`
+        Variance image.
+    model : `numpy.ndarray`
+        Model image.
+    good : `numpy.ndarray` [`bool`]
+        Usable pixels.
+    nbins : `int`, optional
+        Number of model-flux bins.
+    verbose : `bool`, optional
+        Print the table.
+
+    Returns
+    -------
+    result : `dict`
+        ``flux`` (bin centres), ``ratio`` (scatter^2 / variance) and ``k`` (extra variance per
+        unit model flux: var_true ~ var + k * model).
+    """
     d = (resid[:, 1:] - resid[:, :-1]) / np.sqrt(2)
     m = 0.5 * (model[:, 1:] + model[:, :-1])
     v = 0.5 * (variance[:, 1:] + variance[:, :-1])
@@ -3381,6 +4248,24 @@ def highfreq_noise_check_arrays(resid, variance, model, good, nbins=6, verbose=T
 
 
 def highfreq_noise_check(outer_history, outer_idx=-1, snap_idx=-1, **kw):
+    """Run `highfreq_noise_check_arrays` on one snapshot of a run.
+
+    Parameters
+    ----------
+    outer_history : `list` [`dict`]
+        Outer-loop history.
+    outer_idx : `int`, optional
+        Outer pass (default: last).
+    snap_idx : `int`, optional
+        Inner-loop snapshot (default: last).
+    **kw
+        Keyword arguments of `highfreq_noise_check_arrays`.
+
+    Returns
+    -------
+    result : `dict`
+        See `highfreq_noise_check_arrays`.
+    """
     h = outer_history[outer_idx]
     snap = h['result']['snaps'][snap_idx]
     fit = snap['fit']
@@ -3393,11 +4278,49 @@ def estimate_psf_correction(data, model, variance, good, xy0, positions, amps, k
                             window=(0.6, 1.0), max_radius=None):
     """Estimate an improved PSF kernel from neighbour-subtracted residuals.
 
-    For each bright star j, (data - full model) / amp_j sampled on the kernel grid
-    centred on the star's fitted position estimates (true PSF - current PSF). The
-    weighted, clipped mean over stars is soft-thresholded, windowed to zero at the
-    kernel edge, stripped of components degenerate with position (dP/dx, dP/dy), added
-    to the kernel, and re-normalised."""
+    For each bright star, (data - model) / amp sampled on the kernel grid around its fitted
+    position estimates (true PSF - current PSF).  The weighted, clipped mean over stars is
+    soft-thresholded, windowed to zero at the kernel edge, stripped of the components degenerate
+    with position (dP/dx, dP/dy), added to the kernel and renormalised.
+
+    Parameters
+    ----------
+    data : `numpy.ndarray`
+        Image.
+    model : `numpy.ndarray`
+        Joint-fit model.
+    variance : `numpy.ndarray`
+        Variance used for the weights.
+    good : `numpy.ndarray` [`bool`]
+        Usable pixels.
+    xy0 : `tuple` [`int`, `int`]
+        Parent pixel coordinates of ``data[0, 0]``.
+    positions : array-like
+        Star positions, shape (N, 2).
+    amps : array-like
+        Star amplitudes.
+    kernel : `numpy.ndarray`
+        Current PSF kernel.
+    n_use : `int`, optional
+        Number of brightest stars used.
+    step : `float`, optional
+        Fraction of the correction applied.
+    clip : `float`, optional
+        Sigma clipping of the stack.
+    soft_sigma : `float`, optional
+        Soft threshold of the correction [sigma].
+    window : `tuple` [`float`, `float`], optional
+        Inner and outer edge of the window as fractions of the kernel half-size.
+    max_radius : `float`, optional
+        Do not change the kernel beyond this radius [px].
+
+    Returns
+    -------
+    new : `numpy.ndarray`
+        Corrected, normalised kernel.
+    info : `dict`
+        ``old``, ``new``, ``delta``, ``raw_delta``, ``err``, ``n_stars``, ``used``.
+    """
     positions = np.asarray(positions, float)
     amps = np.asarray(amps, float)
     ny, nx = data.shape
@@ -3461,7 +4384,18 @@ def estimate_psf_correction(data, model, variance, good, xy0, positions, amps, k
 
 
 def kernel_to_lsst_psf(kernel):
-    """Wrap a (n, n) kernel array (centre n//2, sum 1) as a spatially constant LSST PSF."""
+    """Wrap a kernel array as a spatially constant LSST PSF.
+
+    Parameters
+    ----------
+    kernel : `numpy.ndarray`
+        Square kernel of odd size, centred at n//2, summing to 1.
+
+    Returns
+    -------
+    psf : `lsst.meas.algorithms.KernelPsf`
+        The PSF.
+    """
     import lsst.afw.image as afwImage
     import lsst.afw.math as afwMath
     try:
@@ -3475,14 +4409,35 @@ def kernel_to_lsst_psf(kernel):
 def extend_kernel_with_moffat(kernel, new_size=81, fit_r=(6.0, 14.0), blend=(12.0, 16.0)):
     """Replace the noisy outer part of a PSF kernel by an analytic Moffat tail.
 
-    The azimuthal-mean profile of the kernel between fit_r[0] and fit_r[1] px is fitted
-    with A*(1+(r/a)^2)^-b (relative weighting, so the faint outer bins count). The new
-    (new_size x new_size) kernel equals the original inside blend[0], the Moffat beyond
-    blend[1], with a linear cross-fade between. Re-normalised to sum 1 -- so fitted
-    amplitudes become TOTAL flux including the tail (they shift down by the tail
-    fraction relative to a truncated kernel).
-    Works on an already-extended kernel too (it re-derives the tail from fit_r).
-    Returns (new_kernel, info). Raises RuntimeError if the Moffat fit fails."""
+    The azimuthal-mean profile between ``fit_r[0]`` and ``fit_r[1]`` px is fitted with
+    ``A * (1 + (r/a)^2)^-b`` (relative weighting, so faint outer bins count).  The new kernel
+    equals the original inside ``blend[0]``, the Moffat beyond ``blend[1]``, with a linear
+    cross-fade between, and is renormalised -- fitted amplitudes then become total fluxes
+    including the tail.  Works on an already-extended kernel too.
+
+    Parameters
+    ----------
+    kernel : `numpy.ndarray`
+        PSF kernel.
+    new_size : `int`, optional
+        Size of the new kernel [px] (odd).
+    fit_r : `tuple` [`float`, `float`], optional
+        Radial range of the Moffat fit [px].
+    blend : `tuple` [`float`, `float`], optional
+        Radial range of the cross-fade [px].
+
+    Returns
+    -------
+    new_kernel : `numpy.ndarray`
+        Extended, normalised kernel.
+    info : `dict`
+        Moffat ``A``, ``a``, ``beta`` and ``tail_frac`` (flux fraction beyond ``blend[1]``).
+
+    Raises
+    ------
+    RuntimeError
+        Raised if the Moffat fit fails.
+    """
     n = kernel.shape[0]
     h = n // 2
     u = np.arange(-h, h + 1)
@@ -3513,8 +4468,26 @@ def extend_kernel_with_moffat(kernel, new_size=81, fit_r=(6.0, 14.0), blend=(12.
 
 
 def extend_psf_wings(psf, point, size=81, verbose=True, **kw):
-    """PSF (any LSST PSF) -> spatially CONSTANT KernelPsf (taken at `point`) whose kernel has
-    a Moffat tail out to size x size px. Falls back to the input PSF if the fit fails."""
+    """Return a constant KernelPsf with a Moffat tail, taken from any PSF at a point.
+
+    Parameters
+    ----------
+    psf : `lsst.afw.detection.Psf`
+        Input PSF.
+    point : `lsst.geom.Point2D`
+        Position at which the kernel is taken.
+    size : `int`, optional
+        Size of the extended kernel [px].
+    verbose : `bool`, optional
+        Print the fitted tail.
+    **kw
+        Keyword arguments of `extend_kernel_with_moffat`.
+
+    Returns
+    -------
+    psf : `lsst.afw.detection.Psf`
+        The extended PSF, or the input PSF if the fit fails.
+    """
     kernel = psf.computeKernelImage(point).array.astype(float).copy()
     try:
         new, info = extend_kernel_with_moffat(kernel, new_size=size, **kw)
@@ -3529,7 +4502,26 @@ def extend_psf_wings(psf, point, size=81, verbose=True, **kw):
 
 
 def refine_psf_from_fit(outer_history, outer_idx=-1, snap_idx=-1, **kw):
-    """One update step from a finished run. Returns (lsst_psf, info)."""
+    """Make one PSF update step from a finished run.
+
+    Parameters
+    ----------
+    outer_history : `list` [`dict`]
+        Outer-loop history.
+    outer_idx : `int`, optional
+        Outer pass (default: last).
+    snap_idx : `int`, optional
+        Inner-loop snapshot (default: last).
+    **kw
+        Keyword arguments of `estimate_psf_correction`.
+
+    Returns
+    -------
+    psf : `lsst.meas.algorithms.KernelPsf`
+        Updated PSF.
+    info : `dict`
+        See `estimate_psf_correction`.
+    """
     h = outer_history[outer_idx]
     exp, psf = h['exposure'], h['psf']
     snap = h['result']['snaps'][snap_idx]
@@ -3546,8 +4538,44 @@ def polish_psf_fixed_sources(exposure, psf, result, bad_bitmask, n_cycles=3,
                              stack_kwargs=None, support_frac=0.01, sys_frac=0.03,
                              poisson_k=0.0, refine_centroids=True, centroid_min_amp=50.0,
                              freeze_sep=None, max_shift=0.3, verbose=True):
-    """Iterate PSF correction and re-solve WITHOUT re-detecting sources. A cycle is kept
-    only if the residual rms over good pixels drops. Returns (lsst_psf, info)."""
+    """Iterate PSF correction and re-solve without re-detecting sources.
+
+    A cycle is kept only if the residual rms over good pixels drops.
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        The fitted exposure.
+    psf : `lsst.afw.detection.Psf`
+        Current PSF.
+    result : `dict`
+        Inner-loop result.
+    bad_bitmask : `int`
+        Mask bits of pixels to ignore.
+    n_cycles : `int`, optional
+        Maximum number of cycles.
+    stack_kwargs : `dict`, optional
+        Keyword arguments of `estimate_psf_correction`.
+    support_frac, sys_frac, poisson_k : `float`, optional
+        See `joint_psf_fit_diag`.
+    refine_centroids : `bool`, optional
+        Refine positions after each PSF change.
+    centroid_min_amp : `float`, optional
+        Fainter sources keep their position.
+    freeze_sep : `float`, optional
+        See `refine_peak_positions`.
+    max_shift : `float`, optional
+        Maximum position shift [px].
+    verbose : `bool`, optional
+        Print each cycle.
+
+    Returns
+    -------
+    psf : `lsst.afw.detection.Psf`
+        The best PSF.
+    info : `dict` or `None`
+        Information of the last kept correction (see `estimate_psf_correction`).
+    """
     snap = result['snaps'][-1]
     peaks = [tuple(p) for p in snap['merged_arr']]
     fit = snap['fit']
@@ -3591,7 +4619,13 @@ def polish_psf_fixed_sources(exposure, psf, result, bad_bitmask, n_cycles=3,
 
 
 def plot_psf_correction(info):
-    """Old kernel, proposed correction (raw and thresholded), and radial profiles."""
+    """Plot the old kernel, the proposed correction and the radial profiles.
+
+    Parameters
+    ----------
+    info : `dict`
+        Output of `estimate_psf_correction`.
+    """
     old, new, d, raw, err = info['old'], info['new'], info['delta'], info['raw_delta'], info['err']
     h = old.shape[0] // 2
     ext = (-h - .5, h + .5, -h - .5, h + .5)
@@ -3621,7 +4655,7 @@ def plot_psf_correction(info):
 # =====================================================================
 
 def _wants_more_outer(result, outer_idx):
-    """Replaced by cutout_adaptive.install(); default: never extend the outer loop."""
+    """Return False: never extend the outer loop (replaced by ``adaptive.install()``)."""
     return False
 
 
@@ -3643,31 +4677,94 @@ def run_cutout_pipeline(exposure_crop, psf, bad_bitmask, starCat=None, bgImage=N
                         edge_margin_fwhm=0.5, use_eliminate_weak=True,
                         use_shape_cut=True, shape_kwargs=None, shape_in_first_pass=False,
                         stack_kwargs=None, psf_polish_cycles=3, psf_wing_size=81):
-    """
-    source_view: 'all' | 'new' | 'changed' -- which sources get a per-source page.
-    max_pages_per_iter: cap on per-source pages per iteration (None = no cap).
-    plot_every: render full diagnostics every Nth inner iteration (last always renders).
-    refine_centroids / centroid_min_amp: linearized position refinement (see
-    refine_peak_positions) for sources above centroid_min_amp flux.
-    sys_frac, min_snr, prune_sep_sigma, reject_fwhm, bright_peak_sigma, freeze_fwhm,
-    poisson_k, near_bright_*: over-counting guards, see run_inner_loop_verbose.
-    edge_margin_fwhm: drop sources within this many FWHM of the cutout edge.
-    use_eliminate_weak: backward elimination on the honest S/N.
-    use_shape_cut / shape_kwargs: PSF-shape constraint (eliminate_nonpsf).
-    shape_in_first_pass: False (default) = shape cut only from outer pass 2 on, once the
-        PSF has been refined (a rough first-pass PSF can make the cut reject real faint
-        companions). True = apply in every pass.
-    psf_wing_size: None = off. Otherwise every PSF used in the inner loop (the initial one
-    and after every refit) is converted to a spatially-constant kernel of this size
-    (odd, e.g. 81) whose outer wings are an analytic Moffat tail fitted to the kernel's
-    6-14 px profile (see extend_psf_wings). Stops the model ending at the stamp edge,
-    which leaves a ring of fake sources ~half-kernel-width from bright stars. With
-    refit_psf='stack' also pass stack_kwargs=dict(max_radius=20) so the stack never edits
-    the tail. Costs ~4x pixels per source at 81 px.
-    refit_psf: False | True (PCA star-selector refit) | 'stack' (residual-stack refit
-    from the bright stars, see refine_psf_from_fit; stack_kwargs are passed to it).
-    psf_polish_cycles: with refit_psf='stack', number of (PSF correction -> re-solve)
-    cycles per outer pass; 1 = single step.
+    """Run the outer loop (inner fit, background and PSF refinement) on a cutout.
+
+    Parameters
+    ----------
+    exposure_crop : `lsst.afw.image.Exposure`
+        Region to process (before background subtraction).
+    psf : `lsst.afw.detection.Psf`
+        Initial PSF.
+    bad_bitmask : `int`
+        Mask bits of pixels to ignore.
+    starCat : `lsst.afw.table.SourceCatalog`, optional
+        Original PSF stars, forced into every PSF determination.
+    bgImage : `lsst.afw.image.Image`, optional
+        Detector background subtracted before the first pass.
+    x_range, y_range : `tuple` [`int`, `int`], optional
+        Sub-region of ``exposure_crop`` (see `make_cutout`).
+    n_outer_iterations : `int`, optional
+        Number of outer passes.
+    n_inner_iterations : `int`, optional
+        Maximum inner iterations per pass.
+    inner_kwargs : `dict`, optional
+        Keyword arguments of `run_inner_loop_verbose`.
+    outer_convergence_frac : `float`, optional
+        Stop when the residual standard deviation improves by less than this fraction.
+    refit_psf : `bool` or `str`, optional
+        False, True (PCA star-selector refit) or 'stack' (residual-stack refit from the bright
+        stars, see `refine_psf_from_fit`).
+    psf_kernel_size : `int`, optional
+        PSF kernel size [px].
+    psf_kernel_sizes : `tuple` [`int`], optional
+        Kernel sizes tried by `redetect_and_refit_psf_adaptive`.
+    bg_bin_size : `int`, optional
+        Background bin size [px].
+    bg_use_approx : `bool`, optional
+        See `refit_background`.
+    viz : `bool`, optional
+        Draw diagnostics.
+    plot_every : `int`, optional
+        Draw every n-th inner iteration (the last always).
+    source_view : `str`, optional
+        'all', 'new' or 'changed': which sources get a per-source page.
+    sources_per_page : `int`, optional
+        Sources per page.
+    max_pages_per_iter : `int`, optional
+        Maximum per-source pages per iteration (None = no limit).
+    view_half : `int`, optional
+        Half-size of the per-source windows [px].
+    support_frac : `float`, optional
+        See `joint_psf_fit_diag`.
+    refine_centroids : `bool`, optional
+        Refine positions (`refine_peak_positions`).
+    centroid_min_amp : `float`, optional
+        Fainter sources keep their position.
+    n_centroid_rounds, centroid_shift_tol, centroid_shift_schedule : optional
+        Centroid refinement controls (see `run_inner_loop_verbose`).
+    coarse_centroid, coarse_centroid_hw_sigma : optional
+        Windowed starting centroid of new peaks (see `run_inner_loop_verbose`).
+    merge_separation_sigma : `float`, optional
+        Merge new peaks closer than this many PSF sigma.
+    sys_frac, min_snr, prune_sep_sigma, reject_fwhm, bright_peak_sigma : `float`, optional
+        Over-counting guards (see `run_inner_loop_verbose`).
+    freeze_fwhm, poisson_k, near_bright_fwhm, near_bright_snr : `float`, optional
+        Over-counting guards (see `run_inner_loop_verbose`).
+    edge_margin_fwhm : `float`, optional
+        Drop sources within this many FWHM of the cutout edge.
+    use_eliminate_weak : `bool`, optional
+        Backward elimination on the honest S/N.
+    use_shape_cut : `bool`, optional
+        PSF-shape constraint (`eliminate_nonpsf`).
+    shape_kwargs : `dict`, optional
+        Keyword arguments of `shape_metrics` / `judge_shape`.
+    shape_in_first_pass : `bool`, optional
+        Apply the shape cut in the first outer pass too (by default only once the PSF has been
+        refined: a rough first PSF can make the cut reject real faint companions).
+    stack_kwargs : `dict`, optional
+        Keyword arguments of `refine_psf_from_fit` (``refit_psf='stack'``).
+    psf_polish_cycles : `int`, optional
+        PSF correction / re-solve cycles per outer pass (``refit_psf='stack'``).
+    psf_wing_size : `int`, optional
+        Convert every PSF to a constant kernel of this size with a Moffat tail (see
+        `extend_psf_wings`); None = off.  Stops the model ending at the stamp edge, which leaves
+        a ring of fake sources half a kernel width from bright stars.
+
+    Returns
+    -------
+    outer_history : `list` [`dict`]
+        One dict per outer pass: ``psf``, ``exposure``, ``result``, ``resid_std``, ``n_peaks``,
+        ``bg_image``.
     """
     TIMER.reset()
     if psf_kernel_sizes is None:
@@ -3835,11 +4932,21 @@ def run_cutout_pipeline(exposure_crop, psf, bad_bitmask, starCat=None, bgImage=N
 
 
 def plot_wing_diagnostic(outer_history, n_stars=3, rmax=40):
-    """Azimuthally averaged profile of the brightest sources: data with neighbours
-    removed vs this source's own model, plus their difference.
-      * data >> model beyond the dashed line -> real halo the kernel cannot represent
-      * difference noisy but centred on 0, no step at the dashed line -> tapering fixed
-        the boxes and what remains is core/PSF-shape mismatch."""
+    """Plot the azimuthal profiles of the brightest sources: data vs their own model.
+
+    Data beyond the dashed line well above the model means a real halo the kernel cannot
+    represent; a difference centred on zero without a step means only core / PSF-shape mismatch
+    remains.
+
+    Parameters
+    ----------
+    outer_history : `list` [`dict`]
+        Outer-loop history.
+    n_stars : `int`, optional
+        Number of brightest sources shown.
+    rmax : `float`, optional
+        Maximum radius [px].
+    """
     final = outer_history[-1]
     exp, res = final['exposure'], final['result']
     snap = res['snaps'][-1]
@@ -3890,8 +4997,7 @@ def plot_wing_diagnostic(outer_history, n_stars=3, rmax=40):
 # =====================================================================
 
 def _window(bbox, px, py, half):
-    """Array-index window (clipped) around parent-frame (px, py). ix, iy are UNCLIPPED
-    array indices of the source; clamp before indexing (see plot_source_cutouts)."""
+    """Return the (unclipped) array index of a source and the clipped window around it."""
     X0, Y0 = bbox.getMinX(), bbox.getMinY()
     ix, iy = int(round(px)) - X0, int(round(py)) - Y0
     xa, xb = max(ix - half, 0), min(ix + half + 1, bbox.getWidth())
@@ -3900,6 +5006,7 @@ def _window(bbox, px, py, half):
 
 
 def _select_sources(peaks, amps, source_ids, top_n, min_amp):
+    """Return the indices of the sources to plot (given ids, or the brightest above a flux)."""
     if source_ids is not None:
         return [int(j) for j in source_ids]
     order = np.argsort(-amps)
@@ -3912,15 +5019,43 @@ def plot_source_cutouts(outer_history, outer_idx=-1, snap_idx=-1,
                         half=15, cross_axis='x', show_own=True,
                         sources_per_fig=4, pdf_path=None, show=True,
                         cmap=None, mark_neighbours=True):
-    """
-    outer_history : list returned by run_cutout_pipeline
-    outer_idx / snap_idx : which outer pass / inner iteration (default: last)
-    source_ids    : explicit list of source indices; overrides top_n / min_amp
-    top_n, min_amp: brightest N sources / skip sources with amp <= min_amp
-    half          : cutout half-width in pixels
-    cross_axis    : 'x', 'y' or 'both'
-    show_own      : draw this source's own PSF component in the cross-section
-    pdf_path      : if given, every figure is also saved as a page of this PDF
+    """Plot cutouts and cross-sections of individual sources of a run.
+
+    Parameters
+    ----------
+    outer_history : `list` [`dict`]
+        Outer-loop history.
+    outer_idx : `int`, optional
+        Outer pass (default: last).
+    snap_idx : `int`, optional
+        Inner-loop snapshot (default: last).
+    source_ids : `list` [`int`], optional
+        Sources to show; overrides ``top_n`` / ``min_amp``.
+    top_n : `int`, optional
+        Show the brightest N sources.
+    min_amp : `float`, optional
+        Skip sources with amplitude at or below this.
+    half : `int`, optional
+        Cutout half-width [px].
+    cross_axis : `str`, optional
+        'x', 'y' or 'both'.
+    show_own : `bool`, optional
+        Draw the source's own PSF component in the cross-section.
+    sources_per_fig : `int`, optional
+        Sources per figure.
+    pdf_path : `str`, optional
+        Also save every figure as a page of this PDF.
+    show : `bool`, optional
+        Display the figures.
+    cmap : `str`, optional
+        Colour map of the images.
+    mark_neighbours : `bool`, optional
+        Mark the neighbouring sources.
+
+    Returns
+    -------
+    figs : `list` [`matplotlib.figure.Figure`]
+        The figures.
     """
     cmap = cmap or CMAP
     h = outer_history[outer_idx]
@@ -4060,14 +5195,30 @@ def plot_source_cutouts(outer_history, outer_idx=-1, snap_idx=-1,
 
 def negative_source_check(outer_history, outer_idx=-1, snap_idx=-1, thresholds=(3, 4, 5),
                           plot=True):
-    """Estimate how many detected sources are false, using the residual itself.
+    """Estimate the number of false detections from the residual itself.
 
-    Builds the matched-filter S/N map of the final residual (PSF-weighted, divided by
-    the empirical noise scale) and counts pixels at >= +N sigma vs <= -N sigma. Real
-    sources are positive only, so NEGATIVE excursions approximate the number of
-    positive noise excursions (= false positives). PSF-mismatch dipoles inflate both.
-    Uses the matched-filter-calibrated scale, so the S/N histogram should have std ~ 1.
-    Returns the S/N map."""
+    Counts pixels of the matched-filter S/N map of the final residual at >= +N sigma and at
+    <= -N sigma.  Real sources are positive only, so the negative excursions approximate the
+    positive noise excursions (false positives); PSF-mismatch dipoles inflate both.
+
+    Parameters
+    ----------
+    outer_history : `list` [`dict`]
+        Outer-loop history.
+    outer_idx : `int`, optional
+        Outer pass (default: last).
+    snap_idx : `int`, optional
+        Inner-loop snapshot (default: last).
+    thresholds : `tuple` [`float`], optional
+        S/N thresholds.
+    plot : `bool`, optional
+        Plot the S/N map and histogram.
+
+    Returns
+    -------
+    snr_map : `numpy.ndarray`
+        Matched-filter S/N map of the residual.
+    """
     h = outer_history[outer_idx]
     exp = h['exposure']
     fit = h['result']['snaps'][snap_idx]['fit']
@@ -4106,8 +5257,26 @@ def negative_source_check(outer_history, outer_idx=-1, snap_idx=-1, thresholds=(
 
 
 def source_snr_histogram(outer_history, outer_idx=-1, snap_idx=-1, min_snr=5.0):
-    """Honest S/N (full covariance, noise-scaled) of every final source. A real
-    population shows a gap/knee; a smooth pile-up just above min_snr means noise."""
+    """Plot the histogram of the honest S/N of every final source.
+
+    A real population shows a gap or knee; a smooth pile-up just above ``min_snr`` means noise.
+
+    Parameters
+    ----------
+    outer_history : `list` [`dict`]
+        Outer-loop history.
+    outer_idx : `int`, optional
+        Outer pass (default: last).
+    snap_idx : `int`, optional
+        Inner-loop snapshot (default: last).
+    min_snr : `float`, optional
+        S/N threshold marked in the plot.
+
+    Returns
+    -------
+    snr : `numpy.ndarray`
+        S/N per source.
+    """
     h = outer_history[outer_idx]
     fit = h['result']['snaps'][snap_idx]['fit']
     scale = empirical_noise_scale(fit, h['exposure'])
@@ -4149,8 +5318,23 @@ EDGE_COLOR = '#ff00ff'   # magenta: distinct from red (masked) and the RdBu / ma
 
 
 def draw_edge_margin(ax, bbox, margin_px, color=EDGE_COLOR, shade=True):
-    """Dashed outline + light shading of the band closer than margin_px to the
-    image border (the region drop_out_of_bounds(..., margin=-margin_px) removes)."""
+    """Outline and shade the band within ``margin_px`` of the image border.
+
+    This is the region removed by ``drop_out_of_bounds(..., margin=-margin_px)``.
+
+    Parameters
+    ----------
+    ax : `matplotlib.axes.Axes`
+        Axes to draw on.
+    bbox : `lsst.geom.Box2I`
+        Image box.
+    margin_px : `float`
+        Band width [px].
+    color : `str`, optional
+        Line colour.
+    shade : `bool`, optional
+        Shade the band.
+    """
     if not margin_px or margin_px <= 0:
         return
     x0, x1 = bbox.getMinX(), bbox.getMaxX()
@@ -4173,12 +5357,26 @@ def draw_edge_margin(ax, bbox, margin_px, color=EDGE_COLOR, shade=True):
 def plot_final_comparison(outer_history, exposure_crop, bad_bitmask=None,
                           edge_margin_fwhm=0.5, view=None,
                           show_peaks=True, circle_radius=None, figsize=(26, 7)):
-    """Original | final model | residual | residual/sigma over the fitted region.
+    """Plot original | final model | residual | residual/sigma over the fitted region.
 
-    edge_margin_fwhm : must match the value used in run_cutout_pipeline; draws the
-                       magenta drop-zone boundary (None / 0 = don't draw).
-    view             : optional (xmin, xmax, ymin, ymax) to zoom the display, e.g.
-                       (0, 250, 0, 250) when the fit was run on a larger padded region.
+    Parameters
+    ----------
+    outer_history : `list` [`dict`]
+        Outer-loop history.
+    exposure_crop : `lsst.afw.image.Exposure`
+        The input crop (original image panel).
+    bad_bitmask : `int`, optional
+        Mask bits of bad pixels.
+    edge_margin_fwhm : `float`, optional
+        Edge margin used in the run; draws its boundary (None / 0 = do not draw).
+    view : `tuple` [`float`, `float`, `float`, `float`], optional
+        (xmin, xmax, ymin, ymax) zoom.
+    show_peaks : `bool`, optional
+        Mark the sources.
+    circle_radius : `float`, optional
+        Marker radius [px].
+    figsize : `tuple` [`float`, `float`], optional
+        Figure size [inches].
     """
     final = outer_history[-1]
     exp = final['exposure']
@@ -4294,13 +5492,38 @@ def plot_source_pages(exposure, snap, outer_idx, pages=None, colors=None,
                       source_view='all', sources_per_page=6, max_pages=None,
                       view_half=20, circle_radius=None,
                       pdf=None, show=True, snr=None, dpi=80):
-    """
-    One row per source: data | model | residual | x-section | y-section.
+    """Plot one row per source: data | model | residual | x-section | y-section.
 
-    pdf  : an open matplotlib PdfPages object; every page is saved into it
-    show : also display each page inline (slow for hundreds of sources)
-    snr  : optional array of honest S/N per source, shown in the model title
-    dpi  : resolution used when saving into the PDF
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        The fitted exposure.
+    snap : `dict`
+        Inner-loop snapshot.
+    outer_idx : `int`
+        Outer-pass index.
+    pages : `list` [`list` [`int`]], optional
+        Source indices per page (default: `select_source_pages`).
+    colors : `dict` [`int`, `str`], optional
+        Colour per source.
+    source_view : `str`, optional
+        See `select_source_pages`.
+    sources_per_page : `int`, optional
+        See `select_source_pages`.
+    max_pages : `int`, optional
+        See `select_source_pages`.
+    view_half : `int`, optional
+        Half-size of each window [px].
+    circle_radius : `float`, optional
+        Marker radius [px].
+    pdf : `matplotlib.backends.backend_pdf.PdfPages`, optional
+        Open PDF; every page is saved into it.
+    show : `bool`, optional
+        Also display each page (slow for hundreds of sources).
+    snr : `numpy.ndarray`, optional
+        Honest S/N per source, shown in the model title.
+    dpi : `int`, optional
+        Resolution of the PDF pages.
     """
     bbox = exposure.getBBox()
     X0, Y0 = bbox.getMinX(), bbox.getMinY()
@@ -4447,13 +5670,26 @@ def plot_source_pages(exposure, snap, outer_idx, pages=None, colors=None,
 # =====================================================================
 
 def source_metrics(outer_history, outer_idx=-1, snap_idx=-1, core_fwhm=1.5):
-    """Arrays (one entry per fitted source) used to stratify the sample.
+    """Return per-source quantities used to stratify the sample.
 
-    snr     : honest S/N (full covariance, noise-scaled)
-    nn      : distance to nearest other fitted source [px]
-    edge    : distance to the nearest image border [px]
-    chi2    : mean (resid^2 / sigma_eff^2) over good pixels within core_fwhm * FWHM
-    group   : size of the coupled group the source belongs to
+    Parameters
+    ----------
+    outer_history : `list` [`dict`]
+        Outer-loop history.
+    outer_idx : `int`, optional
+        Outer pass (default: last).
+    snap_idx : `int`, optional
+        Inner-loop snapshot (default: last).
+    core_fwhm : `float`, optional
+        Radius of the chi2 region [FWHM].
+
+    Returns
+    -------
+    metrics : `dict`
+        ``peaks``, ``amps``, ``snr`` (honest S/N), ``nn`` (distance to the nearest other source
+        [px]), ``edge`` (distance to the image border [px]), ``chi2`` (mean resid^2 / sigma^2
+        within ``core_fwhm`` FWHM), ``group`` (size of the coupled group), ``fwhm``,
+        ``outer_pos`` and the exposure and snapshot used.
     """
     outer_pos = outer_idx if outer_idx >= 0 else len(outer_history) + outer_idx
     h = outer_history[outer_pos]
@@ -4505,13 +5741,25 @@ def source_metrics(outer_history, outer_idx=-1, snap_idx=-1, core_fwhm=1.5):
 
 def select_representative_sources(m, n_per_category=4, seed=0, categories=None,
                                   extra_ids=None):
-    """Returns an OrderedDict {category: [source ids]}.
+    """Select a representative sample of sources per category.
 
-    m               : output of source_metrics
-    n_per_category  : sources drawn per category (int, or dict {category: n})
-    seed            : RNG seed for the random tercile draws (reproducible)
-    categories      : optional list of category names to keep, in display order
-    extra_ids       : optional list of source ids to append as a 'picked' category
+    Parameters
+    ----------
+    m : `dict`
+        Output of `source_metrics`.
+    n_per_category : `int` or `dict` [`str`, `int`], optional
+        Sources drawn per category.
+    seed : `int`, optional
+        Random seed of the tercile draws.
+    categories : `list` [`str`], optional
+        Categories to keep, in display order.
+    extra_ids : `list` [`int`], optional
+        Source ids appended as a 'picked' category.
+
+    Returns
+    -------
+    selection : `collections.OrderedDict` [`str`, `list` [`int`]]
+        Source ids per category.
     """
     rng = np.random.default_rng(seed)
     snr, amps, nn, edge, chi2 = m['snr'], m['amps'], m['nn'], m['edge'], m['chi2']
@@ -4571,12 +5819,42 @@ def plot_representative_sources(outer_history, outer_idx=-1, snap_idx=-1,
                                 n_per_category=4, seed=0, categories=None,
                                 extra_ids=None, sources_per_page=4, view_half=20,
                                 pdf_path=None, show=True, dpi=80):
-    """Select a representative sample and plot it with plot_source_pages.
+    """Select a representative sample and plot it with `plot_source_pages`.
 
-    Each category is split into pages of `sources_per_page` rows, so a page never
-    mixes categories. The console table maps every source id to its category.
-    pdf_path : also write all pages to this multi-page PDF (None = don't)
-    show     : display inline
+    Each category is split into pages of ``sources_per_page`` rows, so a page never mixes
+    categories; the printed table maps every source id to its category.
+
+    Parameters
+    ----------
+    outer_history : `list` [`dict`]
+        Outer-loop history.
+    outer_idx : `int`, optional
+        Outer pass (default: last).
+    snap_idx : `int`, optional
+        Inner-loop snapshot (default: last).
+    n_per_category : `int` or `dict`, optional
+        See `select_representative_sources`.
+    seed : `int`, optional
+        See `select_representative_sources`.
+    categories : `list` [`str`], optional
+        See `select_representative_sources`.
+    extra_ids : `list` [`int`], optional
+        See `select_representative_sources`.
+    sources_per_page : `int`, optional
+        Rows per page.
+    view_half : `int`, optional
+        Half-size of each window [px].
+    pdf_path : `str`, optional
+        Also write all pages to this PDF.
+    show : `bool`, optional
+        Display the pages.
+    dpi : `int`, optional
+        Resolution of the PDF pages.
+
+    Returns
+    -------
+    selection : `collections.OrderedDict` [`str`, `list` [`int`]]
+        Source ids per category.
     """
     m = source_metrics(outer_history, outer_idx, snap_idx)
     sel = select_representative_sources(m, n_per_category, seed, categories, extra_ids)

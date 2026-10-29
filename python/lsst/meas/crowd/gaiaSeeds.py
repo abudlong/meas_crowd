@@ -3,8 +3,10 @@
 # Developed for the LSST Data Management System.
 # See the COPYRIGHT file at the top-level directory of this distribution.
 
-"""Gaia DR3 seed catalogue for a visit: Butler reference catalogue (or ESA TAP), proper motions
-propagated to the visit epoch, and seed selection for a cutout.
+"""Gaia DR3 seed catalogue for a visit.
+
+Butler reference catalogue (or ESA TAP), proper motions propagated to the visit epoch, and
+seed selection for a cutout.
 """
 
 import os
@@ -23,7 +25,18 @@ GAIA_EPOCH = 2016.0          # Gaia DR3 reference epoch (TCB Julian year)
 # Gaia catalog for a visit image
 # =====================================================================
 def visit_epoch(exposure):
-    """astropy Time of the exposure (visitInfo date), or None."""
+    """Return the observation epoch of an exposure.
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        Exposure with a VisitInfo.
+
+    Returns
+    -------
+    epoch : `astropy.time.Time` or `None`
+        The visit date, or None if it is missing or implausible.
+    """
     try:
         d = exposure.getInfo().getVisitInfo().getDate()
         try:
@@ -37,6 +50,7 @@ def visit_epoch(exposure):
 
 
 def _col(tbl, name, fill=np.nan):
+    """Return a table column as a float array, or ``fill`` if the column is missing."""
     c = tbl[name]
     if hasattr(c, "filled"):
         c = c.filled(fill)
@@ -44,12 +58,14 @@ def _col(tbl, name, fill=np.nan):
 
 
 def _sky_corners(wcs, bbox):
+    """Return the sky positions of a box's corners."""
     pts = [(bbox.getMinX(), bbox.getMinY()), (bbox.getMinX(), bbox.getMaxY()),
            (bbox.getMaxX(), bbox.getMaxY()), (bbox.getMaxX(), bbox.getMinY())]
     return [wcs.pixelToSky(float(x), float(y)) for x, y in pts]
 
 
 def _gaia_from_butler(wcs, bbox, epoch, butler, refcat, collections):
+    """Load Gaia from the Butler reference catalogue (proper motions applied by the loader)."""
     import lsst.sphgeom as sph
     from lsst.meas.algorithms import ReferenceObjectLoader
     poly = sph.ConvexPolygon.convexHull(
@@ -79,6 +95,7 @@ def _gaia_from_butler(wcs, bbox, epoch, butler, refcat, collections):
 
 
 def _gaia_from_tap(wcs, bbox, epoch, tap_url):
+    """Query Gaia at the ESA archive and propagate the positions to ``epoch``."""
     import pyvo
     corners = _sky_corners(wcs, bbox)
     center = wcs.pixelToSky(bbox.getCenter())
@@ -105,12 +122,45 @@ def gaia_catalog(wcs, bbox, epoch=None, source="auto", butler=None, repo="dp2_pr
                  refcat="gaia_dr3_20230707", refcat_collections="refcats",
                  tap_url="https://gea.esac.esa.int/tap-server/tap", cache_path=None,
                  pad=0, verbose=True):
-    """Gaia DR3 stars overlapping `bbox` (detector px of `wcs`), positions at `epoch`.
+    """Load the Gaia DR3 stars overlapping a box, with positions at the observation epoch.
 
-    source : 'butler' (LSST reference catalog, proper motion applied by the loader),
-             'tap' (ESA archive, proper motion applied here), or 'auto' (butler, then tap)
-    cache_path : .ecsv file; read if it exists, written otherwise
-    Returns an astropy Table with source_id, ra, dec, phot_g_mean_mag, x, y.
+    Parameters
+    ----------
+    wcs : `lsst.afw.geom.SkyWcs`
+        WCS of the image.
+    bbox : `lsst.geom.Box2I`
+        Pixel box (detector pixels of ``wcs``).
+    epoch : `astropy.time.Time`, optional
+        Epoch of the positions (default: the Gaia epoch, J2016.0).
+    source : `str`, optional
+        'butler' (LSST reference catalogue), 'tap' (ESA archive) or 'auto' (Butler, then TAP).
+    butler : `lsst.daf.butler.Butler`, optional
+        Butler to use (default: one for ``repo``).
+    repo : `str`, optional
+        Butler repository path or alias.
+    refcat : `str`, optional
+        Reference catalogue dataset type.
+    refcat_collections : `str`, optional
+        Collections of the reference catalogue.
+    tap_url : `str`, optional
+        TAP service URL.
+    cache_path : `str`, optional
+        .ecsv file: read if it exists, written otherwise.
+    pad : `int`, optional
+        Grow the box by this many px.
+    verbose : `bool`, optional
+        Print what was loaded.
+
+    Returns
+    -------
+    gaia : `astropy.table.Table`
+        ``source_id``, ``ra``, ``dec``, ``phot_g_mean_mag``, pixel positions ``x``, ``y`` and
+        further Gaia columns; ``meta['epoch_jyear']`` is the epoch used.
+
+    Raises
+    ------
+    RuntimeError
+        Raised if Gaia could not be loaded from any source.
     """
     if cache_path and os.path.exists(cache_path):
         tbl = Table.read(cache_path)
@@ -155,8 +205,29 @@ def gaia_catalog(wcs, bbox, epoch=None, source="auto", butler=None, repo="dp2_pr
 
 
 def attach_gaia(session, visit_image=None, pad=64, cache_dir="gaia_cache", **kw):
-    """Load Gaia for the whole visit image (or, without visit_image, the union of the
-    session's cutouts) once, cache it, and store it as session.gaia."""
+    """Load Gaia once for a session and store it as ``session.gaia``.
+
+    Covers the whole visit image or, without one, the union of the session's cutouts; the
+    catalogue is cached on disk.
+
+    Parameters
+    ----------
+    session : `lsst.meas.crowd.session.Session`
+        The session (``session.gaia`` is set).
+    visit_image : `lsst.afw.image.Exposure`, optional
+        The full visit image.
+    pad : `int`, optional
+        Grow the box by this many px.
+    cache_dir : `str`, optional
+        Cache directory (None = no cache).
+    **kw
+        Keyword arguments of `gaia_catalog` (e.g. ``repo``).
+
+    Returns
+    -------
+    gaia : `astropy.table.Table`
+        The Gaia catalogue (see `gaia_catalog`).
+    """
     G = L.geom
     if visit_image is not None:
         bbox = visit_image.getBBox()
@@ -182,7 +253,33 @@ def attach_gaia(session, visit_image=None, pad=64, cache_dir="gaia_cache", **kw)
 # Cutout / session front ends (mirror cutout_notebook.run_cutout / run_session)
 # =====================================================================
 def select_seeds(gaia_tbl, bbox, fwhm, pad_fwhm=1.5, gmag_max=None, min_sep_px=0.5):
-    """Gaia rows inside bbox grown by pad_fwhm*fwhm. Returns (xy (N,2), row indices)."""
+    """Select the Gaia stars that seed a cutout.
+
+    Stars inside the box grown by ``pad_fwhm * fwhm``, brightest first, with near-duplicates
+    (closer than ``min_sep_px``) removed.
+
+    Parameters
+    ----------
+    gaia_tbl : `astropy.table.Table` or `None`
+        Gaia catalogue with ``x``, ``y`` (and ``phot_g_mean_mag``).
+    bbox : `lsst.geom.Box2I`
+        Cutout box.
+    fwhm : `float`
+        PSF FWHM [px].
+    pad_fwhm : `float`, optional
+        Growth of the box [FWHM].
+    gmag_max : `float`, optional
+        Only stars brighter than this G magnitude.
+    min_sep_px : `float`, optional
+        Drop fainter stars within this many px of a brighter one.
+
+    Returns
+    -------
+    xy : `numpy.ndarray`
+        Seed positions, shape (N, 2).
+    rows : `numpy.ndarray` [`int`]
+        Their rows in ``gaia_tbl``.
+    """
     if gaia_tbl is None or len(gaia_tbl) == 0:
         return np.zeros((0, 2)), np.zeros(0, np.int64)
     x, y = np.asarray(gaia_tbl["x"], float), np.asarray(gaia_tbl["y"], float)

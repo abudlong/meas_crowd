@@ -30,8 +30,23 @@ except ImportError:                     # extension not built: NumPy fallback
 
 
 def lanczos_weights(frac, order=5):
-    """(first, weights): normalised Lanczos weights so that
-    ``out[i] = sum_j weights[j] * in[i + first + j]`` approximates ``in(i - frac)``."""
+    """Return normalised Lanczos weights for a sub-pixel shift.
+
+    Parameters
+    ----------
+    frac : `float`
+        Shift [px].
+    order : `int`, optional
+        Lanczos order.
+
+    Returns
+    -------
+    first : `int`
+        Offset of the first weight: ``out[i] = sum_j w[j] * in[i + first + j]`` approximates
+        ``in(i - frac)``.
+    weights : `numpy.ndarray`
+        The ``2 * order`` weights (summing to 1).
+    """
     first = int(np.floor(-frac)) - order + 1
     x = -frac - (first + np.arange(2 * order))
     w = np.sinc(x) * np.sinc(x / order)
@@ -40,7 +55,7 @@ def lanczos_weights(frac, order=5):
 
 
 def _shift_matrix(n, frac, order):
-    """(n, n) matrix M with ``M @ v`` = v shifted by +frac (zeros outside)."""
+    """Return the (n, n) matrix that shifts a vector by ``frac`` (zeros outside)."""
     first, w = lanczos_weights(frac, order)
     M = np.zeros((n, n))
     i = np.arange(n)
@@ -52,7 +67,27 @@ def _shift_matrix(n, frac, order):
 
 
 def shift_image(image, dx, dy, order=5, use_cxx=None):
-    """``image`` shifted by (dx, dy) px: out(x, y) = in(x - dx, y - dy) (afw offsetImage)."""
+    """Shift an image by a sub-pixel offset with a separable Lanczos kernel.
+
+    Same convention as ``lsst.afw.math.offsetImage``: ``out(x, y) = in(x - dx, y - dy)``; pixels
+    outside the input count as zero.
+
+    Parameters
+    ----------
+    image : `numpy.ndarray`
+        Image.
+    dx, dy : `float`
+        Shift [px].
+    order : `int`, optional
+        Lanczos order.
+    use_cxx : `bool`, optional
+        Use the C++ kernels (default: if built).
+
+    Returns
+    -------
+    shifted : `numpy.ndarray`
+        The shifted image.
+    """
     image = np.ascontiguousarray(image, dtype=float)
     if (HAVE_CXX if use_cxx is None else use_cxx):
         return _lib.shiftImage(image, float(dx), float(dy), int(order))
@@ -61,8 +96,27 @@ def shift_image(image, dx, dy, order=5, use_cxx=None):
 
 
 def taper_stamp(stamp, cx, cy, taper, use_cxx=None):
-    """cutout_fit_lib.psf_stamp's wing taper: subtract the median of the outer pixel ring, then a
-    raised cosine from taper[0]*h to taper[1]*h around (cx, cy) (stamp pixel coordinates)."""
+    """Tame the wings of a PSF stamp like ``fitLib.psf_stamp(taper=...)``.
+
+    Subtract the median of the outer pixel ring, then apply a raised cosine from ``taper[0] * h``
+    to ``taper[1] * h`` around (cx, cy), h being half the stamp size.
+
+    Parameters
+    ----------
+    stamp : `numpy.ndarray`
+        PSF stamp.
+    cx, cy : `float`
+        Centre in stamp pixel coordinates.
+    taper : `tuple` [`float`, `float`]
+        Inner and outer taper radii as fractions of h.
+    use_cxx : `bool`, optional
+        Use the C++ kernels (default: if built).
+
+    Returns
+    -------
+    stamp : `numpy.ndarray`
+        The tapered stamp.
+    """
     stamp = np.ascontiguousarray(stamp, dtype=float)
     if (HAVE_CXX if use_cxx is None else use_cxx):
         return _lib.taperStamp(stamp, float(cx), float(cy), float(taper[0]), float(taper[1]))
@@ -77,15 +131,37 @@ def taper_stamp(stamp, cx, cy, taper, use_cxx=None):
 
 
 def _split(v):
+    """Split positions into nearest pixel (floor(x + 0.5)) and sub-pixel offset."""
     i = np.floor(np.asarray(v, float) + 0.5)
     return i.astype(np.int64), np.asarray(v, float) - i
 
 
 def render_stamps(kernel, xs, ys, order=5, taper=None, use_cxx=None):
-    """Stamps of a constant PSF at many positions.
+    """Render stamps of a constant PSF at many positions.
 
-    Returns (stamps[n, ny, nx], x0[n], y0[n]); stamp i has origin (x0[i], y0[i]) =
-    (round(x) - nx//2, round(y) - ny//2), like ``psf.computeImage(Point2D(x, y))``."""
+    Stamp i has origin (round(x) - nx//2, round(y) - ny//2) and is the kernel shifted by the
+    position's sub-pixel offset, like ``psf.computeImage(Point2D(x, y))``.
+
+    Parameters
+    ----------
+    kernel : `numpy.ndarray`
+        PSF kernel image (odd size, centred).
+    xs, ys : array-like
+        Positions in parent pixel coordinates.
+    order : `int`, optional
+        Lanczos order.
+    taper : `tuple` [`float`, `float`], optional
+        Wing taper (see `taper_stamp`); None = no taper.
+    use_cxx : `bool`, optional
+        Use the C++ kernels (default: if built).
+
+    Returns
+    -------
+    stamps : `numpy.ndarray`
+        Shape (n, ny, nx).
+    x0, y0 : `numpy.ndarray` [`int`]
+        Stamp origins.
+    """
     kernel = np.ascontiguousarray(kernel, dtype=float)
     xs = np.ascontiguousarray(np.atleast_1d(xs), dtype=float)
     ys = np.ascontiguousarray(np.atleast_1d(ys), dtype=float)
@@ -104,8 +180,28 @@ def render_stamps(kernel, xs, ys, order=5, taper=None, use_cxx=None):
 
 
 def render_derivatives(kernel, xs, ys, eps=0.25, order=5, use_cxx=None):
-    """Central-difference dP/dx, dP/dy (step eps) on the centred stamps' origins.
-    Returns (dx[n, ny, nx], dy[n, ny, nx], x0[n], y0[n])."""
+    """Render central-difference derivative stamps dP/dx, dP/dy of a constant PSF.
+
+    Parameters
+    ----------
+    kernel : `numpy.ndarray`
+        PSF kernel image (odd size, centred).
+    xs, ys : array-like
+        Positions in parent pixel coordinates.
+    eps : `float`, optional
+        Finite-difference step [px].
+    order : `int`, optional
+        Lanczos order.
+    use_cxx : `bool`, optional
+        Use the C++ kernels (default: if built).
+
+    Returns
+    -------
+    dx, dy : `numpy.ndarray`
+        Derivative stamps, shape (n, ny, nx), on the centred stamps' origins.
+    x0, y0 : `numpy.ndarray` [`int`]
+        Stamp origins.
+    """
     kernel = np.ascontiguousarray(kernel, dtype=float)
     xs = np.ascontiguousarray(np.atleast_1d(xs), dtype=float)
     ys = np.ascontiguousarray(np.atleast_1d(ys), dtype=float)
@@ -125,25 +221,27 @@ def render_derivatives(kernel, xs, ys, eps=0.25, order=5, use_cxx=None):
 
 
 class FastPsf:
-    """Stamps and derivatives of a spatially constant PSF, with the same return conventions as
-    ``fitLib.psf_stamp`` and ``fitLib.compute_psf_derivatives``.
+    """Stamps and derivatives of a spatially constant PSF.
+
+    Return conventions match ``fitLib.psf_stamp`` and ``fitLib.compute_psf_derivatives``, with
+    boxes given as (xmin, ymin, xmax, ymax) tuples.
 
     Parameters
     ----------
     kernel : `numpy.ndarray`
-        The PSF kernel image (odd size, centred), e.g. ``psf.computeKernelImage(point).array``.
-    order : `int`
+        PSF kernel image (odd size, centred), e.g. ``psf.computeKernelImage(point).array``.
+    order : `int`, optional
         Lanczos order (afw renders PSF images with lanczos5).
     """
 
     def __init__(self, kernel, order=5):
+        """Store the kernel as a contiguous float array."""
         self.kernel = np.ascontiguousarray(kernel, dtype=float)
         self.order = order
 
     @staticmethod
     def _clip(x0, y0, ny, nx, clip):
-        """Intersection of the stamp box with clip=(xmin, ymin, xmax, ymax) (inclusive), as
-        (slice_y, slice_x, (bx0, by0, bx1, by1)), or None if empty."""
+        """Intersect a stamp box with a clip box; return (slice_y, slice_x, box) or None."""
         bx0, by0 = max(x0, clip[0]), max(y0, clip[1])
         bx1, by1 = min(x0 + nx - 1, clip[2]), min(y0 + ny - 1, clip[3])
         if bx0 > bx1 or by0 > by1:
@@ -151,8 +249,24 @@ class FastPsf:
         return (slice(by0 - y0, by1 - y0 + 1), slice(bx0 - x0, bx1 - x0 + 1), (bx0, by0, bx1, by1))
 
     def stamp(self, x, y, clip, taper=None):
-        """(array, (xmin, ymin, xmax, ymax)) of the stamp at (x, y) clipped to ``clip``; the
-        array is None if the stamp misses ``clip``."""
+        """Render the stamp at (x, y), clipped to a box.
+
+        Parameters
+        ----------
+        x, y : `float`
+            Position in parent pixel coordinates.
+        clip : `tuple` [`int`, `int`, `int`, `int`]
+            Clip box (xmin, ymin, xmax, ymax), inclusive.
+        taper : `tuple` [`float`, `float`], optional
+            Wing taper (see `taper_stamp`).
+
+        Returns
+        -------
+        stamp : `numpy.ndarray` or `None`
+            The clipped stamp (None if it misses ``clip``).
+        box : `tuple` [`int`, `int`, `int`, `int`] or `None`
+            Its box (xmin, ymin, xmax, ymax).
+        """
         st, x0, y0 = render_stamps(self.kernel, [x], [y], self.order, taper)
         ny, nx = self.kernel.shape
         c = self._clip(int(x0[0]), int(y0[0]), ny, nx, clip)
@@ -161,8 +275,24 @@ class FastPsf:
         return st[0][c[0], c[1]], c[2]
 
     def derivatives(self, x, y, clip, eps=0.25):
-        """(dP/dx, dP/dy, (xmin, ymin, xmax, ymax)) clipped to ``clip``; (None, None, None) if
-        empty."""
+        """Render the derivative stamps at (x, y), clipped to a box.
+
+        Parameters
+        ----------
+        x, y : `float`
+            Position in parent pixel coordinates.
+        clip : `tuple` [`int`, `int`, `int`, `int`]
+            Clip box (xmin, ymin, xmax, ymax), inclusive.
+        eps : `float`, optional
+            Finite-difference step [px].
+
+        Returns
+        -------
+        dpdx, dpdy : `numpy.ndarray` or `None`
+            Derivative stamps (None if they miss ``clip``).
+        box : `tuple` [`int`, `int`, `int`, `int`] or `None`
+            Their box (xmin, ymin, xmax, ymax).
+        """
         dx, dy, x0, y0 = render_derivatives(self.kernel, [x], [y], eps, self.order)
         ny, nx = self.kernel.shape
         c = self._clip(int(x0[0]), int(y0[0]), ny, nx, clip)
@@ -171,9 +301,25 @@ class FastPsf:
         return dx[0][c[0], c[1]], dy[0][c[0], c[1]], c[2]
 
     def validate(self, reference, positions, rtol=2e-3):
-        """Max |fast - reference| / peak over ``positions``; ``reference(x, y)`` must return
-        (array, (xmin, ymin)) of the full, untapered stamp (e.g. from psf.computeImage).
-        Returns (ok, worst)."""
+        """Compare the fast stamps with a reference renderer.
+
+        Parameters
+        ----------
+        reference : callable
+            ``reference(x, y) -> (array, (xmin, ymin))``: the full, untapered stamp (e.g. from
+            ``psf.computeImage``).
+        positions : iterable [`tuple` [`float`, `float`]]
+            Positions to compare at.
+        rtol : `float`, optional
+            Maximum allowed difference relative to the peak.
+
+        Returns
+        -------
+        ok : `bool`
+            Whether all stamps agree (same origin and shape, difference within ``rtol``).
+        worst : `float`
+            Largest difference relative to the peak.
+        """
         worst = 0.0
         ny, nx = self.kernel.shape
         for x, y in positions:

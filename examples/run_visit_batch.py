@@ -1,0 +1,77 @@
+"""Run meas_crowd on cutouts of one visit from a terminal (no notebook) and save everything.
+
+    python examples/run_visit_batch.py --visit 2025062100433 --detector 144 \
+        --cutouts 1000,1000,300 2500,2000,300 --out results_term
+
+Every figure is written to <out>/figures/ as PNG (nothing is shown on screen); catalogues and
+images go to <out>/ as FITS.  Use --repo to point at a Butler repository path or alias.
+"""
+import argparse
+import os
+import time
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+
+import lsst.meas.crowd as crowd  # noqa: E402
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--visit", type=int, required=True)
+    ap.add_argument("--detector", type=int, required=True)
+    ap.add_argument("--cutouts", nargs="+", required=True, help="x0,y0,size (detector px)")
+    ap.add_argument("--repo", default="dp2_prep", help="Butler repo path or alias")
+    ap.add_argument("--collection", default="LSSTCam/runs/DRP/DP2")
+    ap.add_argument("--out", default="results_term")
+    ap.add_argument("--pad", type=int, default=20)
+    ap.add_argument("--max-outer", type=int, default=3)
+    ap.add_argument("--max-inner", type=int, default=15)
+    ap.add_argument("--n-jobs", type=int, default=1, help="cutouts fitted in parallel")
+    args = ap.parse_args()
+
+    figdir = os.path.join(args.out, "figures")
+    os.makedirs(figdir, exist_ok=True)
+    counter = {"n": 0, "tag": "setup"}
+
+    def save_all(*a, **k):                      # replaces plt.show: save every open figure
+        for num in plt.get_fignums():
+            counter["n"] += 1
+            plt.figure(num).savefig(os.path.join(figdir, f"{counter['n']:03d}_{counter['tag']}.png"),
+                                    dpi=110, bbox_inches="tight")
+        plt.close("all")
+    plt.show = save_all
+
+    print(f"meas_crowd driver {crowd.pipeline.__version__}; C++ kernels: {crowd.HAVE_CXX}")
+    cfg = crowd.make_config(crowd.V5_TESTING_CONFIG)
+    sess = crowd.prepare_session(visit=args.visit, detector=args.detector, cutouts=args.cutouts,
+                                 pad=args.pad, psf_source="visit", repo=args.repo,
+                                 collection=args.collection)
+    crowd.attach_gaia(sess, repo=args.repo)
+
+    t0 = time.perf_counter()
+    runs = crowd.run_session_gaia(sess, cfg, out_dir=args.out, max_outer=args.max_outer,
+                                  max_inner=args.max_inner, psf_polish_cycles=3,
+                                  plot_final=False, n_jobs=args.n_jobs)
+    print(f"fit: {time.perf_counter() - t0:.0f} s")
+
+    for name, run in runs.items():
+        counter["tag"] = name
+        crowd.plot_final_comparison(run)
+        plt.show()
+        crowd.plot_residual_gray(run)
+        plt.show()
+        phot = crowd.measure_photometry(run)
+        phot.write(os.path.join(args.out, f"{name}_photometry.fits"), overwrite=True)
+        crowd.plot_source_cutouts(run, how="worst", n=8, phot=phot,
+                                  pdf_path=os.path.join(args.out, f"{name}_worst_sources.pdf"))
+        crowd.diagnose_residual(run)
+        plt.show()
+        crowd.star_residual_table(run)
+        plt.show()
+    print(f"figures in {figdir}/, catalogues and images in {args.out}/")
+
+
+if __name__ == "__main__":
+    main()

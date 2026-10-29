@@ -29,8 +29,24 @@ AB_NJY_ZERO_POINT = 31.4      # m_AB = -2.5 log10(flux / nJy) + 31.4
 
 
 def flux_to_mag(flux, flux_err=None, zero_point=AB_NJY_ZERO_POINT):
-    """Magnitude (and error) of flux in units where ``zero_point`` applies.
-    Non-positive fluxes give NaN magnitudes.  Returns mag, or (mag, mag_err)."""
+    """Convert fluxes (and errors) to magnitudes.
+
+    Parameters
+    ----------
+    flux : array-like
+        Fluxes, in units where ``zero_point`` applies.
+    flux_err : array-like, optional
+        Flux errors.
+    zero_point : `float`, optional
+        Magnitude of unit flux (default: AB for nJy).
+
+    Returns
+    -------
+    mag : `numpy.ndarray`
+        Magnitudes (NaN for non-positive fluxes).
+    mag_err : `numpy.ndarray`
+        Magnitude errors (only if ``flux_err`` is given).
+    """
     flux = np.asarray(flux, float)
     with np.errstate(divide="ignore", invalid="ignore"):
         mag = np.where(flux > 0, zero_point - 2.5 * np.log10(np.where(flux > 0, flux, 1.0)), np.nan)
@@ -41,8 +57,7 @@ def flux_to_mag(flux, flux_err=None, zero_point=AB_NJY_ZERO_POINT):
 
 
 def _pixel_fractions(dx, dy, radius, sub=5):
-    """Fraction of each pixel (centres at offsets dx, dy from the aperture centre) inside a circle
-    of the given radius, by sub x sub sub-sampling (exact for pixels fully in or out)."""
+    """Return the fraction of each pixel inside a circle (5x5 sub-sampling at the edge)."""
     d = np.hypot(dx, dy)
     frac = (d <= radius - 0.7072).astype(float)
     edge = (d > radius - 0.7072) & (d < radius + 0.7072)
@@ -55,10 +70,32 @@ def _pixel_fractions(dx, dy, radius, sub=5):
 
 
 def aperture_flux(image, variance, good, x, y, radius, x0=0, y0=0):
-    """Flux and error in a circular aperture of ``radius`` px around (x, y) (parent coordinates;
-    the arrays start at (x0, y0)).  Bad pixels are replaced by nothing: the returned
-    ``coverage`` (fraction of the aperture area on good pixels) tells how complete the sum is.
-    Returns (flux, flux_err, coverage)."""
+    """Sum the flux in a circular aperture.
+
+    Parameters
+    ----------
+    image : `numpy.ndarray`
+        Image.
+    variance : `numpy.ndarray`
+        Variance image.
+    good : `numpy.ndarray` [`bool`]
+        Usable pixels (others are left out of the sum).
+    x, y : `float`
+        Centre in parent pixel coordinates.
+    radius : `float`
+        Aperture radius [px].
+    x0, y0 : `int`, optional
+        Parent pixel coordinates of ``image[0, 0]``.
+
+    Returns
+    -------
+    flux : `float`
+        Aperture flux (NaN if the aperture misses the image).
+    flux_err : `float`
+        Its error.
+    coverage : `float`
+        Fraction of the aperture area on good pixels.
+    """
     ny, nx = image.shape
     r = int(np.ceil(radius)) + 1
     ix, iy = int(round(x)) - x0, int(round(y)) - y0
@@ -78,7 +115,20 @@ def aperture_flux(image, variance, good, x, y, radius, x0=0, y0=0):
 
 
 def aperture_correction(kernel, radius):
-    """Fraction of a (centred, odd-sized) PSF kernel's flux inside ``radius`` px."""
+    """Return the fraction of a PSF kernel's flux inside a radius.
+
+    Parameters
+    ----------
+    kernel : `numpy.ndarray`
+        PSF kernel (odd size, centred).
+    radius : `float`
+        Aperture radius [px].
+
+    Returns
+    -------
+    fraction : `float`
+        Enclosed flux fraction.
+    """
     k = np.asarray(kernel, float)
     h = k.shape[0] // 2, k.shape[1] // 2
     yy, xx = np.mgrid[-h[0]:h[0] + 1, -h[1]:h[1] + 1]
@@ -87,9 +137,27 @@ def aperture_correction(kernel, radius):
 
 
 def fisher_flux_errors(comps, variance, good, n=None):
-    """1-sigma errors of the jointly fitted amplitudes: sqrt(diag((A^T W A)^-1)), inverted per
-    group of overlapping sources.  ``comps`` is the joint fit's list of per-source dicts
-    (stamp, ys, xs) or None.  Returns an array (inf where a source has no usable pixels)."""
+    """Return the 1-sigma errors of jointly fitted amplitudes.
+
+    ``sqrt(diag((A^T W A)^-1))``, inverted per group of overlapping sources, so blends get
+    larger, honest errors.
+
+    Parameters
+    ----------
+    comps : `list` [`dict` or `None`]
+        The joint fit's per-source components (``stamp``, ``ys``, ``xs``).
+    variance : `numpy.ndarray`
+        Variance used as weights.
+    good : `numpy.ndarray` [`bool`]
+        Pixels used in the fit.
+    n : `int`, optional
+        Number of sources (default: ``len(comps)``).
+
+    Returns
+    -------
+    err : `numpy.ndarray`
+        Error per source (inf where a source has no usable pixels).
+    """
     n = len(comps) if n is None else n
     pix = -np.ones(good.shape, dtype=np.int64)
     idx = np.flatnonzero(good.ravel())
@@ -127,16 +195,38 @@ def fisher_flux_errors(comps, variance, good, n=None):
 
 
 def psf_flux_errors(run):
-    """Fisher errors of the PSF fluxes of a run's final joint fit (fit variance, i.e. including
-    the sys_frac term used for the weights)."""
+    """Return the Fisher errors of the PSF fluxes of a run's final joint fit.
+
+    Parameters
+    ----------
+    run : `lsst.meas.crowd.session.CutoutRun`
+        A finished run.
+
+    Returns
+    -------
+    err : `numpy.ndarray`
+        Error per source (fit variance, including the sys_frac term).
+    """
     res = run.outer_history[-1]["result"]
     fit = res["snaps"][-1]["fit"]
     return fisher_flux_errors(fit["comps"], fit["variance"], fit["good"], len(fit["amps"]))
 
 
 def zero_point_from_run(run):
-    """(zero_point, how): magnitude zero point of the run's image units -- from the exposure's
-    PhotoCalib if it has one, else the nJy AB zero point."""
+    """Return the magnitude zero point of a run's image units.
+
+    Parameters
+    ----------
+    run : `lsst.meas.crowd.session.CutoutRun`
+        A finished run.
+
+    Returns
+    -------
+    zero_point : `float`
+        Zero point (from the exposure's PhotoCalib, else 31.4 for nJy).
+    how : `str`
+        Where it came from.
+    """
     exp = run.outer_history[-1]["exposure"]
     try:
         pc = exp.getPhotoCalib()
@@ -153,23 +243,26 @@ def zero_point_from_run(run):
 
 
 def measure_photometry(run, aperture_fwhm=1.5, zero_point=None, verbose=True):
-    """Catalogue of the run's sources with PSF and aperture magnitudes.
+    """Measure PSF and aperture magnitudes of a run's sources.
 
     Parameters
     ----------
     run : `lsst.meas.crowd.session.CutoutRun`
         A finished run (from ``run_session_gaia``).
-    aperture_fwhm : `float`
-        Aperture radius in units of the PSF FWHM (aperture fluxes are corrected to total).
+    aperture_fwhm : `float`, optional
+        Aperture radius [FWHM]; aperture fluxes are corrected to total.
     zero_point : `float`, optional
         Override the zero point (default: PhotoCalib, else 31.4 for nJy).
+    verbose : `bool`, optional
+        Print a summary.
 
     Returns
     -------
     table : `astropy.table.Table`
-        id, x, y, ra, dec, gaia (bool), gaia_index, gaia_G, extended, in_interior,
-        psf_flux, psf_flux_err, psf_snr, psf_mag, psf_mag_err,
-        ap_flux, ap_flux_err, ap_coverage, ap_mag, ap_mag_err, ap_minus_psf.
+        ``id``, ``x``, ``y``, ``ra``, ``dec``, ``gaia``, ``gaia_index``, ``gaia_G``,
+        ``extended``, ``in_interior``, ``psf_flux``, ``psf_flux_err``, ``psf_snr``, ``psf_mag``,
+        ``psf_mag_err``, ``ap_flux``, ``ap_flux_err``, ``ap_coverage``, ``ap_mag``,
+        ``ap_mag_err``, ``ap_minus_psf``; ``meta`` has the zero point and aperture settings.
     """
     from astropy.table import Table
     from . import fitLib as L

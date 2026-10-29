@@ -3,8 +3,10 @@
 # Developed for the LSST Data Management System.
 # See the COPYRIGHT file at the top-level directory of this distribution.
 
-"""Diagnostic plots of a finished run: data | model | residual, residual/sigma, star zooms,
-cross-sections, bright-star stacks and comparison tables.
+"""Diagnostic plots of a finished run.
+
+Data | model | residual, residual/sigma, star zooms, cross-sections, bright-star stacks and
+comparison tables.
 """
 
 import numpy as np
@@ -26,12 +28,33 @@ from .pipeline import (
 
 
 def show_bright_star_stack(run, min_snr=200.0, half=20, plot=True):
-    """Median of the bright, clean, unsaturated stars' residuals, each normalised by the star's
-    flux and centred on its sub-pixel position -- once with the PSF-only joint model, once
-    with the final model (incl. per-star corrections).  A pattern that survives the median is
-    COMMON to all bright stars -> a PSF feature (e.g. diffraction spikes) missing from the PSF
-    model; noise and star-specific errors average out.  Also shows the PSF kernel (log).
-    Returns dict(psf_only=..., final=..., n=...)."""
+    """Stack the bright stars' residuals to show the pattern they all share.
+
+    The median of the bright, clean, unsaturated stars' residuals, each divided by the star's
+    flux and centred on its sub-pixel position, once with the PSF-only joint model and once with
+    the final model (including the per-star corrections).  A pattern that survives the median is
+    common to all bright stars, i.e. a feature missing from the PSF model; noise and star-specific
+    errors average out.  Also prints the core error of the brighter and fainter half of the stars
+    (a brighter-fatter test) and shows the PSF kernel.
+
+    Parameters
+    ----------
+    run : `lsst.meas.crowd.session.CutoutRun`
+        A finished run.
+    min_snr : `float`, optional
+        Minimum peak S/N of the stacked stars.
+    half : `int`, optional
+        Half-size of the stack [px].
+    plot : `bool`, optional
+        Show the kernel and the two stacks.
+
+    Returns
+    -------
+    stack : `dict`
+        ``psf_only`` and ``final`` (stacked residual / flux images), ``n`` (number of stars) and,
+        with at least six stars, ``by_brightness`` (core and ring residual of the brighter and
+        fainter half).
+    """
     final = run.outer_history[-1]
     exp, res = final["exposure"], final["result"]
     S, fit = res["S"], res["snaps"][-1]["fit"]
@@ -104,12 +127,36 @@ def show_bright_star_stack(run, min_snr=200.0, half=20, plot=True):
 
 def show_star_zooms(run, stars=None, n=8, half=12, sigma="model", grayscale=False,
                     min_snr=30.0, cuts=False):
-    """Zoom on individual stars: data | model | residual | residual/sigma_eff, with every source
-    in the window marked (o = Gaia-seeded, x = found in the residual) and, for Gaia sources,
-    a line from the Gaia catalogue position (+) to the fitted position.
-    stars: list of (x, y) detector positions, or None = the n worst stars of
-    star_residual_table (highest chi2).  Prints each star's neighbours (offset, flux ratio,
-    Gaia or not, distance from its Gaia position)."""
+    """Show zooms of individual stars: data | model | residual | residual/sigma.
+
+    Every source in the window is marked (o = Gaia-seeded, x = found in the residual), with a line
+    from each Gaia source's catalogue position (+) to its fitted position.  Prints each star's
+    neighbours (offset, flux ratio, Gaia or not, distance from its Gaia position).
+
+    Parameters
+    ----------
+    run : `lsst.meas.crowd.session.CutoutRun`
+        A finished run.
+    stars : `list` [`tuple` [`float`, `float`]], optional
+        Detector positions; None = the ``n`` worst stars of `star_residual_table`.
+    n : `int`, optional
+        Number of worst stars shown.
+    half : `int`, optional
+        Half-size of each zoom [px].
+    sigma : `str`, optional
+        'model', 'effective' or 'pixel' (see `plot_final_comparison`).
+    grayscale : `bool`, optional
+        Residual panels in greyscale.
+    min_snr : `float`, optional
+        Minimum peak S/N when choosing the worst stars.
+    cuts : `bool`, optional
+        Also draw `show_cross_sections` for the same stars.
+
+    Returns
+    -------
+    indices : `list` [`int`] or `None`
+        Indices of the stars shown (None if there were none).
+    """
     import matplotlib.pyplot as plt
     from matplotlib.colors import ListedColormap
     final = run.outer_history[-1]
@@ -206,8 +253,7 @@ def show_star_zooms(run, stars=None, n=8, half=12, sigma="model", grayscale=Fals
 
 
 def _pick_stars(run, stars, n, min_snr):
-    """[(index, chi2)] -- the n worst stars of star_residual_table, or the sources nearest to the
-    given (x, y) positions."""
+    """Return [(index, chi2)] of the worst stars, or of the sources nearest the given positions."""
     import contextlib
     import io
     S = run.outer_history[-1]["result"]["S"]
@@ -224,14 +270,36 @@ def _pick_stars(run, stars, n, min_snr):
 
 def show_cross_sections(run, stars=None, n=4, half=15, width=1, sigma="model", min_snr=30.0,
                         log=True):
-    """Cuts through stars: for each star, a cut along x (through its row), along y (through its
-    column) and the azimuthally averaged RADIAL profile.  Top: data (points) and model (line);
-    bottom: residual = data - model with its +-1 sigma_eff band (grey) -- a ring shows up as a
-    bump in the radial residual at its radius.  Other sources lying in the cut are marked
-    (dotted: Gaia, dashed: found in the residual).
-    stars: list of (x, y), or None = the n worst stars of star_residual_table.
-    width: number of rows / columns averaged for the x / y cuts (odd; 1 = single pixel).
-    log: data/model on a symmetric-log axis (wings visible) instead of linear."""
+    """Plot cuts through stars along x, along y and the radial profile.
+
+    Top: data (points) and model (line); bottom: residual with its +-1 sigma band, so a ring shows
+    as a bump in the radial residual at its radius.  Other sources in a cut are marked (dotted:
+    Gaia, dashed: found in the residual).
+
+    Parameters
+    ----------
+    run : `lsst.meas.crowd.session.CutoutRun`
+        A finished run.
+    stars : `list` [`tuple` [`float`, `float`]], optional
+        Detector positions; None = the ``n`` worst stars of `star_residual_table`.
+    n : `int`, optional
+        Number of worst stars shown.
+    half : `int`, optional
+        Half-length of the cuts [px].
+    width : `int`, optional
+        Rows / columns averaged for the x / y cuts (odd; 1 = single pixel).
+    sigma : `str`, optional
+        'model', 'effective' or 'pixel' (see `plot_final_comparison`).
+    min_snr : `float`, optional
+        Minimum peak S/N when choosing the worst stars.
+    log : `bool`, optional
+        Symmetric-log axis for data and model (wings visible).
+
+    Returns
+    -------
+    cuts : `list` [`dict`] or `None`
+        Per star ``index`` and ``cuts`` (the x, y and radial profiles); None if no stars.
+    """
     import matplotlib.pyplot as plt
     final = run.outer_history[-1]
     exp, res = final["exposure"], final["result"]
@@ -340,11 +408,20 @@ def show_cross_sections(run, stars=None, n=4, half=15, width=1, sigma="model", m
 
 
 def compare_runs(variants, min_snr=200.0):
-    """Side-by-side numbers for several runs of the same cutouts, e.g.
-        compare_runs({"default": runs, "wider wing join": runs_b})
-    For each cutout and variant: residual/sigma_eff (robust), sources, and the stacked
-    PSF-only residual of the bright stars (median residual/flux x 1e5) in radial bins --
-    a ring shows as a large value in one bin; closer to 0 everywhere = better PSF."""
+    """Print side-by-side numbers for several runs of the same cutouts.
+
+    For each cutout and variant: robust residual/sigma, number of sources and the stacked PSF-only
+    residual of the bright stars (median residual / flux x 1e5) in radial bins -- a ring shows as
+    a large value in one bin; values closer to 0 mean a better PSF.
+
+    Parameters
+    ----------
+    variants : `dict` [`str`, `dict`]
+        Variant name -> runs (as returned by ``run_session_gaia``), e.g.
+        ``{"default": runs, "wider wing join": runs_b}``.
+    min_snr : `float`, optional
+        Minimum peak S/N of the stacked stars.
+    """
     import contextlib
     import io
     from . import session as cn
@@ -382,17 +459,31 @@ def compare_runs(variants, min_snr=200.0):
 
 
 def core_excess_diagnostic(run, min_snr=100.0, plot=True):
-    """Why are bright stars' cores sharper than the model?  For each unsaturated, reasonably
-    isolated star with peak S/N >= min_snr: the CENTRAL EXCESS = (data - model) summed over the
-    central 3x3 px / model summed there (final model and PSF-only model), against
-        - flux                      -> grows with brightness: sensor effects (non-linearity,
-                                       brighter-fatter correction) or flux-dependent PSF
-        - peak pixel / saturation   -> grows near saturation: non-linearity
-        - sub-pixel phase           -> larger for stars centred near a pixel CORNER: the PSF
-                                       stamp is blurred when shifted to sub-pixel positions
-        - nothing                   -> the same fraction for all: the PSF core itself is too
-                                       broad (e.g. blurred when the PSF was built)
-    Returns dict of per-star arrays + correlations."""
+    """Find out why bright stars' cores are sharper than the model.
+
+    For each unsaturated, fairly isolated star with peak S/N >= ``min_snr``, the central excess
+    (data - model summed over the central 3x3 px, divided by the model there) is correlated with
+    flux (sensor effects or a flux-dependent PSF), peak / saturation level (non-linearity) and
+    sub-pixel phase (stamps blurred by sub-pixel shifting).  No trend but a significant excess
+    means the PSF core itself is too broad.  A trend only counts if it is large compared with the
+    excess itself.
+
+    Parameters
+    ----------
+    run : `lsst.meas.crowd.session.CutoutRun`
+        A finished run.
+    min_snr : `float`, optional
+        Minimum peak S/N of the stars used.
+    plot : `bool`, optional
+        Plot the excess against each quantity.
+
+    Returns
+    -------
+    result : `dict` or `None`
+        Per-star arrays (``idx``, ``flux``, ``snr``, ``peak``, ``excess``, ``excess_psf_only``,
+        ``centre_px``, ``phase``, ``err``), ``correlations`` and ``verdict``; None if fewer than
+        six stars.
+    """
     from scipy.stats import spearmanr
     final = run.outer_history[-1]
     exp, res = final["exposure"], final["result"]
@@ -499,15 +590,29 @@ def core_excess_diagnostic(run, min_snr=100.0, plot=True):
 
 
 def plot_residual_gray(run, **kw):
-    """The two residual panels of plot_final_comparison, larger and in GREYSCALE
-    (black = negative, white = positive; 'not modelable' areas in blue)."""
+    """Plot the two residual panels of `plot_final_comparison`, larger and in greyscale.
+
+    Black = negative, white = positive; areas that cannot be modelled are drawn in blue.
+
+    Parameters
+    ----------
+    run : `lsst.meas.crowd.session.CutoutRun`
+        A finished run.
+    **kw
+        Keyword arguments of `plot_final_comparison`.
+
+    Returns
+    -------
+    stats : `dict`
+        See `plot_final_comparison`.
+    """
     kw.setdefault("panels", "residuals")
     kw.setdefault("grayscale", True)
     return plot_final_comparison(run, **kw)
 
 
 def _print_run_version(h):
-    """Which code version produced this run, and was the brightness term used in its fit?"""
+    """Print which code version produced a run and whether the brightness term was active."""
     v = h.get("version")
     if v is None:
         print("  (run made by an OLDER cutout_gaia without the brightness term -- restart the kernel "
@@ -522,17 +627,34 @@ def _print_run_version(h):
 
 
 def star_residual_table(run, min_snr=30.0, r_fwhm=2.5, plot=True, n_worst=10):
-    """Which stars carry the leftover residual, and what do they have in common?
+    """Find which stars carry the leftover residual, and what they have in common.
 
-    For every unsaturated point source with peak S/N >= min_snr: chi2/px of (data - final
-    model)/sigma within r_fwhm*FWHM (1.0 = pure noise), the same for the PSF-only joint model,
-    and the PSF-only CORE residual (flux within 1 FWHM / star flux; < 0 = star broader than the
-    PSF).  Then rank correlations of the excess with
-        flux            -> shape depends on brightness (brighter-fatter)
-        distance / x / y-> PSF varies across the cutout
-        crowding        -> blends / neighbours
-    and how concentrated the excess is (a few stars = individual problems).
-    Returns a dict of per-star arrays + correlations + verdict."""
+    For every unsaturated point source with peak S/N >= ``min_snr``: chi2 per pixel within
+    ``r_fwhm`` FWHM for the final and the PSF-only model, the PSF-only core residual (flux within
+    1 FWHM / star flux; < 0 = star broader than the PSF) and the mismatch (residual flux beyond
+    the noise / star flux, independent of brightness).  The mismatch is rank-correlated with flux,
+    position and crowding, and outlier stars are counted.
+
+    Parameters
+    ----------
+    run : `lsst.meas.crowd.session.CutoutRun`
+        A finished run.
+    min_snr : `float`, optional
+        Minimum peak S/N.
+    r_fwhm : `float`, optional
+        Radius of the chi2 region [FWHM].
+    plot : `bool`, optional
+        Plot chi2 and core residual against flux and the stars' positions.
+    n_worst : `int`, optional
+        Number of worst stars listed.
+
+    Returns
+    -------
+    table : `dict` or `None`
+        Per-star arrays (``idx``, ``flux``, ``snr``, ``x``, ``y``, ``dist``, ``n_nb``,
+        ``chi2_final``, ``chi2_psf``, ``core_psf``, ``npix``, ``mismatch``), ``correlations``,
+        ``core_vs_flux``, ``outliers`` and ``verdict``; None if fewer than eight stars.
+    """
     from scipy.stats import spearmanr
     final = run.outer_history[-1]
     exp, res = final["exposure"], final["result"]
@@ -691,22 +813,56 @@ def plot_final_comparison(run, view="interior", bad_color=BAD_PIXEL_COLOR, circl
                           mask_pad_fwhm=1.5, z_clip=5.0, resid_clip_pct=99.0, figsize=(26, 7),
                           sigma="model", nearsat_color=NEARSAT_COLOR, grayscale=False,
                           panels="all", verbose=True):
-    """Original | final model | residual | residual/sigma, bad pixels drawn OPAQUE in one
-    colour (default magenta) in all four panels and excluded from the statistics.
-    circles: where to draw the source circles -- 'images' (data + model only, default),
-    'all', or 'none'.  Saturated-star zones: dashed outline.  Extended: dashed circles.
-    exclude_near_mask: grey out (and leave out of the statistics) pixels within
-    mask_pad_fwhm*FWHM of bad pixels plus residual blobs touching them -- flux of sources
-    whose centre is under the mask, which the model cannot fit.
-    view: 'interior' | None (whole fitted array) | (xmin, xmax, ymin, ymax).
-    sigma: 'model' (default) = sqrt(variance + (eps*model)^2 + k*model) with the measured PSF
-    model error eps (option A); 'effective' = without eps; 'pixel' = variance plane only.
-    Near-saturated cores excluded by option B are drawn in nearsat_color (orange); they are
-    modelled from their wings, so only significant residual next to them is greyed out.
-    grayscale: residual panels in greyscale (black = negative, white = positive); the
-    'not modelable' areas are then drawn in blue instead of grey.
-    panels: 'all' (4 panels) or 'residuals' (only the two residual panels, larger).
-    Returns dict(residual=..., residual_over_sigma=...) of robust statistics."""
+    """Plot original | final model | residual | residual/sigma of a run.
+
+    Bad pixels are drawn opaque in one colour (default magenta) in all four panels and excluded
+    from the statistics.  Saturated-star zones have a dashed outline, extended sources dashed
+    circles.  Pixels whose flux belongs to sources under the mask (which the model cannot fit) are
+    greyed out and excluded too.
+
+    Parameters
+    ----------
+    run : `lsst.meas.crowd.session.CutoutRun`
+        A finished run.
+    view : `str` or `tuple`, optional
+        'interior' (the requested box), None (the whole fitted array) or
+        (xmin, xmax, ymin, ymax) in detector pixels.
+    bad_color : `str`, optional
+        Colour of bad pixels.
+    circles : `str`, optional
+        Where to draw the source circles: 'images' (data and model), 'all' or 'none'.
+    show_zones : `bool`, optional
+        Outline the saturated-star zones.
+    exclude_near_mask : `bool`, optional
+        Grey out (and exclude) pixels next to bad pixels that cannot be modelled.
+    excluded_color : `str`, optional
+        Colour of those pixels.
+    mask_pad_fwhm : `float`, optional
+        Pad around bad pixels [FWHM].
+    z_clip : `float`, optional
+        Colour range of residual/sigma.
+    resid_clip_pct : `float`, optional
+        Percentile setting the colour range of the residual.
+    figsize : `tuple` [`float`, `float`], optional
+        Figure size [inches].
+    sigma : `str`, optional
+        'model' = sqrt(variance + (eps*model)^2 + k*model) with the measured PSF model error eps;
+        'effective' = without eps; 'pixel' = the variance plane only.
+    nearsat_color : `str`, optional
+        Colour of near-saturated cores fitted from their wings.
+    grayscale : `bool`, optional
+        Residual panels in greyscale (excluded areas then in blue).
+    panels : `str`, optional
+        'all' (four panels) or 'residuals' (the two residual panels, larger).
+    verbose : `bool`, optional
+        Print the statistics.
+
+    Returns
+    -------
+    stats : `dict`
+        ``residual`` and ``residual_over_sigma`` (median, robust sigma, quartiles, number of
+        pixels) and ``excluded_px``.
+    """
     from . import session as cn
     import matplotlib.pyplot as plt
     import matplotlib.patches as mpatches

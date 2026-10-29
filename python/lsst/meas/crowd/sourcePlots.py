@@ -3,7 +3,9 @@
 # Developed for the LSST Data Management System.
 # See the COPYRIGHT file at the top-level directory of this distribution.
 
-"""Per-source cutouts: data | model | residual | residual/sigma, x and y cross-sections and the
+"""Per-source cutouts, cross-sections and magnitudes.
+
+For each source: data | model | residual | residual/sigma, x and y cross-sections and the
 radial profile, labelled with the source's PSF and aperture magnitudes.
 
 `source_cutout_data` returns the numbers behind one panel row (unit tested); `plot_source_cutouts`
@@ -18,6 +20,7 @@ from scipy.spatial import cKDTree
 
 
 def _effective_variance(final, model, var, sigma):
+    """Return the variance for residual/sigma ('pixel', 'effective' or 'model')."""
     m = np.clip(model, 0, None)
     v = var.copy()
     if sigma in ("effective", "model"):
@@ -28,7 +31,7 @@ def _effective_variance(final, model, var, sigma):
 
 
 def _cut(D, M, V, B):
-    """Mean over the rows of a (k, n) strip of good pixels: data, model, sigma of the mean."""
+    """Return the mean data, model and sigma of the mean of a strip of good pixels."""
     ok = ~B
     nn = ok.sum(axis=0)
     with np.errstate(invalid="ignore", divide="ignore"):
@@ -39,16 +42,34 @@ def _cut(D, M, V, B):
 
 
 def source_cutout_data(data, model, var, bad, x, y, x0=0, y0=0, half=15, width=1):
-    """Everything one cutout row shows, for the source at (x, y) (parent coordinates; arrays start
-    at (x0, y0)).
+    """Compute the arrays one cutout row shows for a source.
 
-    Returns a dict with
-        ``window``  (xmin, xmax, ymin, ymax) parent pixel range shown,
-        ``data``, ``model``, ``resid``, ``z`` (residual / sigma), ``bad`` image arrays,
-        ``xcut`` / ``ycut``: dict(offset, data, model, resid, sigma) through the source's row /
-        column (``width`` rows or columns averaged),
-        ``radial``: dict(r, data, model, resid, sigma) azimuthal means in 1-px annuli,
-        ``chi2`` dict(x=, y=, r=): chi2 per point of each cut.
+    Parameters
+    ----------
+    data : `numpy.ndarray`
+        Image.
+    model : `numpy.ndarray`
+        Model image.
+    var : `numpy.ndarray`
+        Variance image.
+    bad : `numpy.ndarray` [`bool`]
+        Bad pixels.
+    x, y : `float`
+        Source position in parent pixel coordinates.
+    x0, y0 : `int`, optional
+        Parent pixel coordinates of ``data[0, 0]``.
+    half : `int`, optional
+        Half-size of the window [px].
+    width : `int`, optional
+        Rows / columns averaged in the x / y cuts.
+
+    Returns
+    -------
+    cutout : `dict`
+        ``window`` (xmin, xmax, ymin, ymax), the ``data``, ``model``, ``resid``, ``z``
+        (residual / sigma) and ``bad`` arrays, ``xcut`` / ``ycut`` / ``radial`` (each a dict
+        with the coordinate, ``data``, ``model``, ``resid`` and ``sigma``) and ``chi2`` (per
+        point of each cut).
     """
     ny, nx = data.shape
     ix, iy = int(round(x)) - x0, int(round(y)) - y0
@@ -89,11 +110,38 @@ def source_cutout_data(data, model, var, bad, x, y, x0=0, y0=0, half=15, width=1
 
 def select_sources(phot, how="worst", n=6, positions=None, xy=None, chi2=None, min_snr=20.0,
                    seed=0):
-    """Indices of the sources to show.
+    """Choose the sources to show.
 
-    how : 'worst' (highest local chi2 among S/N >= min_snr), 'brightest', 'faintest' (lowest
-    S/N above min_snr), 'random', or 'positions' (nearest source to each (x, y) in
-    ``positions``)."""
+    Parameters
+    ----------
+    phot : `astropy.table.Table` or `dict`
+        Photometry with ``psf_snr``.
+    how : `str`, optional
+        'worst' (highest ``chi2``), 'brightest', 'faintest' or 'random', among sources with S/N
+        >= ``min_snr``.
+    n : `int`, optional
+        Number of sources.
+    positions : `list` [`tuple` [`float`, `float`]], optional
+        Show the nearest source to each position instead.
+    xy : `numpy.ndarray`, optional
+        Source positions (needed with ``positions``).
+    chi2 : `numpy.ndarray`, optional
+        Local chi2 per source (needed for 'worst').
+    min_snr : `float`, optional
+        Minimum S/N.
+    seed : `int`, optional
+        Random seed for 'random'.
+
+    Returns
+    -------
+    indices : `list` [`int`]
+        Selected source indices.
+
+    Raises
+    ------
+    ValueError
+        Raised if ``how`` is not a known selection.
+    """
     if how == "positions" or positions is not None:
         return [int(cKDTree(xy).query(p)[1]) for p in positions]
     snr = np.asarray(phot["psf_snr"], float)
@@ -113,7 +161,7 @@ def select_sources(phot, how="worst", n=6, positions=None, xy=None, chi2=None, m
 
 
 def _local_chi2(data, model, var, good, xy, x0, y0, r):
-    """chi2/px within r px of each source."""
+    """Return the chi2 per pixel within ``r`` px of each source."""
     out = np.full(len(xy), np.nan)
     ny, nx = data.shape
     for j, (x, y) in enumerate(xy):
@@ -132,27 +180,47 @@ def _local_chi2(data, model, var, good, xy, x0, y0, r):
 def plot_source_cutouts(run, how="worst", n=6, positions=None, half=15, width=1, sigma="model",
                         phot=None, min_snr=20.0, log=True, per_page=4, pdf_path=None, show=True,
                         grayscale=False):
-    """Cutouts and cross-sections of individual sources, labelled with their magnitudes.
+    """Plot cutouts and cross-sections of individual sources, labelled with their magnitudes.
 
     One row per source: data | model | residual | residual/sigma | x-cut | y-cut | radial
-    profile.  The cuts show data (points) and model (line) on top, and the residual with its
-    +-1 sigma band below; other sources in the window are marked (o Gaia, x found in the
-    residual).
+    profile.  The cuts show data (points) and model (line), and the residual with its +-1 sigma
+    band; other sources in the window are marked (o Gaia, x found in the residual).
 
     Parameters
     ----------
-    run : `CutoutRun`
+    run : `lsst.meas.crowd.session.CutoutRun`
         A finished run.
-    how : `str`
-        'worst' (default), 'brightest', 'faintest', 'random' -- or pass ``positions``.
-    positions : list of (x, y), optional
-        Show the sources nearest to these detector positions.
+    how : `str`, optional
+        'worst', 'brightest', 'faintest' or 'random' (see `select_sources`).
+    n : `int`, optional
+        Number of sources.
+    positions : `list` [`tuple` [`float`, `float`]], optional
+        Show the sources nearest these detector positions.
+    half : `int`, optional
+        Half-size of each window [px].
+    width : `int`, optional
+        Rows / columns averaged in the cuts.
+    sigma : `str`, optional
+        'model' (variance plus measured model error), 'effective' or 'pixel'.
     phot : `astropy.table.Table`, optional
-        Output of `measure_photometry` (computed if not given).
+        Output of `lsst.meas.crowd.photometry.measure_photometry` (computed if not given).
+    min_snr : `float`, optional
+        Minimum S/N of the sources selected.
+    log : `bool`, optional
+        Symmetric-log axis for data and model.
+    per_page : `int`, optional
+        Sources per figure.
     pdf_path : `str`, optional
         Also write all pages to this PDF.
+    show : `bool`, optional
+        Display the figures.
+    grayscale : `bool`, optional
+        Residual panels in greyscale.
 
-    Returns the photometry table rows of the sources shown.
+    Returns
+    -------
+    rows : `astropy.table.Table`
+        Photometry rows of the sources shown.
     """
     import matplotlib.pyplot as plt
     from matplotlib.backends.backend_pdf import PdfPages

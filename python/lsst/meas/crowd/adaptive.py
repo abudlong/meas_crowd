@@ -6,10 +6,7 @@
 # Vendored from the original notebook module cutout_adaptive.py (behaviour unchanged; only the
 # imports of the sibling modules were made package-relative).
 
-"""
-cutout_adaptive.py
-==================
-Residual-driven adaptive control for the cutout pipeline.
+"""Residual-driven adaptive control for the cutout pipeline (the original cutout_adaptive.py).
 
 IDEA
 ----
@@ -90,13 +87,17 @@ _DEFAULT_SHAPE = dict(min_snr_local=5.0, chi2_max=2.0, width_range=(0.75, 1.35),
 # Diagnostic (numpy / scipy only)
 # =====================================================================
 def _odd(x):
+    """Return the nearest odd integer >= 3."""
     return max(3, int(round(x)) | 1)
 
 
 def _matched_snr(resid, var, weight_ok, fwhm, calib):
-    """Gaussian matched-filter S/N of the residual.  Pixels with weight_ok False carry zero
-    weight.  Calibrated empirically (median offset / MAD scale >= 1) on `calib` pixels so
-    correlated noise does not inflate it.  Returns (snr, den, scale, offset, ok)."""
+    """Return the Gaussian matched-filter S/N of the residual.
+
+    Pixels with ``weight_ok`` False carry zero weight.  The S/N is calibrated empirically (median
+    offset, MAD scale >= 1) on the ``calib`` pixels so correlated noise does not inflate it.
+    Returns (snr, den, scale, offset, ok).
+    """
     sig = fwhm / 2.355
     h = int(np.ceil(3 * sig))
     u = np.arange(-h, h + 1)
@@ -117,10 +118,52 @@ def _matched_snr(resid, var, weight_ok, fwhm, calib):
 def residual_excess(resid, var, good, peaks_xy, amps, x0, y0, fwhm, psf_peak, noise,
                     thresholds=(3.0, 3.5, 4.0, 4.5, 5.0, 6.0), edge_fwhm=2.0,
                     bright_sigma=100.0, halo_fwhm=2.5, min_sep_fwhm=0.75):
-    """Positive / negative local-maximum counts of the matched-filter S/N of the residual,
-    in the clean region.  Returns dict(t, pos, neg, scale, offset, area_frac, candidates)
-    with t ascending and pos[i] / neg[i] = number of peaks with |S/N| >= t[i];
-    candidates = [(x, y, snr, nearest_fitted_px), ...] for positive peaks >= min(t)."""
+    """Count positive and negative peaks of the residual's matched-filter S/N.
+
+    Only local maxima in the clean region count: away from the cutout edge, from bright sources
+    (halo radius growing with flux) and from fitted sources themselves.  Real missing sources are
+    positive only, so the positive excess over the negative count estimates how many are
+    missing.
+
+    Parameters
+    ----------
+    resid : `numpy.ndarray`
+        Residual image.
+    var : `numpy.ndarray`
+        Variance image.
+    good : `numpy.ndarray` [`bool`]
+        Usable pixels.
+    peaks_xy : array-like
+        Fitted source positions (parent pixel coordinates), shape (N, 2).
+    amps : array-like
+        Fitted source amplitudes.
+    x0, y0 : `int`
+        Parent pixel coordinates of ``resid[0, 0]``.
+    fwhm : `float`
+        PSF FWHM [px].
+    psf_peak : `float`
+        Peak value of the unit-flux PSF.
+    noise : `float`
+        Typical pixel noise.
+    thresholds : `tuple` [`float`], optional
+        S/N thresholds at which to count.
+    edge_fwhm : `float`, optional
+        Ignore peaks within this many FWHM of the edge.
+    bright_sigma : `float`, optional
+        A source is bright if ``amp * psf_peak / noise`` exceeds this.
+    halo_fwhm : `float`, optional
+        Ignore peaks within this many FWHM of a bright source (grows with flux).
+    min_sep_fwhm : `float`, optional
+        Peaks closer than this to a fitted source are its own mismatch residual.
+
+    Returns
+    -------
+    result : `dict`
+        ``t`` (thresholds, ascending), ``pos`` / ``neg`` (number of peaks with |S/N| >= t),
+        ``scale``, ``offset`` (S/N calibration), ``area_frac`` (fraction of the image in the
+        clean region) and ``candidates`` ((x, y, snr, distance to the nearest fitted source) of
+        the positive peaks).
+    """
     ny, nx = resid.shape
     iy, ix = np.mgrid[0:ny, 0:nx]
     P = np.asarray(peaks_xy, float).reshape(-1, 2) - np.array([x0, y0])
@@ -166,24 +209,81 @@ def residual_excess(resid, var, good, peaks_xy, amps, x0, y0, fwhm, psf_peak, no
 
 
 def _idx(d, t):
+    """Return the index of the threshold in ``d['t']`` closest to ``t``."""
     return int(np.argmin(np.abs(d["t"] - t)))
 
 
 def counts_at(d, t):
+    """Return the positive and negative peak counts at an S/N threshold.
+
+    Parameters
+    ----------
+    d : `dict`
+        Output of `residual_excess`.
+    t : `float`
+        S/N threshold (the nearest one in ``d['t']`` is used).
+
+    Returns
+    -------
+    n_pos : `int`
+        Number of positive peaks.
+    n_neg : `int`
+        Number of negative peaks.
+    """
     i = _idx(d, t)
     return int(d["pos"][i]), int(d["neg"][i])
 
 
 def is_missing(d, t, z_sig=2.0, min_excess=3):
-    """(missing?, excess, error) at S/N threshold t."""
+    """Decide whether the residual still contains missing sources at an S/N threshold.
+
+    Parameters
+    ----------
+    d : `dict`
+        Output of `residual_excess`.
+    t : `float`
+        S/N threshold.
+    z_sig : `float`, optional
+        The excess must exceed ``z_sig * sqrt(N_pos + N_neg)`` ...
+    min_excess : `int`, optional
+        ... and be at least this many sources.
+
+    Returns
+    -------
+    missing : `bool`
+        Whether sources are missing.
+    excess : `int`
+        Positive minus negative peak count.
+    error : `float`
+        Its uncertainty, sqrt(N_pos + N_neg).
+    """
     p, n = counts_at(d, t)
     e, err = p - n, float(np.sqrt(p + n))
     return bool(e >= max(min_excess, z_sig * err)), e, err
 
 
 def pick_threshold(d, fdr, t_floor, t_cap):
-    """Lowest S/N in [t_floor, t_cap] whose estimated false fraction (N_neg + 1)/N_pos <= fdr
-    (and N_pos >= 3); t_cap if there is none (the field cannot support going deeper)."""
+    """Return the lowest S/N threshold the field can support.
+
+    The lowest S/N in [``t_floor``, ``t_cap``] whose estimated false fraction
+    (N_neg + 1) / N_pos is at most ``fdr`` (with N_pos >= 3).
+
+    Parameters
+    ----------
+    d : `dict`
+        Output of `residual_excess`.
+    fdr : `float`
+        Tolerated false fraction.
+    t_floor : `float`
+        Lowest threshold allowed.
+    t_cap : `float`
+        Highest threshold; returned if no lower one qualifies.
+
+    Returns
+    -------
+    threshold : `float`
+        The chosen S/N threshold.
+    """
     for t, p, n in zip(d["t"], d["pos"], d["neg"]):
         if t < t_floor - 1e-9 or t > t_cap + 1e-9:
             continue
@@ -197,6 +297,7 @@ def pick_threshold(d, fdr, t_floor, t_cap):
 #   (new_kwargs, detection_threshold, eval_snr, description)  or  (None, ...) if a no-op
 # =====================================================================
 def _copy(cur):
+    """Copy the inner-loop keyword arguments (with their shape_kwargs dict)."""
     new = dict(cur)
     if isinstance(cur.get("shape_kwargs"), dict):
         new["shape_kwargs"] = dict(cur["shape_kwargs"])
@@ -204,12 +305,14 @@ def _copy(cur):
 
 
 def _shape(cur):
+    """Return the shape-cut keyword arguments with the defaults filled in."""
     sk = dict(_DEFAULT_SHAPE)
     sk.update(cur.get("shape_kwargs") or {})
     return sk
 
 
 def _rung_thresholds(cur, t_new, target, A):
+    """Relaxation rung: lower the S/N cuts and the detection threshold."""
     old, thr0 = cur["min_snr"], cur["threshold_min"]
     if t_new >= old - 1e-9 and t_new >= thr0 - 1e-9:
         return None, None, None, None
@@ -227,6 +330,7 @@ def _rung_thresholds(cur, t_new, target, A):
 
 
 def _rung_gates(cur, t_new, target, A):
+    """Relaxation rung: loosen the shape-cut gates and the bright-star rejections."""
     new, sk = _copy(cur), _shape(cur)
     sk["chi2_max"] *= 1.5
     sk["dchi2_width"] *= 1.5
@@ -242,6 +346,7 @@ def _rung_gates(cur, t_new, target, A):
 
 
 def _rung_separations(cur, t_new, target, A):
+    """Relaxation rung: allow closer pairs (merge / prune / reject separations)."""
     new = _copy(cur)
     new["merge_separation_sigma"] = max(0.8, cur["merge_separation_sigma"] * 0.8)
     new["prune_sep_sigma"] = max(0.8, cur["prune_sep_sigma"] * 0.8)
@@ -258,6 +363,7 @@ _RUNGS = [_rung_thresholds, _rung_gates, _rung_separations]
 # Controller
 # =====================================================================
 def _diagnose(exposure, psf, res, A, extra=()):
+    """Run `residual_excess` on the last snapshot of an inner-loop result."""
     snap = res["snaps"][-1]
     fit = snap["fit"]
     bbox = exposure.getBBox()
@@ -277,6 +383,7 @@ def _diagnose(exposure, psf, res, A, extra=()):
 
 
 def _print_diag(tag, d):
+    """Print the positive / negative peak counts of a diagnostic."""
     print(f"{tag} residual check: clean region {100 * d['area_frac']:.0f}% of px, noise scale "
           f"{d['scale']:.2f}, S/N offset {d['offset']:+.2f}")
     print(f"{tag}   peaks >= S/N (positive/negative):  " +
@@ -284,6 +391,7 @@ def _print_diag(tag, d):
 
 
 def _accept(d_old, d_new, t_eval):
+    """Decide whether an extra round improved the residual (fewer excess, not more negative peaks)."""
     po, no = counts_at(d_old, t_eval)
     pn, nn = counts_at(d_new, t_eval)
     eo, en = po - no, pn - nn
@@ -294,7 +402,7 @@ def _accept(d_old, d_new, t_eval):
 
 
 def _merge_results(a, b):
-    """b = warm-started continuation of a: keep all snapshots and the joined histories."""
+    """Join a result with its warm-started continuation (all snapshots, joined histories)."""
     out = dict(b)
     out["snaps"] = list(a.get("snaps", [])) + list(b.get("snaps", []))
     for k in ("resid_std_history", "n_peaks_history", "n_zero_amp_history"):
@@ -306,6 +414,7 @@ def _merge_results(a, b):
 
 
 def _adapt(orig, exposure, psf, bad_bitmask, outer_idx, cur, res, A):
+    """Run warm-started extra inner rounds, relaxing settings while sources are still missing."""
     tag = f"[adaptive o{outer_idx + 1}]"
     target = float(A["target_snr"] if A["target_snr"] is not None else cur["min_snr"])
     d = _diagnose(exposure, psf, res, A, extra=[target, A["t_floor"]])
@@ -362,6 +471,7 @@ def _adapt(orig, exposure, psf, bad_bitmask, outer_idx, cur, res, A):
 
 
 def _make_wrapper(L):
+    """Build the adaptive replacement of fitLib's inner loop."""
     orig = L._orig_run_inner_loop_verbose
     sig = inspect.signature(orig)
     defaults = {k: v.default for k, v in sig.parameters.items()
@@ -384,7 +494,12 @@ def _make_wrapper(L):
 
 
 def _wants_more_outer(result, outer_idx):
-    """Hook called by run_cutout_pipeline once the configured outer passes are used up."""
+    """Decide whether the outer loop should run another pass.
+
+    Called by `fitLib.run_cutout_pipeline` once the configured outer passes are used up: True if
+    the residual still shows missing sources, the hard cap is not reached and the last pass
+    added enough sources.
+    """
     A = ADAPT
     ad = result.get("adaptive") if isinstance(result, dict) else None
     if not (A["enabled"] and ad and ad["missing"]):
@@ -404,8 +519,23 @@ def _wants_more_outer(result, outer_idx):
 # Public API
 # =====================================================================
 def install(**overrides):
-    """Route cutout_fit_lib's inner loop through the adaptive controller (and enable the
-    adaptive outer loop).  Requires the hooks from patch_cutout_fit_lib.py."""
+    """Route fitLib's inner loop through the adaptive controller.
+
+    Also enables the adaptive outer loop.  Requires the hooks added by
+    ``patch_cutout_fit_lib.py``.
+
+    Parameters
+    ----------
+    **overrides
+        Settings that replace entries of ``ADAPT``.
+
+    Raises
+    ------
+    ValueError
+        Raised if an override is not an ``ADAPT`` option.
+    RuntimeError
+        Raised if fitLib has not been patched with the hooks.
+    """
     from . import fitLib as L
     unknown = set(overrides) - set(ADAPT)
     if unknown:
@@ -426,6 +556,7 @@ def install(**overrides):
 
 
 def uninstall():
+    """Restore fitLib's original inner and outer loops."""
     from . import fitLib as L
     if hasattr(L, "_orig_run_inner_loop_verbose"):
         L.run_inner_loop_verbose = L._orig_run_inner_loop_verbose
@@ -435,7 +566,13 @@ def uninstall():
 
 
 def report(run_or_history):
-    """Print what the controller did in every outer pass of a finished run."""
+    """Print what the adaptive controller did in every outer pass of a finished run.
+
+    Parameters
+    ----------
+    run_or_history : `CutoutRun` or `list` [`dict`]
+        A finished run or its outer-loop history.
+    """
     hist = getattr(run_or_history, "outer_history", run_or_history)
     for i, h in enumerate(hist, 1):
         ad = h["result"].get("adaptive")

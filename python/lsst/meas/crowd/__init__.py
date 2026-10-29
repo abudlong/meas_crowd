@@ -47,6 +47,10 @@ _API = {
     "photometry": ["measure_photometry", "flux_to_mag", "zero_point_from_run",
                    "aperture_flux", "psf_flux_errors"],
     "sourcePlots": ["plot_source_cutouts", "source_cutout_data"],
+    "detector": ["tile_specs", "fit_tiles", "stitch_tiles", "load_mosaic", "load_tile",
+                 "plot_tile", "plot_detector", "save_tile_products"],
+    "stagePlots": ["psf_star_positions", "show_psf_stars", "show_backgrounds", "show_rounds",
+                   "show_linked_source_pages"],
     "session": ["make_config", "prepare_session", "V5_TESTING_CONFIG", "robust_stats",
                 "save_run", "Session", "CutoutRun"],
     "fastKernels": ["FastPsf", "HAVE_CXX"],
@@ -56,13 +60,14 @@ __all__ = sorted(_WHERE)
 
 
 def __getattr__(name):
+    """Import the defining submodule of a public name on first use (PEP 562)."""
     if name in _WHERE:
         mod = importlib.import_module(f".{_WHERE[name]}", __name__)
         value = getattr(mod, name)
         globals()[name] = value
         return value
     if name in ("pipeline", "gaiaSeeds", "plotting", "photometry", "sourcePlots", "session",
-                "fitLib", "adaptive", "fastKernels"):
+                "fitLib", "adaptive", "fastKernels", "detector", "stagePlots"):
         return importlib.import_module(f".{name}", __name__)
     if not name.startswith("__"):
         # any other public name of the old cutout_gaia.py (so `import lsst.meas.crowd as cg` keeps
@@ -75,4 +80,5 @@ def __getattr__(name):
 
 
 def __dir__():
+    """Return the public names."""
     return __all__

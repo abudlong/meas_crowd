@@ -13,6 +13,7 @@ import math
 import os
 import time
 import traceback
+import types
 from collections import OrderedDict, defaultdict
 import numpy as np
 from scipy.linalg import cho_factor, solve_triangular
@@ -143,6 +144,11 @@ SEEDED_DEFAULTS = dict(
     wing_min_snr=300.0,        #   radial profiles (unsaturated stars with peak S/N >= this set
                                #   the shape; saturated stars extend it outwards) instead of
                                #   extrapolating the kernel's noisy 6-14 px profile
+    bg_mode="plane",           # background refit between passes: "plane" (tilted plane, sigma-clipped),
+                               #   "constant", "spline" (SubtractBackgroundTask surface on bg_bin_size
+                               #   bins -- can swing by 100s of counts in the corners of a small,
+                               #   heavily masked cutout) or "none".  The visit image is already
+                               #   background-subtracted, so only a low-order residual is left
     bg_sat_mask_fwhm=6.0,      # background refit ignores pixels within this many FWHM of
                                #   saturated pixels (their halos were absorbed into the sky)
     drop_halo_mimics=True,     # end of each outer pass: remove non-Gaia sources next to bright
@@ -3526,6 +3532,89 @@ def fit_brightness_term(exposure, psf, res, bad_bitmask, P, fitkw, verbose=True)
     return moved
 
 
+BG_STATS_MASK = ("BAD", "SAT", "EDGE", "NO_DATA", "DETECTED", "CR", "INTRP")
+
+
+def refit_background_lowfit(exposure, mode="plane", stats_mask=BG_STATS_MASK, clip=3.0, n_iter=5,
+                            verbose=True):
+    """Fit a constant or tilted-plane background to the unmasked pixels and subtract it in place.
+
+    The robust alternative to `fitLib.refit_background` for small cutouts of an image that is
+    already background-subtracted: a spline / Chebyshev surface on 32 px bins is barely
+    constrained where most pixels are masked and can swing by hundreds of counts in a corner.
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        Exposure to background-subtract in place (sources flagged DETECTED).
+    mode : `str`, optional
+        'plane' (a + b x + c y), 'constant' or 'none'.
+    stats_mask : `tuple` [`str`], optional
+        Mask planes whose pixels are ignored.
+    clip : `float`, optional
+        Sigma clipping threshold.
+    n_iter : `int`, optional
+        Clipping iterations.
+    verbose : `bool`, optional
+        Print the fitted background.
+
+    Returns
+    -------
+    exposure : `lsst.afw.image.Exposure`
+        The background-subtracted exposure (same object).
+    background : `lsst.afw.image.ImageF`
+        The subtracted background image.
+
+    Raises
+    ------
+    ValueError
+        Raised if ``mode`` is not 'plane', 'constant' or 'none'.
+    """
+    if mode not in ("plane", "constant", "none"):
+        raise ValueError(f"bg_mode must be 'plane', 'constant', 'spline' or 'none', not {mode!r}")
+    img = exposure.image.array
+    ny, nx = img.shape
+    bits = 0
+    for name in stats_mask:
+        try:
+            bits |= exposure.mask.getPlaneBitMask(name)
+        except Exception:
+            pass
+    ok = ((exposure.mask.array & bits) == 0) & np.isfinite(img)
+    yy, xx = np.mgrid[:ny, :nx]
+    xs, ys = (xx - nx / 2) / max(nx, 1), (yy - ny / 2) / max(ny, 1)
+    coef = np.zeros(3)
+    if mode != "none" and ok.sum() >= 10:
+        use = ok.copy()
+        for _ in range(n_iter):
+            z = img[use]
+            if mode == "plane":
+                A = np.column_stack([np.ones(z.size), xs[use], ys[use]])
+                coef = np.linalg.lstsq(A, z, rcond=None)[0]
+            else:
+                coef = np.array([np.median(z), 0.0, 0.0])
+            r = img - (coef[0] + coef[1] * xs + coef[2] * ys)
+            s = 1.4826 * np.median(np.abs(r[use] - np.median(r[use])))
+            new = ok & (np.abs(r) < clip * max(s, 1e-12))
+            if new.sum() < 10 or np.array_equal(new, use):
+                break
+            use = new
+    bg = (coef[0] + coef[1] * xs + coef[2] * ys).astype(np.float32)
+    img -= bg
+    if verbose:
+        print(f"  background refit ({mode}): level {coef[0]:.4g}, slope x {coef[1]:.3g}, "
+              f"y {coef[2]:.3g} per cutout width, from {int(ok.sum())} px "
+              f"({100 * ok.mean():.0f}% unmasked)")
+    try:
+        bg_img = L.afwImage.ImageF(bg)
+        bg_img.setXY0(exposure.getBBox().getMin())
+        if not isinstance(getattr(bg_img, "array", None), np.ndarray):
+            raise TypeError("no afw image")
+    except Exception:                                   # without the stack (tests)
+        bg_img = types.SimpleNamespace(array=bg)
+    return exposure, bg_img
+
+
 def _kernel_change(psf_old, psf_new, point):
     """Return the relative L2 change between two PSFs' kernels at a point."""
     a = psf_old.computeKernelImage(point).array
@@ -3769,8 +3858,11 @@ def run_seeded_pipeline(exposure_crop, psf, bad_bitmask, seeds=None, seed_gaia_i
                     print(f"  background refit also ignores saturated-star halos "
                           f"({100 * halo.mean():.1f}% of the cutout)")
             try:
-                exp_n, bg_w = L.refit_background(exp_n, use_approx=P["bg_use_approx"],
-                                                 bin_size=P["bg_bin_size"])
+                if P["bg_mode"] == "spline":
+                    exp_n, bg_w = L.refit_background(exp_n, use_approx=P["bg_use_approx"],
+                                                     bin_size=P["bg_bin_size"])
+                else:
+                    exp_n, bg_w = refit_background_lowfit(exp_n, P["bg_mode"])
             except Exception as e:
                 print(f"  background refit failed ({type(e).__name__}: {e}) -- keeping image")
         psf_new = psf_w

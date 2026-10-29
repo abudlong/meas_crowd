@@ -486,5 +486,43 @@ class FastStampSwitchTestCase(unittest.TestCase):
         pl._FAST["on"] = True
 
 
+class BackgroundLowFitTestCase(unittest.TestCase):
+    """The plane / constant background refit between outer passes."""
+
+    def _exposure(self, seed=0):
+        rng = np.random.default_rng(seed)
+        ny, nx = 120, 150
+        yy, xx = np.mgrid[:ny, :nx]
+        sky = 4.0 + 6.0 * (xx - nx / 2) / nx - 3.0 * (yy - ny / 2) / ny
+        img = sky + rng.normal(0, 2.0, (ny, nx))
+        mask = np.zeros((ny, nx), int)
+        img[40:60, 50:80] += 500.0                       # a star, flagged DETECTED
+        mask[40:60, 50:80] |= lsstStubs.FakeMask.planes["DETECTED"]
+        img[100:110, 10:20] += 80.0                      # an unflagged blob: must be clipped
+        exp = lsstStubs.FakeExposure(img.copy(), np.full((ny, nx), 4.0), mask=mask, x0=300, y0=500)
+        return exp, sky, img
+
+    def testPlaneRecovered(self):
+        exp, sky, img = self._exposure()
+        exp, bg = pl.refit_background_lowfit(exp, "plane", verbose=False)
+        np.testing.assert_allclose(bg.array, sky, atol=0.15)
+        np.testing.assert_allclose(exp.image.array, img - bg.array)      # subtracted in place
+
+    def testConstantAndNone(self):
+        exp, sky, _ = self._exposure(1)
+        _, bg = pl.refit_background_lowfit(exp, "constant", verbose=False)
+        self.assertAlmostEqual(float(bg.array.mean()), 4.0, delta=0.3)
+        self.assertEqual(np.ptp(bg.array), 0.0)
+        exp, _, img = self._exposure(2)
+        _, bg = pl.refit_background_lowfit(exp, "none", verbose=False)
+        self.assertFalse(bg.array.any())
+        np.testing.assert_array_equal(exp.image.array, img)
+        with self.assertRaises(ValueError):
+            pl.refit_background_lowfit(exp, "spline")
+
+    def testDefaultIsPlane(self):
+        self.assertEqual(pl.SEEDED_DEFAULTS["bg_mode"], "plane")
+
+
 if __name__ == "__main__":
     unittest.main()

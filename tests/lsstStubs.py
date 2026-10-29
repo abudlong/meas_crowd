@@ -56,6 +56,8 @@ class Point2I(tuple):
 
 class Point2D(tuple):
     def __new__(cls, x=0.0, y=0.0):
+        if isinstance(x, tuple):                    # Point2D(point), like lsst.geom
+            x, y = x
         return super().__new__(cls, (float(x), float(y)))
 
     def getX(self):

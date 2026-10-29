@@ -71,11 +71,10 @@ def psf_star_positions(session=None, catalog=None, run=None, outer=-1):
         Raised if no source of PSF stars is given.
     """
     if catalog is not None:
-        cols = set(getattr(catalog, "colnames", None) or getattr(catalog, "columns", []) or [])
-        try:
-            cols |= set(catalog.schema.getNames())
-        except AttributeError:
-            pass
+        try:                                        # afw SourceCatalog
+            cols = set(catalog.schema.getNames())
+        except AttributeError:                      # astropy Table / pandas DataFrame
+            cols = set(getattr(catalog, "colnames", None) or list(getattr(catalog, "columns", [])))
         cand = _xy_from_catalog(catalog, "calib_psf_candidate" if "calib_psf_candidate" in cols
                                 else None)
         used = (_xy_from_catalog(catalog, "calib_psf_used") if "calib_psf_used" in cols

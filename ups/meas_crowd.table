@@ -1,5 +1,4 @@
 setupRequired(sconsUtils)
-setupRequired(pybind11)
 setupRequired(utils)
 setupRequired(geom)
 setupRequired(afw)

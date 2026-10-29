@@ -400,15 +400,36 @@ def _nearest(xy, positions):
     return [int(np.argmin(np.hypot(xy[:, 0] - x, xy[:, 1] - y))) for x, y in positions]
 
 
+class _PngPages:
+    """Stand-in for `PdfPages` that writes every page to its own PNG file at once."""
+
+    def __init__(self, out_dir, prefix):
+        import os
+        os.makedirs(out_dir, exist_ok=True)
+        self.out_dir, self.prefix, self.n, self.paths = out_dir, prefix, 0, []
+
+    def savefig(self, fig, dpi=80, **kw):
+        """Save one page and remember its file name."""
+        import os
+        self.n += 1
+        path = os.path.join(self.out_dir, f"{self.prefix}_{self.n:03d}.png")
+        fig.savefig(path, dpi=dpi, **kw)
+        self.paths.append(path)
+
+
 def show_linked_source_pages(run, outer=-1, snap=-1, sources=None, source_view="all",
                              sources_per_page=6, max_pages=1, view_half=20, show_pages=True,
-                             pdf=None, figsize=(21, 7.5), out=None):
+                             out_dir=None, pdf=None, dpi=80, figsize=(21, 7.5), out=None):
     """Plot per-source pages whose coloured frames match boxes on the data, model and residual.
 
-    First an overview (data | model | residual of the whole cutout) with one coloured box per
-    selected source -- the window its row on the pages shows -- then the pages: one row per
-    source with data | model | residual | x cross-section | y cross-section, framed in the same
-    colour.
+    For each page: an overview (data | model | residual of the whole cutout) with one coloured
+    box per source on that page -- the window its row shows -- then the page itself: one row
+    per source with data | model | residual | x cross-section | y cross-section, framed in the
+    same colour.
+
+    For many pages use ``out_dir``: every figure is written to its own PNG file and closed at
+    once, so memory stays flat.  A `PdfPages` (``pdf``) keeps every image in memory until it is
+    closed (matplotlib), which can exhaust a notebook's memory for hundreds of sources.
 
     Parameters
     ----------
@@ -431,18 +452,23 @@ def show_linked_source_pages(run, outer=-1, snap=-1, sources=None, source_view="
     view_half : `int`, optional
         Half-size of each source window [px] (the size of the boxes).
     show_pages : `bool`, optional
-        Draw the pages (False = only the overview).
+        Draw the pages (False = only the overviews).
+    out_dir : `str`, optional
+        Write ``overview_NNN.png`` and ``page_NNN.png`` here instead of showing them.
     pdf : `matplotlib.backends.backend_pdf.PdfPages`, optional
-        Open PDF; the overview and every page are saved into it.
+        Open PDF; the overviews and pages are saved into it instead of being shown.
+    dpi : `int`, optional
+        Resolution of the saved pages.
     figsize : `tuple` [`float`, `float`], optional
         Size of the overview [inches].
     out : `str`, optional
-        Also save the overview to this file.
+        Also save the first overview to this file.
 
     Returns
     -------
     linked : `dict`
-        ``pages`` (source indices per page) and ``colors`` (colour per source index).
+        ``pages`` (source indices per page), ``colors`` (colour per source index) and ``files``
+        (the PNG files written with ``out_dir``).
 
     Raises
     ------
@@ -481,29 +507,41 @@ def show_linked_source_pages(run, outer=-1, snap=-1, sources=None, source_view="
     norm = L._data_norm(np.where(bad, np.nan, data))
     resid = data - model
     rlim = np.nanpercentile(np.abs(resid[~bad]), 99) if (~bad).any() else 1.0
-    fig, ax = plt.subplots(1, 3, figsize=figsize)
     radius = L._circle_radius(exp)
-    for a, img, kw, t in ((ax[0], data, dict(norm=norm, cmap=L.CMAP), "data"),
-                          (ax[1], model, dict(norm=norm, cmap=L.CMAP), f"model ({len(xy)} sources)"),
-                          (ax[2], resid, dict(vmin=-rlim, vmax=rlim, cmap="RdBu_r"), "residual")):
-        im = a.imshow(np.where(bad, np.nan, img), origin="lower", extent=ext,
-                      interpolation="nearest", **kw)
-        plt.colorbar(im, ax=a, fraction=0.046)
-        for j, col in colors.items():
-            px, py = xy[j]
-            ix, iy, xa, xb, ya, yb = L._view_window(bb, px, py, view_half)
-            a.add_patch(patches.Rectangle((bb.getMinX() + xa - .5, bb.getMinY() + ya - .5),
-                                          xb - xa, yb - ya, fill=False, ec=col, lw=2,
-                                          path_effects=L._OUTLINE))
-            L._mark_source(a, px, py, col, radius, label=j)
-        a.set_title(f"pass {outer % len(hist) + 1}: {t}; boxes = rows on the source pages",
-                    fontsize=10)
-    plt.tight_layout()
-    if out:
-        fig.savefig(out, dpi=110)
-    if pdf is not None:
-        pdf.savefig(fig)
-    if show_pages and pages:
-        L.plot_source_pages(exp, sn, outer % len(hist), pages=pages, colors=colors,
-                            view_half=view_half, pdf=pdf, show=pdf is None)
-    return dict(pages=pages, colors=colors)
+    panels = ((data, dict(norm=norm, cmap=L.CMAP), "data"),
+              (model, dict(norm=norm, cmap=L.CMAP), f"model ({len(xy)} sources)"),
+              (resid, dict(vmin=-rlim, vmax=rlim, cmap="RdBu_r"), "residual"))
+    png = _PngPages(out_dir, "page") if out_dir else None
+    ovw = _PngPages(out_dir, "overview") if out_dir else None
+    sink = png or pdf
+    n_pass = outer % len(hist) + 1
+    for p, page in enumerate(pages):
+        fig, ax = plt.subplots(1, 3, figsize=figsize)
+        for a, (img, kw, t) in zip(ax, panels):
+            im = a.imshow(np.where(bad, np.nan, img), origin="lower", extent=ext,
+                          interpolation="nearest", **kw)
+            plt.colorbar(im, ax=a, fraction=0.046)
+            for j in page:
+                px, py = xy[j]
+                ix, iy, xa, xb, ya, yb = L._view_window(bb, px, py, view_half)
+                a.add_patch(patches.Rectangle((bb.getMinX() + xa - .5, bb.getMinY() + ya - .5),
+                                              xb - xa, yb - ya, fill=False, ec=colors[j], lw=2,
+                                              path_effects=L._OUTLINE))
+                L._mark_source(a, px, py, colors[j], radius, label=j)
+            a.set_title(f"pass {n_pass}, page {p + 1}/{len(pages)}: {t}; boxes = rows on the page",
+                        fontsize=10)
+        plt.tight_layout()
+        if out and p == 0:
+            fig.savefig(out, dpi=110)
+        if sink is not None:
+            (ovw or pdf).savefig(fig, dpi=dpi)
+            plt.close(fig)
+        else:
+            plt.show()
+        if show_pages:
+            L.plot_source_pages(exp, sn, n_pass - 1, pages=[page], colors=colors,
+                                view_half=view_half, pdf=sink, show=sink is None, dpi=dpi)
+    files = sorted((png.paths if png else []) + (ovw.paths if ovw else []))
+    if out_dir:
+        print(f"{len(files)} files in {out_dir}/ ({len(pages)} page(s))")
+    return dict(pages=pages, colors=colors, files=files)

@@ -7,7 +7,7 @@ From a terminal, with the stack and meas_crowd set up (``setup -k -r .``)::
     python examples/run_sample.py --out sample_out --skip-detector      # cutout only, faster
 
 Every figure is saved to ``<out>/figures/NNN_<step>.png`` (nothing is shown on screen); the
-photometry, the source pages (PDF), the tile files and the mosaic go to ``<out>/``.  The same
+photometry, the source pages (PNG per page), the tile files and the mosaic go to ``<out>/``.  The same
 steps as notebook cells are in ``examples/run_sample.ipynb``.
 
 Steps (numbers as in the user guide):
@@ -28,7 +28,6 @@ import time
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
-from matplotlib.backends.backend_pdf import PdfPages  # noqa: E402
 
 import lsst.meas.crowd as crowd  # noqa: E402
 
@@ -112,6 +111,8 @@ def main():
     t0 = time.perf_counter()
     runs = crowd.run_session_gaia(sess, cfg, out_dir=args.out, max_outer=args.max_outer,
                                   max_inner=args.max_inner, plot_final=False)
+    if not runs:
+        raise SystemExit("the cutout fit failed -- see the traceback printed above")
     name, run = next(iter(runs.items()))
     print(f"fit: {time.perf_counter() - t0:.0f} s")
     crowd.report(run)
@@ -148,8 +149,8 @@ def main():
     # ---- 5. source pages linked to boxes on the data / model / residual
     step("5_sources")
     crowd.show_linked_source_pages(run, source_view="all", sources_per_page=6, max_pages=1)
-    with PdfPages(os.path.join(args.out, f"{name}_source_pages.pdf")) as pdf:
-        crowd.show_linked_source_pages(run, max_pages=None, pdf=pdf)
+    crowd.show_linked_source_pages(run, max_pages=None,          # one PNG per page, memory flat
+                                   out_dir=os.path.join(args.out, f"{name}_source_pages"))
     crowd.plot_source_cutouts(run, how="worst", n=8, phot=phot)
 
     if args.skip_detector:

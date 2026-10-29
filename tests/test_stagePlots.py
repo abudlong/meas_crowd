@@ -161,6 +161,17 @@ class LinkedPagesTestCase(unittest.TestCase):
         with self.assertRaises(ValueError):              # older snapshot: stamps dropped
             sp.show_linked_source_pages(run, snap=0)
 
+    def testOutDirWritesEveryPageAndClosesFigures(self):
+        run, _, _ = _two_pass_run()
+        with tempfile.TemporaryDirectory() as d:
+            out = sp.show_linked_source_pages(run, sources_per_page=4, max_pages=None, out_dir=d)
+            self.assertEqual(len(out["pages"]), 4)                     # 16 sources / 4
+            self.assertEqual(len(out["files"]), 8)                     # overview + page each
+            self.assertTrue(all(os.path.getsize(f) > 1000 for f in out["files"]))
+        self.assertEqual(plt.get_fignums(), [])                        # nothing kept in memory
+        # each overview only boxes its own page's sources
+        self.assertEqual(sum(len(p) for p in out["pages"]), 16)
+
 
 if __name__ == "__main__":
     unittest.main()

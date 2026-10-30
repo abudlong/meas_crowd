@@ -174,7 +174,7 @@ from lsst.daf.butler import Butler
 
 VISIT, DET = 2025062100433, 144
 butler = Butler("dp2_prep", collections="LSSTCam/runs/DRP/DP2")
-refs = butler.queryDatasets("visit_image", collections="LSSTCam/runs/*", find_first=False,
+refs = butler.query_datasets("visit_image", collections="LSSTCam/runs/*", find_first=False,
                              where=f"instrument='LSSTCam' AND visit={VISIT} AND detector={DET}")
 visitImage = butler.get(refs[0])
 

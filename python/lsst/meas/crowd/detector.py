@@ -145,7 +145,8 @@ def save_tile_products(run, path, phot=None, meta=None):
     short = dict(zero_point="ZP", zero_point_source="ZPSRC", aperture_radius_px="APRAD",
                  aperture_correction="APCORR", fwhm_px="FWHM")      # FITS keywords <= 8 chars
     cat.meta = {short.get(k, k[:8].upper()): v for k, v in cat.meta.items()
-                if isinstance(v, (int, float, str, bool, np.floating, np.integer))}
+                if isinstance(v, (str, bool, np.bool_)) or
+                (isinstance(v, (int, float, np.floating, np.integer)) and np.isfinite(v))}
     hdus = [fits.PrimaryHDU(header=hdr)]
     for nm, arr in (("DATA", data), ("MODEL", model), ("VARIANCE", var), ("BAD", bad)):
         hdus.append(fits.ImageHDU(arr, header=hdr, name=nm))
@@ -185,7 +186,7 @@ def fit_tiles(visit, detector, config=None, out_dir="detector_run", tile=400, pa
     visit, detector : `int`
         Visit and detector ids.
     config : `dict`, optional
-        Pipeline configuration (default ``make_config(V5_TESTING_CONFIG)``).
+        Pipeline configuration (default ``make_config(CROWDED_FIELD_CONFIG)``).
     out_dir : `str`, optional
         Output directory.
     tile, pad : `int`, optional
@@ -236,7 +237,7 @@ def fit_tiles(visit, detector, config=None, out_dir="detector_run", tile=400, pa
           f"task {task_index + 1}/{n_tasks} has {len(mine)}, {len(todo)} still to fit")
     if not todo:
         return sorted(paths.values())
-    cfg = config if config is not None else cn.make_config(cn.V5_TESTING_CONFIG)
+    cfg = config if config is not None else cn.make_config(cn.CROWDED_FIELD_CONFIG)
     specs_todo = [dict(x0=s[0], y0=s[1], w=s[2], h=s[3], name=tile_name(s)) for s in todo]
     sess = cn.prepare_session(visit, detector, specs_todo, pad=pad, psf_source=psf_source,
                               visit_image=visit_image)
@@ -253,7 +254,7 @@ def fit_tiles(visit, detector, config=None, out_dir="detector_run", tile=400, pa
             runs = run_session_gaia(sess, cfg, names=[name], plot_final=False, **kw)
             run = runs[name]
             with contextlib.redirect_stdout(io.StringIO()):
-                phot = measure_photometry(run, verbose=False)
+                phot = measure_photometry(run, verbose=False, gaia=getattr(sess, "gaia", None))
             save_tile_products(run, paths[name], phot,
                                meta=dict(visit=visit, detector=detector,
                                          seconds=time.perf_counter() - t0))

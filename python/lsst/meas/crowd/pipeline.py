@@ -3779,6 +3779,7 @@ def run_seeded_pipeline(exposure_crop, psf, bad_bitmask, seeds=None, seed_gaia_i
                          dict(r=_BF["r"].copy(), prof=_BF["prof"].copy(), L0=_BF["L0"]),
                          resid_std=res["resid_std_history"][-1], n_peaks=len(res["peaks"]),
                          bg_image=bg_w, psf_change=psf_change, bad_bitmask=bad_bitmask,
+                         rejects=np.asarray(P["_halo_rejects"], float).reshape(-1, 2).copy(),
                          poisson_k=P["poisson_k"]))
         if P["auto_poisson"] and res["snaps"]:
             try:

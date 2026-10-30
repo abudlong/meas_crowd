@@ -12,7 +12,7 @@ import lsst.meas.crowd as crowd
 print("meas_crowd driver version:", crowd.pipeline.__version__)
 print("C++ kernels available:", crowd.HAVE_CXX)
 
-cfg = crowd.make_config(crowd.V5_TESTING_CONFIG)
+cfg = crowd.make_config(crowd.CROWDED_FIELD_CONFIG)
 sess = crowd.prepare_session(
     visit=2025062100433, detector=144,
     cutouts=["1000,1000,300", "2500,2000,300"],     # x0, y0, size (detector pixels)

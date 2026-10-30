@@ -1019,3 +1019,101 @@ def plot_final_comparison(run, view="interior", bad_color=BAD_PIXEL_COLOR, circl
             print(f"excluded next to bad pixels: {int((excl & region).sum())} px "
                   f"({100 * (excl & region).sum() / max(region.sum(), 1):.1f}% of the view)")
     return stats
+
+
+def plot_gaia_comparison(phot, min_snr=20.0, figsize=(22, 5.5), out=None):
+    """Plot how the fitted photometry and positions compare with Gaia.
+
+    Four panels for the Gaia-matched point sources with PSF S/N >= ``min_snr``: magnitude
+    difference (offset removed) against Gaia G and against Gaia BP - RP (the colour term between
+    G and the LSST band), the position offsets, and the offsets as arrows across the image
+    (a pattern there is a WCS distortion; scatter is centroid noise).
+
+    Parameters
+    ----------
+    phot : `astropy.table.Table`
+        Output of `lsst.meas.crowd.photometry.compare_with_gaia` (or of ``measure_photometry``
+        with ``gaia=``).
+    min_snr : `float`, optional
+        Minimum PSF S/N of the plotted sources.
+    figsize : `tuple` [`float`, `float`], optional
+        Figure size [inches].
+    out : `str`, optional
+        Also save the figure to this file.
+
+    Returns
+    -------
+    summary : `dict`
+        ``n`` (sources plotted), ``dmag_scatter`` (robust std of ``gaia_dmag_rel`` [mag]),
+        ``offset`` (the removed median offset [mag]) and ``dx``, ``dy`` (median position offsets
+        [mas] or, without sky coordinates, [px]).
+
+    Raises
+    ------
+    ValueError
+        Raised if the table has no Gaia comparison columns.
+    """
+    import matplotlib.pyplot as plt
+    if "gaia_match" not in phot.colnames:
+        raise ValueError("no Gaia columns: run compare_with_gaia / measure_photometry(gaia=...) first")
+    sel = (np.asarray(phot["gaia_match"], bool) & (np.asarray(phot["psf_snr"], float) >= min_snr)
+           & np.isfinite(np.asarray(phot["gaia_dmag_rel"], float)))
+    if "extended" in phot.colnames:
+        sel &= ~np.asarray(phot["extended"], bool)
+    t = phot[sel]
+    sky = "gaia_dra" in t.colnames
+    dx = np.asarray(t["gaia_dra"] if sky else t["gaia_dx"], float)
+    dy = np.asarray(t["gaia_ddec"] if sky else t["gaia_dy"], float)
+    unit = "mas" if sky else "px"
+    nd = 1 if sky else 3                       # decimals of the offsets
+    dm = np.asarray(t["gaia_dmag_rel"], float)
+    seed = np.asarray(t["gaia_match_type"]) == "seed"
+
+    def rstd(v):
+        v = v[np.isfinite(v)]
+        return 1.4826 * float(np.median(np.abs(v - np.median(v)))) if v.size else np.nan
+
+    fig, ax = plt.subplots(1, 4, figsize=figsize)
+    for a, xv, xl in ((ax[0], np.asarray(t["gaia_G"], float), "Gaia G [mag]"),
+                      (ax[1], np.asarray(t["gaia_bp_rp"], float), "Gaia BP - RP [mag]")):
+        a.scatter(xv[seed], dm[seed], s=8, c="C0", label=f"Gaia-seeded ({int(seed.sum())})")
+        a.scatter(xv[~seed], dm[~seed], s=14, c="C3", marker="x",
+                  label=f"matched by position ({int((~seed).sum())})")
+        a.axhline(0, color="k", lw=0.8)
+        a.set_xlabel(xl)
+        a.set_ylabel("psf_mag - G - offset [mag]")
+        lim = max(0.2, 4 * rstd(dm)) if dm.size else 1.0
+        a.set_ylim(-lim, lim)
+        if not np.isfinite(xv).any():
+            a.text(0.5, 0.5, "no Gaia colours in this catalogue", ha="center", transform=a.transAxes)
+    ax[0].legend(fontsize=8)
+    off = phot.meta.get("GAIAOFF", np.nan)
+    ax[0].set_title(f"magnitudes: offset {off:+.3f} removed, scatter {rstd(dm):.3f} mag (N={len(t)})",
+                    fontsize=10)
+    ax[1].set_title("colour term (G is much broader than the LSST band)", fontsize=10)
+    ax[2].scatter(dx, dy, s=6, alpha=0.6)
+    ax[2].axhline(0, color="k", lw=0.6)
+    ax[2].axvline(0, color="k", lw=0.6)
+    mx, my = (np.nanmedian(dx), np.nanmedian(dy)) if dx.size else (np.nan, np.nan)
+    ax[2].plot([mx], [my], "r+", ms=14, mew=2, label=f"median ({mx:+.{nd}f}, {my:+.{nd}f}) {unit}")
+    ax[2].set_xlabel(f"fitted - Gaia, {'RA cos(Dec)' if sky else 'x'} [{unit}]")
+    ax[2].set_ylabel(f"fitted - Gaia, {'Dec' if sky else 'y'} [{unit}]")
+    ax[2].set_title(f"position offsets: scatter {rstd(dx):.{nd}f}, {rstd(dy):.{nd}f} {unit}",
+                    fontsize=10)
+    ax[2].legend(fontsize=8)
+    ax[2].set_aspect("equal", adjustable="datalim")
+    q = ax[3].quiver(np.asarray(t["x"], float), np.asarray(t["y"], float),
+                     np.asarray(t["gaia_dx"], float), np.asarray(t["gaia_dy"], float),
+                     angles="xy", scale_units="xy", scale=0.01, width=0.003)
+    ax[3].quiverkey(q, 0.8, 1.03, 0.1, "0.1 px (x100)", labelpos="E")
+    ax[3].set_xlabel("x [px]")
+    ax[3].set_ylabel("y [px]")
+    ax[3].set_title("offsets across the image (arrows x100)", fontsize=10, loc="left")
+    ax[3].set_aspect("equal", adjustable="datalim")
+    plt.tight_layout()
+    if out:
+        fig.savefig(out, dpi=110)
+    print(f"Gaia comparison ({len(t)} matched point sources, S/N >= {min_snr:g}): magnitude scatter "
+          f"{rstd(dm):.3f} mag after removing {off:+.3f}; position offset median "
+          f"({mx:+.2f}, {my:+.2f}) {unit}, scatter ({rstd(dx):.2f}, {rstd(dy):.2f}) {unit}")
+    return dict(n=len(t), dmag_scatter=rstd(dm), offset=off, dx=mx, dy=my)

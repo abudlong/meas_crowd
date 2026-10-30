@@ -19,7 +19,8 @@ The numerical pieces (`flux_to_mag`, `aperture_flux`, `aperture_correction`,
 """
 
 __all__ = ["AB_NJY_ZERO_POINT", "flux_to_mag", "aperture_flux", "aperture_correction",
-           "fisher_flux_errors", "psf_flux_errors", "zero_point_from_run", "measure_photometry"]
+           "fisher_flux_errors", "psf_flux_errors", "zero_point_from_run", "compare_with_gaia",
+           "measure_photometry"]
 
 import numpy as np
 from scipy.sparse import coo_matrix
@@ -242,7 +243,128 @@ def zero_point_from_run(run):
     return AB_NJY_ZERO_POINT, "image units assumed to be nJy"
 
 
-def measure_photometry(run, aperture_fwhm=1.5, zero_point=None, verbose=True):
+def compare_with_gaia(phot, gaia, match_radius_px=1.0, offset_min_snr=50.0, verbose=True):
+    """Add Gaia comparison columns to a photometry table.
+
+    Every fitted source is paired with a Gaia star: a Gaia-seeded source with the star it was
+    seeded from (``gaia_index``), any other source with the nearest unclaimed Gaia star within
+    ``match_radius_px``.  Positions are compared with Gaia's at the visit epoch (as placed on the
+    detector by the visit WCS); magnitudes with Gaia G.  Gaia G is a much broader band than any
+    LSST filter, so ``gaia_dmag`` contains a zero-point offset and a colour term: the median
+    offset of bright, point-like matches is removed in ``gaia_dmag_rel``, and ``gaia_bp_rp`` is
+    given to fit the colour term.
+
+    Parameters
+    ----------
+    phot : `astropy.table.Table`
+        Output of `measure_photometry` (``x``, ``y``, ``psf_flux``, ``psf_mag``, ``gaia_index``;
+        ``ra``, ``dec`` if the exposure had a WCS).
+    gaia : `astropy.table.Table`
+        The Gaia catalogue the run was seeded from (``session.gaia``: ``source_id``, ``ra``,
+        ``dec``, ``x``, ``y``, ``phot_g_mean_mag``, optionally ``phot_bp_mean_mag`` and
+        ``phot_rp_mean_mag``).
+    match_radius_px : `float`, optional
+        Match radius for sources that were not Gaia-seeded [px].
+    offset_min_snr : `float`, optional
+        Minimum PSF S/N of the matches that set the median magnitude offset.
+    verbose : `bool`, optional
+        Print a summary.
+
+    Returns
+    -------
+    table : `astropy.table.Table`
+        A copy of ``phot`` with ``gaia_match``, ``gaia_match_type``, ``gaia_source_id``,
+        ``gaia_ra``, ``gaia_dec``, ``gaia_x``, ``gaia_y``, ``gaia_dx``, ``gaia_dy``,
+        ``gaia_dra``, ``gaia_ddec``, ``gaia_sep``, ``gaia_G``, ``gaia_bp_rp``, ``gaia_dmag``,
+        ``gaia_dmag_rel``, ``gaia_flux`` and ``gaia_flux_ratio`` (see doc/catalog_columns.md);
+        ``meta`` gets ``GAIAOFF`` (the median offset), ``GAIANOFF`` (stars used),
+        ``GAIAUNM`` (Gaia stars in the fitted area without a fitted source) and ``GAIASYS``.
+    """
+    from astropy.table import Table
+    from scipy.spatial import cKDTree
+    t = Table(phot, copy=True)
+    n = len(t)
+    gx, gy = np.asarray(gaia["x"], float), np.asarray(gaia["y"], float)
+    x, y = np.asarray(t["x"], float), np.asarray(t["y"], float)
+    row = np.full(n, -1, np.int64)
+    kind = np.array([""] * n, dtype="U8")
+    gi = np.asarray(t["gaia_index"], np.int64) if "gaia_index" in t.colnames else np.full(n, -1)
+    seeded = (gi >= 0) & (gi < len(gaia))
+    row[seeded], kind[seeded] = gi[seeded], "seed"
+    claimed = set(row[seeded].tolist())
+    ok = np.isfinite(gx) & np.isfinite(gy)
+    if ok.any() and (~seeded).any():
+        idx_ok = np.flatnonzero(ok)
+        tree = cKDTree(np.column_stack([gx[ok], gy[ok]]))
+        rest = np.flatnonzero(~seeded)
+        d, k = tree.query(np.column_stack([x[rest], y[rest]]))
+        for j in np.argsort(d):                        # closest pairs first
+            r = int(idx_ok[k[j]])
+            if d[j] <= match_radius_px and r not in claimed:
+                row[rest[j]], kind[rest[j]] = r, "position"
+                claimed.add(r)
+    m = row >= 0
+
+    def col(name, dtype=float, fill=np.nan):
+        out = np.full(n, fill, dtype)
+        if name in gaia.colnames:
+            out[m] = np.asarray(gaia[name], dtype)[row[m]]
+        return out
+
+    t["gaia_match"] = m
+    t["gaia_match_type"] = kind
+    t["gaia_source_id"] = col("source_id", np.int64, -1)
+    t["gaia_ra"], t["gaia_dec"] = col("ra"), col("dec")
+    t["gaia_x"], t["gaia_y"] = col("x"), col("y")
+    t["gaia_dx"], t["gaia_dy"] = x - t["gaia_x"], y - t["gaia_y"]
+    if "ra" in t.colnames and "dec" in t.colnames:
+        cosd = np.cos(np.radians(np.asarray(t["gaia_dec"], float)))
+        dra = (np.asarray(t["ra"], float) - t["gaia_ra"] + 180.0) % 360.0 - 180.0
+        t["gaia_dra"] = dra * cosd * 3.6e6
+        t["gaia_ddec"] = (np.asarray(t["dec"], float) - t["gaia_dec"]) * 3.6e6
+        t["gaia_sep"] = np.hypot(t["gaia_dra"], t["gaia_ddec"])
+    t["gaia_G"] = col("phot_g_mean_mag")
+    t["gaia_bp_rp"] = col("phot_bp_mean_mag") - col("phot_rp_mean_mag")
+    t["gaia_dmag"] = np.asarray(t["psf_mag"], float) - t["gaia_G"]
+    use = (m & np.isfinite(t["gaia_dmag"]) & (np.asarray(t["psf_snr"], float) >= offset_min_snr))
+    if "extended" in t.colnames:
+        use &= ~np.asarray(t["extended"], bool)
+    off, n_off = np.nan, int(use.sum())
+    if n_off:
+        v = np.asarray(t["gaia_dmag"], float)[use]
+        for _ in range(5):                             # 3-sigma clipped median
+            med = np.median(v)
+            s = 1.4826 * np.median(np.abs(v - med)) or 1e-3
+            keep = np.abs(v - med) < 3 * s
+            if keep.all() or keep.sum() < 3:
+                break
+            v = v[keep]
+        off, n_off = float(np.median(v)), len(v)
+    t["gaia_dmag_rel"] = t["gaia_dmag"] - off
+    zp = float(t.meta.get("zero_point", AB_NJY_ZERO_POINT))
+    t["gaia_flux"] = 10 ** (-0.4 * (t["gaia_G"] + off - zp))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        t["gaia_flux_ratio"] = np.asarray(t["psf_flux"], float) / t["gaia_flux"]
+    inside = ok & (gx >= x.min() - 0.5) & (gx <= x.max() + 0.5) & (gy >= y.min() - 0.5) \
+        & (gy <= y.max() + 0.5) if n else ok & False
+    n_unm = int(np.sum(inside & ~np.isin(np.arange(len(gaia)), row[m])))
+    t.meta.update(GAIAOFF=off, GAIANOFF=n_off, GAIAUNM=n_unm,
+                  GAIASYS=str(gaia.meta.get("gaia_mag_system", "unknown")))
+    if verbose:
+        rel = np.asarray(t["gaia_dmag_rel"], float)[use]
+        sc = 1.4826 * np.nanmedian(np.abs(rel)) if n_off else np.nan
+        sep = (np.nanmedian(np.asarray(t["gaia_sep"])[m]) if "gaia_sep" in t.colnames and m.any()
+               else np.nan)
+        print(f"Gaia comparison: {int(m.sum())} of {n} sources matched "
+              f"({int(np.sum(kind == 'seed'))} seeded, {int(np.sum(kind == 'position'))} by position); "
+              f"{n_unm} Gaia stars in the area without a fitted source; psf_mag - G median "
+              f"{off:+.3f} from {n_off} stars (S/N >= {offset_min_snr:g}), scatter {sc:.3f} mag; "
+              f"median separation {sep:.1f} mas")
+    return t
+
+
+def measure_photometry(run, aperture_fwhm=1.5, zero_point=None, verbose=True, gaia=None,
+                       gaia_match_px=1.0):
     """Measure PSF and aperture magnitudes of a run's sources.
 
     Parameters
@@ -255,6 +377,11 @@ def measure_photometry(run, aperture_fwhm=1.5, zero_point=None, verbose=True):
         Override the zero point (default: PhotoCalib, else 31.4 for nJy).
     verbose : `bool`, optional
         Print a summary.
+    gaia : `astropy.table.Table`, optional
+        The Gaia catalogue the run was seeded from (``session.gaia``); adds the Gaia comparison
+        columns of `compare_with_gaia`.
+    gaia_match_px : `float`, optional
+        Gaia match radius for sources that were not Gaia-seeded [px].
 
     Returns
     -------
@@ -262,7 +389,9 @@ def measure_photometry(run, aperture_fwhm=1.5, zero_point=None, verbose=True):
         ``id``, ``x``, ``y``, ``ra``, ``dec``, ``gaia``, ``gaia_index``, ``gaia_G``,
         ``extended``, ``in_interior``, ``psf_flux``, ``psf_flux_err``, ``psf_snr``, ``psf_mag``,
         ``psf_mag_err``, ``ap_flux``, ``ap_flux_err``, ``ap_coverage``, ``ap_mag``,
-        ``ap_mag_err``, ``ap_minus_psf``; ``meta`` has the zero point and aperture settings.
+        ``ap_mag_err``, ``ap_minus_psf`` (and, with ``gaia``, the `compare_with_gaia`
+        columns); ``meta`` has the zero point and aperture settings.  The columns and their
+        units are described in ``doc/catalog_columns.md``.
     """
     from astropy.table import Table
     from . import fitLib as L
@@ -335,4 +464,6 @@ def measure_photometry(run, aperture_fwhm=1.5, zero_point=None, verbose=True):
         print(f"photometry: {n} sources; zero point {zp:.3f} ({how}); aperture r = {radius:.1f} px "
               f"({aperture_fwhm:g} FWHM, aperture correction {apcorr:.3f}); median ap - PSF "
               f"(S/N > 20, point sources) = {med:+.3f} mag")
+    if gaia is not None:
+        t = compare_with_gaia(t, gaia, match_radius_px=gaia_match_px, verbose=verbose)
     return t

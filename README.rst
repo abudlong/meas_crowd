@@ -13,8 +13,12 @@ modelled as elliptical extended sources, and the residual is checked for fake de
 bright stars.  A whole detector is fitted as a grid of overlapping tiles that are stitched back
 into one mosaic and one catalogue.
 
-**User guide:** ``doc/meas_crowd_pipeline_guide.docx`` explains the pipeline flow and the key
-parameters, gives a recipe for every plot, and shows how to run and check the unit tests.
+**Documentation:**
+
+* `doc/pipeline_guide.md <doc/pipeline_guide.md>`_: the pipeline flow and the key parameters, a
+  recipe for every plot, and how to run and check the unit tests;
+* `doc/catalog_columns.md <doc/catalog_columns.md>`_: every column of the output catalogue and
+  its units.
 
 Pipeline at a glance
 ====================
@@ -68,7 +72,7 @@ The package follows the Rubin DM layout (``sconsUtils`` + ``eups``)::
     tests/                        unit tests (run with or without the stack)
     examples/                     run_visit.py (notebook cells), run_visit_batch.py (terminal),
                                   usdf_job.sh, usdf_detector_array.sh (Slurm), benchmark_stamps.py
-    doc/                          user guide (Word) and package documentation
+    doc/                          user guide, catalogue columns, package documentation
 
 Building
 ========
@@ -101,7 +105,7 @@ Cutouts (notebook or Python)
 
     import lsst.meas.crowd as crowd
 
-    cfg = crowd.make_config(crowd.V5_TESTING_CONFIG)
+    cfg = crowd.make_config(crowd.CROWDED_FIELD_CONFIG)
     sess = crowd.prepare_session(visit=2025062100433, detector=144,
                                  cutouts=["1000,1000,300", "2500,2000,300"], pad=20,
                                  psf_source="visit")
@@ -161,6 +165,8 @@ Final results:
 ``core_excess_diagnostic``,
 ``show_bright_star_stack``
 ``compare_runs``              side-by-side numbers for several runs of the same cutouts
+``plot_gaia_comparison``      magnitude difference with Gaia against G and BP - RP, and the
+                              position offsets (scatter and across the image)
 ============================  ==================================================================
 
 Intermediate stages (``stagePlots``):
@@ -173,7 +179,11 @@ Intermediate stages (``stagePlots``):
 ``show_rounds``               data | model | residual | residual/sigma per outer pass
                               (``level="outer"``) or per inner iteration (``level="inner"``)
 ``show_linked_source_pages``  per-source pages (data | model | residual | x / y cuts) framed in
-                              the colour of their box on the full data, model and residual
+                              the colour of their box on the full data, model and residual;
+                              ``out_dir=`` writes one PNG per page (memory stays flat)
+``compare_passes``            which sources one outer pass lost or gained relative to another,
+                              and why (flux left in the residual, merged, halo / ring check,
+                              moved, spurious)
 ============================  ==================================================================
 
 Whole detector (``detector``):
@@ -191,6 +201,12 @@ extended flag, PSF flux with its Fisher error (overlapping sources inverted toge
 get honest errors), PSF magnitude, aperture flux on the neighbour-subtracted image corrected to
 total with the PSF's curve of growth, aperture magnitude, and ap - PSF.  Magnitudes use the
 exposure's PhotoCalib when present, else the nJy AB zero point (31.4).
+
+``measure_photometry(run, gaia=sess.gaia)`` (or ``compare_with_gaia(phot, gaia)``) adds the
+comparison with Gaia: a match flag (the seeding Gaia star, or the nearest unclaimed one within
+1 px), the Gaia source id, G and BP - RP, position offsets in px and mas, ``psf_mag - G`` with and
+without the median offset, and the flux ratio to Gaia.  ``doc/catalog_columns.md`` lists every
+column with its unit.
 
 Speed
 =====

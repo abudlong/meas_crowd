@@ -11,7 +11,7 @@ and residual images.
 """
 
 __all__ = ["psf_star_positions", "show_psf_stars", "show_backgrounds", "show_rounds",
-           "show_linked_source_pages"]
+           "show_linked_source_pages", "compare_passes"]
 
 import numpy as np
 
@@ -398,6 +398,196 @@ def _nearest(xy, positions):
     """Return the index of the source nearest each position."""
     xy = np.asarray(xy, float).reshape(-1, 2)
     return [int(np.argmin(np.hypot(xy[:, 0] - x, xy[:, 1] - y))) for x, y in positions]
+
+
+def _pass_sources(h):
+    """Return positions, fluxes, peak S/N and Gaia flags of one outer pass's sources."""
+    res, exp = h["result"], h["exposure"]
+    xy = np.asarray(res["S"]["xy"], float).reshape(-1, 2)
+    amps = np.asarray(res["snaps"][-1]["fit"]["amps"], float)
+    peak = float(h["psf"].computeKernelImage(exp.getBBox().getCenter()).array.max())
+    noise = float(np.sqrt(np.nanmedian(exp.variance.array)))
+    seed = np.asarray(res["S"].get("seed", np.zeros(len(xy), bool)), bool)
+    return xy, amps, amps * peak / noise, seed
+
+
+def _matched_flux(resid, var, good, kernel, x, y, x0, y0):
+    """Return the PSF-weighted flux and its S/N of the residual at a position."""
+    k = kernel / kernel.sum()
+    hy, hx = k.shape[0] // 2, k.shape[1] // 2
+    ix, iy = int(round(x)) - x0, int(round(y)) - y0
+    ny, nx = resid.shape
+    ya, yb, xa, xb = max(iy - hy, 0), min(iy + hy + 1, ny), max(ix - hx, 0), min(ix + hx + 1, nx)
+    if yb <= ya or xb <= xa:
+        return np.nan, np.nan
+    kk = k[ya - iy + hy:yb - iy + hy, xa - ix + hx:xb - ix + hx]
+    w = np.where(good[ya:yb, xa:xb], kk / np.maximum(var[ya:yb, xa:xb], 1e-12), 0.0)
+    den = float(np.sum(w * kk))
+    if den <= 0:
+        return np.nan, np.nan
+    f = float(np.sum(w * np.nan_to_num(resid[ya:yb, xa:xb]))) / den
+    return f, f * np.sqrt(den)
+
+
+def compare_passes(run, a=-2, b=-1, match_px=1.0, n_show=8, half=12, plot=True, out=None):
+    """Find the sources that one outer pass lost or gained relative to another, and why.
+
+    Sources are matched by position (within ``match_px``).  For every source of pass ``a``
+    without a match in pass ``b`` the residual of pass ``b`` is measured at its position with a
+    PSF-weighted (matched-filter) flux: if most of its flux is still there, a real source was
+    lost; if a neighbour within 1.5 FWHM gained that flux, it was merged; if a halo or ring check
+    removed it, it is also blocked from re-detection in later passes.
+
+    Parameters
+    ----------
+    run : `lsst.meas.crowd.session.CutoutRun`
+        A finished run with at least two outer passes.
+    a, b : `int`, optional
+        The two outer passes to compare (default: the last two).
+    match_px : `float`, optional
+        Matching radius [px].
+    n_show : `int`, optional
+        Number of lost sources drawn (brightest first).
+    half : `int`, optional
+        Half-size of each zoom [px].
+    plot : `bool`, optional
+        Draw the overview and the zooms.
+    out : `str`, optional
+        Also save the figure to this file.
+
+    Returns
+    -------
+    table : `astropy.table.Table`
+        One row per lost or gained source: ``kind`` ('lost' / 'gained'), ``x``, ``y``, ``flux``,
+        ``snr`` (peak S/N in the pass it exists in), ``gaia``, ``flux_left`` and ``left_snr``
+        (matched-filter flux and S/N in the residual of the pass without it), ``left_frac``,
+        ``nearest_px`` (distance to the nearest source of the other pass), ``nearest_dflux``
+        (that source's flux change) and ``verdict``.
+
+    Raises
+    ------
+    ValueError
+        Raised if the run has fewer than two outer passes.
+    """
+    from astropy.table import Table
+    from scipy.spatial import cKDTree
+    hist = run.outer_history
+    if len(hist) < 2:
+        raise ValueError("the run has only one outer pass")
+    ia, ib = a % len(hist), b % len(hist)
+    ha, hb = hist[ia], hist[ib]
+    xa_, fa, sa, ga = _pass_sources(ha)
+    xb_, fb, sb, gb = _pass_sources(hb)
+    c = hb["exposure"].getBBox().getCenter()
+    fwhm = L._fwhm(hb["psf"], c)
+    da, _ = cKDTree(xb_).query(xa_) if len(xb_) else (np.full(len(xa_), np.inf), None)
+    db, _ = cKDTree(xa_).query(xb_) if len(xa_) else (np.full(len(xb_), np.inf), None)
+    rej_a = np.asarray(ha.get("rejects", np.zeros((0, 2))), float).reshape(-1, 2)
+    rej_b = np.asarray(hb.get("rejects", np.zeros((0, 2))), float).reshape(-1, 2)
+    new_rej = rej_b[len(rej_a):] if len(rej_b) >= len(rej_a) else rej_b
+
+    rows = []
+    for kind, src, other, flux, snr, gaia, dist, h_other in (
+            ("lost", xa_, (xb_, fb, xa_, fa), fa, sa, ga, da, hb),
+            ("gained", xb_, (xa_, fa, xb_, fb), fb, sb, gb, db, ha)):
+        exp = h_other["exposure"]
+        bb = exp.getBBox()
+        resid = np.asarray(exp.image.array, float) - np.asarray(h_other["result"]["model_full"], float)
+        var = np.asarray(exp.variance.array, float)
+        good = ((exp.mask.array & run.bad_bitmask) == 0) & np.isfinite(resid)
+        kern = np.asarray(h_other["psf"].computeKernelImage(bb.getCenter()).array, float)
+        oxy, oflux, sxy, sflux = other
+        tree = cKDTree(oxy) if len(oxy) else None
+        stree = cKDTree(sxy) if len(sxy) else None
+        for j in np.flatnonzero(dist > match_px):
+            x, y = src[j]
+            fl, fs = _matched_flux(resid, var, good, kern, x, y, bb.getMinX(), bb.getMinY())
+            near, dfl = np.inf, np.nan
+            if tree is not None:
+                near, k = tree.query((x, y))
+                # flux change of that neighbour between the passes
+                if stree is not None:
+                    d2, k2 = stree.query(oxy[k])
+                    if d2 <= match_px:            # always pass b minus pass a
+                        dfl = (oflux[k] - sflux[k2]) * (1 if kind == "lost" else -1)
+            frac = fl / flux[j] if flux[j] > 0 else np.nan
+            if kind == "lost":
+                blocked = len(new_rej) and np.min(np.hypot(*(new_rej - (x, y)).T)) <= match_px
+                if blocked:
+                    verdict = "removed by halo/ring check; blocked from re-detection"
+                elif np.isfinite(fs) and fs >= 5 and frac > 0.5:
+                    verdict = "LOST: its flux is still in the residual"
+                elif near <= 1.5 * fwhm and np.isfinite(dfl) and dfl >= 0.5 * flux[j]:
+                    verdict = "merged into a neighbour"
+                elif near <= match_px * 3:
+                    verdict = "moved"
+                else:
+                    verdict = "flux not needed (likely spurious)"
+            else:
+                verdict = ("new: was missing from the residual" if np.isfinite(fs) and fs >= 5
+                           else "new: faint / split off")
+            rows.append((kind, x, y, flux[j], snr[j], bool(gaia[j]), fl, fs, frac, near, dfl,
+                         verdict))
+    t = Table(rows=rows, names=("kind", "x", "y", "flux", "snr", "gaia", "flux_left", "left_snr",
+                                "left_frac", "nearest_px", "nearest_dflux", "verdict"),
+              dtype=(str, float, float, float, float, bool, float, float, float, float, float, str))
+    t.sort(["kind", "flux"], reverse=True)
+    lost, gained = t[t["kind"] == "lost"], t[t["kind"] == "gained"]
+    print(f"pass {ia + 1} -> pass {ib + 1}: {len(xa_)} -> {len(xb_)} sources; {len(lost)} lost, "
+          f"{len(gained)} gained (match radius {match_px} px)")
+    for v in sorted(set(lost["verdict"])):
+        print(f"  lost, {v}: {int(np.sum(lost['verdict'] == v))}")
+    for r in lost:
+        print(f"    ({r['x']:7.1f}, {r['y']:7.1f})  flux {r['flux']:9.1f}  S/N {r['snr']:6.1f}  "
+              f"{'Gaia' if r['gaia'] else '    '}  left {100 * r['left_frac']:5.0f}% "
+              f"(S/N {r['left_snr']:5.1f})  nearest {r['nearest_px']:4.1f} px  -> {r['verdict']}")
+
+    if plot and len(t):
+        import matplotlib.pyplot as plt
+        expb = hb["exposure"]
+        bb = expb.getBBox()
+        ext = (bb.getMinX() - .5, bb.getMaxX() + .5, bb.getMinY() - .5, bb.getMaxY() + .5)
+        bad = (expb.mask.array & run.bad_bitmask) != 0
+        rb = np.asarray(expb.image.array, float) - np.asarray(hb["result"]["model_full"], float)
+        ra = (np.asarray(ha["exposure"].image.array, float)
+              - np.asarray(ha["result"]["model_full"], float))
+        rl = np.nanpercentile(np.abs(rb[~bad]), 99) if (~bad).any() else 1.0
+        show = lost[:n_show]
+        nrow = 1 + len(show)
+        fig = plt.figure(figsize=(15, 4.6 * nrow))
+        gs = fig.add_gridspec(nrow, 3)
+        ax = fig.add_subplot(gs[0, :])
+        ax.imshow(np.where(bad, np.nan, rb), origin="lower", extent=ext, cmap="RdBu_r",
+                  vmin=-rl, vmax=rl, interpolation="nearest")
+        ax.scatter(lost["x"], lost["y"], marker="x", c="k", s=60, lw=1.5, label=f"lost ({len(lost)})")
+        ax.scatter(gained["x"], gained["y"], marker="+", c="g", s=70, lw=1.5,
+                   label=f"gained ({len(gained)})")
+        ax.legend(loc="upper right")
+        ax.set_title(f"residual of pass {ib + 1}; sources lost / gained since pass {ia + 1}")
+        ax.set_aspect("equal")
+        norm = L._data_norm(np.where(bad, np.nan, np.asarray(ha["exposure"].image.array, float)))
+        for r, row in enumerate(show, 1):
+            x, y = row["x"], row["y"]
+            win = (x - half, x + half, y - half, y + half)
+            for cc, (img, kw, ttl) in enumerate((
+                    (np.asarray(ha["exposure"].image.array, float), dict(norm=norm, cmap=L.CMAP),
+                     f"pass {ia + 1} data: flux {row['flux']:.0f}, S/N {row['snr']:.0f}"),
+                    (ra, dict(cmap="RdBu_r", vmin=-rl, vmax=rl), f"pass {ia + 1} residual (with it)"),
+                    (rb, dict(cmap="RdBu_r", vmin=-rl, vmax=rl),
+                     f"pass {ib + 1} residual: {100 * row['left_frac']:.0f}% left"))):
+                a_ = fig.add_subplot(gs[r, cc])
+                a_.imshow(np.where(bad, np.nan, img), origin="lower", extent=ext,
+                          interpolation="nearest", **kw)
+                a_.scatter([x], [y], marker="x", c="k", s=60, lw=1.5)
+                a_.scatter(xb_[:, 0], xb_[:, 1], marker="+", c="w" if cc == 0 else "g", s=40, lw=1)
+                a_.set_xlim(win[0], win[1])
+                a_.set_ylim(win[2], win[3])
+                a_.set_title(ttl if cc else f"({x:.1f}, {y:.1f}) {ttl}", fontsize=9)
+            fig.axes[-1].set_xlabel(row["verdict"], fontsize=9)
+        plt.tight_layout()
+        if out:
+            fig.savefig(out, dpi=100)
+    return t
 
 
 class _PngPages:

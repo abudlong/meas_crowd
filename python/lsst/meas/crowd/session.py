@@ -94,11 +94,13 @@ DEFAULT_CONFIG = dict(
 )
 
 
-# The values from crowded_cfg_v5_testing.json, built in so no file is needed:
-#   cn.make_config(V5_TESTING_CONFIG, min_snr=4.0, save_to="my_run.json")
+# The recommended settings for crowded fields (deeper detection, looser shape test, closer
+# merging than DEFAULT_CONFIG); originally crowded_cfg_v5_testing.json, built in so no file is
+# needed:
+#   cn.make_config(CROWDED_FIELD_CONFIG, min_snr=4.0, save_to="my_run.json")
 # With the default deep=False, stack_kwargs below REPLACES the default one (n_use, step,
 # window fall back to the library defaults), exactly as the JSON did via the CLI.
-V5_TESTING_CONFIG = dict(
+CROWDED_FIELD_CONFIG = dict(
     min_snr=3.0, near_bright_snr=15.0, reject_fwhm=0.5, near_bright_fwhm=2.0,
     prune_sep_sigma=1.0, merge_separation_sigma=1.0, outer_convergence_frac=0,
     stack_kwargs=dict(max_radius=20),
@@ -108,6 +110,9 @@ V5_TESTING_CONFIG = dict(
     inner_kwargs=dict(n_iterations=8, threshold_start=8.0, threshold_step=-1.0,
                       threshold_min=3.0, convergence_frac=0.0),
 )
+
+# the old name, kept so existing notebooks keep working
+V5_TESTING_CONFIG = CROWDED_FIELD_CONFIG
 
 
 def _merge(dst, src, deep):

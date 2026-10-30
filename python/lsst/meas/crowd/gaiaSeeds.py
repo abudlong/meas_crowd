@@ -85,13 +85,23 @@ def _gaia_from_butler(wcs, bbox, epoch, butler, refcat, collections):
                                    refCats=[butler.getDeferred(r) for r in refs], name=refcat)
     res = loader.loadPixelBox(bbox, wcs, filterName="phot_g_mean", epoch=epoch)
     cat = res.refCat.copy(deep=True)
-    flux = np.asarray(cat[res.fluxField], float)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        gmag = np.where(flux > 0, -2.5 * np.log10(flux) + 31.4, np.nan)
-    return Table(dict(source_id=np.asarray(cat["id"], np.int64),
-                      ra=np.degrees(np.asarray(cat["coord_ra"], float)),
-                      dec=np.degrees(np.asarray(cat["coord_dec"], float)),
-                      phot_g_mean_mag=gmag))
+
+    def mag(field):
+        try:
+            f = np.asarray(cat[field], float)
+        except Exception:
+            return np.full(len(cat), np.nan)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return np.where(f > 0, -2.5 * np.log10(f) + 31.4, np.nan)
+
+    t = Table(dict(source_id=np.asarray(cat["id"], np.int64),
+                   ra=np.degrees(np.asarray(cat["coord_ra"], float)),
+                   dec=np.degrees(np.asarray(cat["coord_dec"], float)),
+                   phot_g_mean_mag=mag(res.fluxField),
+                   phot_bp_mean_mag=mag("phot_bp_mean_flux"),
+                   phot_rp_mean_mag=mag("phot_rp_mean_flux")))
+    t.meta["gaia_mag_system"] = "AB, from the reference catalogue fluxes [nJy]"
+    return t
 
 
 def _gaia_from_tap(wcs, bbox, epoch, tap_url):
@@ -101,7 +111,8 @@ def _gaia_from_tap(wcs, bbox, epoch, tap_url):
     center = wcs.pixelToSky(bbox.getCenter())
     radius = max(center.separation(c).asDegrees() for c in corners) * 1.05
     ra0, dec0 = center.getRa().asDegrees(), center.getDec().asDegrees()
-    q = f"""SELECT source_id, ra, dec, pmra, pmdec, phot_g_mean_mag, ruwe
+    q = f"""SELECT source_id, ra, dec, pmra, pmdec, phot_g_mean_mag, phot_bp_mean_mag,
+                   phot_rp_mean_mag, ruwe
             FROM gaiadr3.gaia_source
             WHERE 1 = CONTAINS(POINT('ICRS', ra, dec), CIRCLE('ICRS', {ra0}, {dec0}, {radius}))"""
     svc = pyvo.dal.TAPService(tap_url)
@@ -114,8 +125,12 @@ def _gaia_from_tap(wcs, bbox, epoch, tap_url):
     pmra, pmdec = _col(t, "pmra", 0.0), _col(t, "pmdec", 0.0)     # mas/yr (pmra has cos dec)
     dec_e = dec + pmdec * dt / 3.6e6
     ra_e = ra + pmra * dt / 3.6e6 / np.cos(np.radians(dec))
-    return Table(dict(source_id=np.asarray(t["source_id"], np.int64), ra=ra_e, dec=dec_e,
-                      phot_g_mean_mag=_col(t, "phot_g_mean_mag"), ruwe=_col(t, "ruwe")))
+    out = Table(dict(source_id=np.asarray(t["source_id"], np.int64), ra=ra_e, dec=dec_e,
+                     phot_g_mean_mag=_col(t, "phot_g_mean_mag"),
+                     phot_bp_mean_mag=_col(t, "phot_bp_mean_mag"),
+                     phot_rp_mean_mag=_col(t, "phot_rp_mean_mag"), ruwe=_col(t, "ruwe")))
+    out.meta["gaia_mag_system"] = "Vega (Gaia archive)"
+    return out
 
 
 def gaia_catalog(wcs, bbox, epoch=None, source="auto", butler=None, repo="dp2_prep",

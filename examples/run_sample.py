@@ -104,7 +104,7 @@ def main():
     # ---- 1. run the pipeline on one cutout
     step("1_run")
     butler, visit_image, data_id = load_visit(args.repo, args.collection, args.visit, args.detector)
-    cfg = crowd.make_config(crowd.V5_TESTING_CONFIG)
+    cfg = crowd.make_config(crowd.CROWDED_FIELD_CONFIG)
     sess = crowd.prepare_session(args.visit, args.detector, [args.cutout], pad=args.pad,
                                  psf_source=args.psf_source, visit_image=visit_image)
     crowd.attach_gaia(sess, visit_image=visit_image, repo=args.repo)
@@ -118,7 +118,9 @@ def main():
     crowd.report(run)
     crowd.plot_final_comparison(run)
     crowd.plot_residual_gray(run)
-    phot = crowd.measure_photometry(run)
+    phot = crowd.measure_photometry(run, gaia=sess.gaia)       # + Gaia comparison columns
+    if getattr(sess, "gaia", None) is not None:
+        crowd.plot_gaia_comparison(phot)
     phot.write(os.path.join(args.out, f"{name}_photometry.fits"), overwrite=True)
 
     # ---- 2. PSF stars and the PSF model
@@ -145,6 +147,8 @@ def main():
     for k in range(len(hist)):
         crowd.show_rounds(run, level="inner", outer=k, max_rows=6)
     crowd.fitLib.plot_outer_loop_summary(hist)
+    for k in range(len(hist) - 1):              # sources lost / gained between passes, and why
+        crowd.compare_passes(run, a=k, b=k + 1)
 
     # ---- 5. source pages linked to boxes on the data / model / residual
     step("5_sources")

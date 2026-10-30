@@ -148,5 +148,85 @@ class MeasurePhotometryTestCase(unittest.TestCase):
         np.testing.assert_allclose(t["psf_mag"], 31.4 - 2.5 * np.log10(2.0 * t["psf_flux"]))
 
 
+class GaiaComparisonTestCase(unittest.TestCase):
+    """Matching to Gaia and the flux / position differences."""
+
+    def _tables(self):
+        from astropy.table import Table
+        dec0 = 10.0
+        gaia = Table(dict(source_id=np.arange(100, 106), x=[10., 20., 30., 40., 25., 500.],
+                          y=[10., 20., 30., 40., 15., 500.], ra=np.full(6, 50.0),
+                          dec=np.full(6, dec0), phot_g_mean_mag=[15., 16., 17., 18., 19., 20.],
+                          phot_bp_mean_mag=[15.5, 16.5, 17.5, 18.5, 19.5, 20.5],
+                          phot_rp_mean_mag=[14.8, 15.8, 16.8, 17.8, 18.8, 19.8]))
+        gaia.meta["gaia_mag_system"] = "Vega (Gaia archive)"
+        G = np.array([15., 16., 17., 18., 21.])
+        phot = Table(dict(x=[10.1, 20.1, 30.1, 40.4, 33.0], y=[10., 20., 30., 40.2, 12.0],
+                          gaia_index=[0, 1, 2, -1, -1], psf_mag=G + 0.3, psf_snr=np.full(5, 100.),
+                          extended=np.zeros(5, bool),
+                          ra=50.0 + np.array([2, 2, 2, 0, 0]) / 3.6e6 / np.cos(np.radians(dec0)),
+                          dec=dec0 + np.array([1, 1, 1, 0, 0]) / 3.6e6))
+        phot["psf_flux"] = 10 ** (-0.4 * (phot["psf_mag"] - ph.AB_NJY_ZERO_POINT))
+        phot.meta["zero_point"] = ph.AB_NJY_ZERO_POINT
+        return phot, gaia
+
+    def testMatchingAndDifferences(self):
+        phot, gaia = self._tables()
+        t = ph.compare_with_gaia(phot, gaia, verbose=False)
+        np.testing.assert_array_equal(t["gaia_match"], [True, True, True, True, False])
+        self.assertEqual(list(t["gaia_match_type"]), ["seed", "seed", "seed", "position", ""])
+        np.testing.assert_array_equal(t["gaia_source_id"], [100, 101, 102, 103, -1])
+        np.testing.assert_allclose(t["gaia_dx"][:3], 0.1, atol=1e-9)
+        np.testing.assert_allclose(t["gaia_dra"][:3], 2.0, atol=1e-3)       # mas, with cos(dec)
+        np.testing.assert_allclose(t["gaia_ddec"][:3], 1.0, atol=1e-3)
+        np.testing.assert_allclose(t["gaia_sep"][:3], np.sqrt(5), atol=1e-3)
+        self.assertAlmostEqual(t.meta["GAIAOFF"], 0.3, places=9)            # psf_mag - G
+        np.testing.assert_allclose(t["gaia_dmag_rel"][:4], 0.0, atol=1e-9)
+        np.testing.assert_allclose(t["gaia_flux_ratio"][:4], 1.0, rtol=1e-9)
+        np.testing.assert_allclose(t["gaia_bp_rp"][:4], 0.7, atol=1e-9)
+        self.assertEqual(t.meta["GAIAUNM"], 1)            # star at (25, 15) has no fitted source
+        self.assertTrue(np.isnan(t["gaia_G"][4]))
+        self.assertNotIn("gaia_match", phot.colnames)    # input not modified
+
+    def testRadiusAndNoSky(self):
+        phot, gaia = self._tables()
+        del phot["ra"], phot["dec"]
+        t = ph.compare_with_gaia(phot, gaia, match_radius_px=0.3, verbose=False)
+        self.assertFalse(t["gaia_match"][3])               # 0.45 px away
+        self.assertNotIn("gaia_dra", t.colnames)
+
+    def testFromSyntheticRun(self):
+        import fakeRun
+        from astropy.table import Table
+        run = fakeRun.make_run(seed=7)
+        xy = run.outer_history[-1]["result"]["S"]["xy"]
+        G = ph.AB_NJY_ZERO_POINT - 2.5 * np.log10(run.truth_flux) - 0.2       # offset +0.2
+        gaia = Table(dict(source_id=np.arange(len(xy)), x=xy[:, 0] + 0.05, y=xy[:, 1],
+                          ra=np.zeros(len(xy)), dec=np.zeros(len(xy)), phot_g_mean_mag=G))
+        t = ph.measure_photometry(run, verbose=False, gaia=gaia)
+        self.assertTrue(np.all(t["gaia_match"]))
+        self.assertAlmostEqual(t.meta["GAIAOFF"], 0.2, delta=0.01)
+        self.assertLess(np.std(t["gaia_flux_ratio"]), 0.02)
+
+    def testPlot(self):
+        import os
+        import tempfile
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from lsst.meas.crowd import plotting
+        phot, gaia = self._tables()
+        t = ph.compare_with_gaia(phot, gaia, verbose=False)
+        with tempfile.TemporaryDirectory() as d:
+            png = os.path.join(d, "gaia.png")
+            out = plotting.plot_gaia_comparison(t, out=png)
+            self.assertGreater(os.path.getsize(png), 1000)
+        self.assertEqual(out["n"], 4)
+        self.assertAlmostEqual(out["dx"], 2.0 * 3 / 4 + 0.0 / 4, delta=1.0)
+        with self.assertRaises(ValueError):
+            plotting.plot_gaia_comparison(phot)
+        plt.close("all")
+
+
 if __name__ == "__main__":
     unittest.main()

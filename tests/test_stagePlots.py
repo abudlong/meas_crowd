@@ -173,5 +173,69 @@ class LinkedPagesTestCase(unittest.TestCase):
         self.assertEqual(sum(len(p) for p in out["pages"]), 16)
 
 
+class ComparePassesTestCase(unittest.TestCase):
+    """Sources lost / gained between two outer passes, with the reason."""
+
+    def setUp(self):
+        from lsst.meas.crowd import pipeline
+        base = fakeRun.make_run(seed=4)
+        h = base.outer_history[0]
+        exp, fit = h["exposure"], h["result"]["snaps"][0]["fit"]
+        xy, amps, comps = h["result"]["S"]["xy"], fit["amps"], fit["comps"]
+        shape = exp.image.array.shape
+        self.xy = xy
+        self.fake = (xy[0] + xy[1]) / 2 + (7.0, 0.0)         # an empty spot between stars
+        fake_comp = lsstStubs.gaussian_comp(shape, *self.fake, 2.0, 15, 1000, 2000)
+
+        def one_pass(idx, extra=(), rejects=()):
+            pxy = np.vstack([xy[idx]] + [np.atleast_2d(p) for p, _, _ in extra])
+            pamp = np.concatenate([amps[idx], [a for _, a, _ in extra]])
+            model = sum(lsstStubs.place(shape, comps[j], amps[j]) for j in idx)
+            for _, a, c in extra:
+                model = model + lsstStubs.place(shape, c, a)
+            S = pipeline._state(pxy, seed=False)
+            res = dict(S=S, snaps=[dict(fit=dict(amps=pamp))], model_full=model)
+            return dict(exposure=exp, psf=h["psf"], result=res,
+                        rejects=np.asarray(rejects, float).reshape(-1, 2))
+
+        n = len(xy)
+        a_idx = [j for j in range(n) if j != 7]                 # pass a misses star 7 ...
+        b_idx = [j for j in range(n) if j not in (3, 9)]        # pass b drops stars 3 and 9
+        self.run = types.SimpleNamespace(
+            outer_history=[one_pass(a_idx, extra=[(self.fake, 3000.0, fake_comp)]),   # ... has a fake
+                           one_pass(b_idx, rejects=[xy[9]])],   # star 9: removed by the halo check
+            bad_bitmask=4)
+
+    def tearDown(self):
+        plt.close("all")
+
+    def _row(self, t, kind, p):
+        d = np.hypot(t["x"] - p[0], t["y"] - p[1])
+        sel = (t["kind"] == kind) & (d < 0.5)
+        self.assertEqual(int(sel.sum()), 1, (kind, p))
+        return t[sel][0]
+
+    def testVerdicts(self):
+        t = sp.compare_passes(self.run, plot=False)
+        self.assertEqual(int(np.sum(t["kind"] == "lost")), 3)         # stars 3, 9 and the fake
+        self.assertEqual(int(np.sum(t["kind"] == "gained")), 1)       # star 7
+        r = self._row(t, "lost", self.xy[3])
+        self.assertTrue(r["verdict"].startswith("LOST"))
+        self.assertAlmostEqual(r["left_frac"], 1.0, delta=0.15)       # all its flux is in the residual
+        self.assertIn("blocked", self._row(t, "lost", self.xy[9])["verdict"])
+        r = self._row(t, "lost", self.fake)
+        self.assertIn("spurious", r["verdict"])
+        self.assertLess(abs(r["left_frac"]), 0.2)
+        self.assertIn("missing from the residual", self._row(t, "gained", self.xy[7])["verdict"])
+
+    def testPlotAndErrors(self):
+        with tempfile.TemporaryDirectory() as d:
+            png = os.path.join(d, "cmp.png")
+            sp.compare_passes(self.run, out=png)
+            self.assertGreater(os.path.getsize(png), 1000)
+        with self.assertRaises(ValueError):
+            sp.compare_passes(types.SimpleNamespace(outer_history=self.run.outer_history[:1]))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -17,8 +17,9 @@ pairs and small galaxies are handled by dedicated tests.
 User guide
 ==========
 
-``doc/meas_crowd_pipeline_guide.docx`` (Word): the pipeline flow, key parameters, how-to recipes
-for every plot and how to run and check the unit tests.
+``doc/pipeline_guide.md``: the pipeline flow, key parameters, how-to recipes for every plot and
+how to run and check the unit tests.  ``doc/catalog_columns.md``: the output catalogue's columns
+and units.
 
 Modules
 =======

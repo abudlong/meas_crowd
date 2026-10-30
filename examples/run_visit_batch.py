@@ -44,7 +44,7 @@ def main():
     plt.show = save_all
 
     print(f"meas_crowd driver {crowd.pipeline.__version__}; C++ kernels: {crowd.HAVE_CXX}")
-    cfg = crowd.make_config(crowd.V5_TESTING_CONFIG)
+    cfg = crowd.make_config(crowd.CROWDED_FIELD_CONFIG)
     sess = crowd.prepare_session(visit=args.visit, detector=args.detector, cutouts=args.cutouts,
                                  pad=args.pad, psf_source="visit", repo=args.repo,
                                  collection=args.collection)

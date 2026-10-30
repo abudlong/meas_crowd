@@ -9,7 +9,7 @@ Typical use (a notebook, with the Rubin stack set up)::
 
     import lsst.meas.crowd as crowd
 
-    cfg = crowd.make_config(crowd.V5_TESTING_CONFIG)
+    cfg = crowd.make_config(crowd.CROWDED_FIELD_CONFIG)
     sess = crowd.prepare_session(visit=..., detector=..., cutouts=["1000,1000,300"],
                                  pad=20, psf_source="visit")
     crowd.attach_gaia(sess)
@@ -42,16 +42,17 @@ _API = {
     "plotting": [
         "plot_final_comparison", "plot_residual_gray", "show_star_zooms", "show_cross_sections",
         "show_bright_star_stack", "star_residual_table", "core_excess_diagnostic",
-        "compare_runs",
+        "compare_runs", "plot_gaia_comparison",
     ],
-    "photometry": ["measure_photometry", "flux_to_mag", "zero_point_from_run",
+    "photometry": ["measure_photometry", "compare_with_gaia", "flux_to_mag", "zero_point_from_run",
                    "aperture_flux", "psf_flux_errors"],
     "sourcePlots": ["plot_source_cutouts", "source_cutout_data"],
     "detector": ["tile_specs", "fit_tiles", "stitch_tiles", "load_mosaic", "load_tile",
                  "plot_tile", "plot_detector", "save_tile_products"],
     "stagePlots": ["psf_star_positions", "show_psf_stars", "show_backgrounds", "show_rounds",
-                   "show_linked_source_pages"],
-    "session": ["make_config", "prepare_session", "V5_TESTING_CONFIG", "robust_stats",
+                   "show_linked_source_pages", "compare_passes"],
+    "session": ["make_config", "prepare_session", "CROWDED_FIELD_CONFIG", "V5_TESTING_CONFIG",
+                "robust_stats",
                 "save_run", "Session", "CutoutRun"],
     "fastKernels": ["FastPsf", "HAVE_CXX"],
 }

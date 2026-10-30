@@ -1,7 +1,23 @@
 # This file is part of meas_crowd.
 #
 # Developed for the LSST Data Management System.
-# See the COPYRIGHT file at the top-level directory of this distribution.
+# This product includes software developed by the LSST Project
+# (https://www.lsst.org).
+# See the COPYRIGHT file at the top-level directory of this distribution
+# for details of code ownership.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """A small synthetic finished run (same structure as run_session_gaia's CutoutRun) for tests of
 the plotting / photometry / diagnostic functions."""
@@ -39,12 +55,12 @@ def make_run(n_side=4, sigma=2.0, half=15, shape=(120, 130), x0=1000, y0=2000, s
     psf = lsstStubs.FakePsf(lsstStubs.gaussian_kernel(ms, half))
     exp = lsstStubs.FakeExposure(data, var, psf=psf, x0=x0, y0=y0, photo_scale=photo_scale)
     from lsst.meas.crowd import pipeline
-    S = pipeline._state(xy, seed=True)
+    S = pipeline._state(xy, from_gaia=True)
     S["g"][:] = 20.0
     good = np.ones(shape, bool)
     fit = dict(amps=amps, model_full=model, good=good, variance=var, comps=comps)
     res = dict(S=S, snaps=[dict(fit=fit)], model_full=model, amps=amps.copy(),
-               peaks=[tuple(p) for p in xy], bright_corr={}, is_seed=S["seed"].copy())
+               peaks=[tuple(p) for p in xy], bright_corr={}, is_gaia=S["from_gaia"].copy())
     final = dict(exposure=exp, result=res, psf=psf, poisson_k=0.0, model_err=0.0)
     return types.SimpleNamespace(name="synthetic", outer_history=[final], bad_bitmask=4,
                                  interior_bbox=exp.getBBox(), config=dict(sat_zone_fwhm=0),

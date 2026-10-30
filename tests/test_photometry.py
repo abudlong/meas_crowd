@@ -1,7 +1,23 @@
 # This file is part of meas_crowd.
 #
 # Developed for the LSST Data Management System.
-# See the COPYRIGHT file at the top-level directory of this distribution.
+# This product includes software developed by the LSST Project
+# (https://www.lsst.org).
+# See the COPYRIGHT file at the top-level directory of this distribution
+# for details of code ownership.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """Tests of the photometry helpers (magnitudes, apertures, Fisher errors)."""
 
@@ -174,7 +190,7 @@ class GaiaComparisonTestCase(unittest.TestCase):
         phot, gaia = self._tables()
         t = ph.compare_with_gaia(phot, gaia, verbose=False)
         np.testing.assert_array_equal(t["gaia_match"], [True, True, True, True, False])
-        self.assertEqual(list(t["gaia_match_type"]), ["seed", "seed", "seed", "position", ""])
+        self.assertEqual(list(t["gaia_match_type"]), ["linked", "linked", "linked", "position", ""])
         np.testing.assert_array_equal(t["gaia_source_id"], [100, 101, 102, 103, -1])
         np.testing.assert_allclose(t["gaia_dx"][:3], 0.1, atol=1e-9)
         np.testing.assert_allclose(t["gaia_dra"][:3], 2.0, atol=1e-3)       # mas, with cos(dec)

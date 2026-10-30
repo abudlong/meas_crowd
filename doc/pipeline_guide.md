@@ -1,7 +1,8 @@
 # meas_crowd: pipeline guide
 
 How the pipeline works, its key options, a recipe for every diagnostic plot, and how to run and
-check the unit tests.  The output catalogue's columns are described in
+check the unit tests.  Every step's details, reasons and decision rules are in
+[algorithm.md](algorithm.md).  The output catalogue's columns are described in
 [catalog_columns.md](catalog_columns.md), every function's parameters and return values in
 [function_reference.md](function_reference.md).
 
@@ -17,32 +18,56 @@ positions. It alternates between finding sources and improving the PSF and backg
 neither changes. It runs on one cutout at a time. A whole detector is a grid of cutouts (tiles)
 whose results are stitched back together.
 
-![Pipeline flow: setup, Gaia seeds and preparation feed the outer pass (inner loop, end-of-pass tests, checks); if sources or PSF changed by 1% or more the background and PSF are refit and the pass repeats, otherwise the outputs are written; a whole-detector run repeats steps 1 to 7 for every tile](images/pipeline_flow.png)
+![Pipeline flow at a glance: setup, Gaia catalogue and preparation feed the outer pass (inner loop, clean-up, noise and PSF-error check); if sources or PSF changed by 1% or more, the background and PSF are refit and the pass repeats, otherwise the outputs are written; a whole-detector run repeats steps 1 to 7 for every tile](images/pipeline_flow.svg)
 
 Steps 4–6 repeat until the source count and the PSF each change by less than 1%; a
-whole-detector run repeats steps 1–7 for every tile.
+whole-detector run repeats steps 1–7 for every tile.  The same flow with a description of every
+step:
+
+<details>
+<summary><b>Detailed flow diagram</b> (click to open)</summary>
+
+![Detailed pipeline flow: each step with what it does, the inner-loop sub-steps a to e, the clean-up and the noise and PSF-error check](images/pipeline_flow_detailed.svg)
+
+</details>
 
 1. **Setup** (`prepare_session`): loads the `visit_image` from the Butler. Cuts out each
    requested box grown by `pad` px, before any background subtraction. Builds the bad-pixel mask
    (SAT, CR, BAD, INTRP, EDGE) and sets up the detector-level PSF, either the visit's own PSF or a
    fresh refit (see [Key parameters](#key-parameters-and-options)).
-2. **Gaia seeds** (`attach_gaia`, `select_seeds`): Gaia DR3 sources over the detector, moved to
+2. **Gaia catalogue** (`attach_gaia`, `select_gaia_sources`): Gaia DR3 sources over the detector, moved to
    the visit epoch with their proper motions and cached on disk. Sources up to 1.5 FWHM outside a
    cutout are kept, so stars just over the edge are modelled.
-3. **Preparation** (start of `run_seeded_pipeline`): grows the saturated mask by 2 px and marks
+3. **Preparation** (start of `run_adaptive_pipeline`): grows the saturated mask by 2 px and marks
    saturated-star zones. Extends the PSF kernel from 41 to 81 px with a Moffat wing and smooths
    its outer part. In refit mode it subtracts the detector-level background. It also removes a
    global Gaia-vs-image offset.
-4. **Outer pass** (repeated): one full fit with a fixed PSF and background.
-    1. **Inner loop** (`run_inner_seeded`): fit the current sources, then detect in the residual,
-       add, joint-fit, refine centroids and clean up. The detection threshold steps down (from 5σ
-       with Gaia seeds to a 3σ floor; later passes start at the floor) until the residual has no
-       significant excess.
-    2. **End-of-pass tests**: per-star corrections for bright and saturated stars, and removal of
-       fake sources in halos and rings (these positions are blocked from re-detection in later
-       passes). Then a joint position polish, a test for unresolved pairs, and a test for small
-       galaxies (elliptical model).
-    3. **Checks**: measures the photon noise the variance plane misses and the PSF model error.
+4. **Outer pass** (repeated): one full fit with the PSF and background held fixed.
+    1. **Inner loop** (`run_inner_adaptive`), repeated until the residual is clean:
+        1. detect peaks in the residual above the current threshold;
+        2. add them, skipping edges, duplicates and positions already rejected as fakes;
+        3. fit all sources jointly (non-negative least squares); bright and saturated stars get
+           extra correction terms (shift, width, core and halo profile) in every fit;
+        4. refine the centroids, merge close pairs, and drop sources below `min_snr` or with a
+           bad shape (too-broad ones are kept as small galaxies);
+        5. residual check: are there significantly more positive than negative residual peaks?
+           If yes, lower the threshold (from 5σ when starting from Gaia to a 3σ floor; later passes start
+           at the floor) and repeat; if no, or nothing changes any more, stop.
+    2. **Clean-up at the end of the pass**: remove faint non-Gaia sources that are part of a bright
+       star's halo or ring pattern (the halo and ring checks; these positions are not detected
+       again in later passes), polish all positions together, then test for unresolved pairs
+       (add a second source) and small galaxies (elliptical model).
+    3. **Noise and PSF-error check**: two measurements made on the finished pass.
+        - *Missing photon noise* (`auto_poisson`): if the residual around bright stars is
+          pixel-to-pixel noise larger than the variance plane predicts, the variance plane is
+          missing the stars' own photon noise.  The pipeline then adds k × model to the variance
+          for the following fits, so bright stars are not over-weighted and their noise is not
+          mistaken for new sources.
+        - *PSF model error* (`model_err_measure`): measures ε, how far the PSF model is from the
+          real stars as a fraction of the model in each pixel.  It is stored with the pass
+          (`model_err`) and used by the residual/σ plots, which divide by
+          sqrt(variance + (ε × model)²).  The fit itself keeps `sys_frac` unless
+          `fit_sys_from_data=True`.
 5. **Convergence test**: stop when the source count changed by less than 1% and the PSF by less
    than 1% (after at least 2 passes and at most `max_outer`). Otherwise go to step 6.
 6. **Refit for the next pass**: re-derive the background from the raw cutout with this pass's
@@ -57,6 +82,12 @@ whole-detector run repeats steps 1–7 for every tile.
    `detector_mosaic.fits` (DATA, MODEL, RESIDUAL, VARIANCE, BAD, TILE) and one catalogue in which
    each source appears once.
 
+Why each step is there and the exact rules behind its decisions (thresholds, what is kept or
+removed, and when) are in [algorithm.md](algorithm.md).
+
+The diagrams are drawn by `doc/images/make_flow_diagrams.py`; edit the text there and rerun it
+to change them.
+
 The DATA image in every output is the image the fit used, after background subtraction, so
 residual = data − model.
 
@@ -65,7 +96,7 @@ residual = data − model.
 The most important choice is the PSF source; everything else has a working default in
 `CROWDED_FIELD_CONFIG` (formerly `V5_TESTING_CONFIG`, which still works). Options are passed to
 `make_config(...)` or as keyword overrides to `run_session_gaia(sess, cfg, max_outer=3, ...)`;
-an unknown name raises an error. `crowd.SEEDED_DEFAULTS` lists every option with a comment, and
+an unknown name raises an error. `crowd.PIPELINE_DEFAULTS` lists every option with a comment, and
 `crowd.show_config(cfg, diff_only=True)` prints what differs from the defaults.
 
 **PSF source** (`prepare_session(..., psf_source=...)`, also `fit_tiles` and the
@@ -91,11 +122,11 @@ In both cases the PSF is then refined inside each cutout between passes (`refit_
 | `min_outer`, `max_outer` | 2, 6 (CLI 3) | Number of outer passes |
 | `outer_growth_tol`, `psf_tol` | 0.01, 0.01 | Convergence: change in source count and in the PSF kernel |
 | `max_inner` | 30 (CLI 15) | Cap on inner iterations per pass |
-| `seed_threshold_start` | 5.0 σ | First detection threshold when Gaia seeds are used |
-| `inner_kwargs` | start 8, step −1, floor 3 σ | Detection thresholds without seeds and the floor |
+| `gaia_threshold_start` | 5.0 σ | First detection threshold when the fit starts from Gaia positions |
+| `inner_kwargs` | start 8, step −1, floor 3 σ | Detection thresholds without Gaia, and the floor |
 | `min_snr` | 3.0 | Minimum S/N to keep a source |
-| `gmag_max` (`run_session_gaia`) | None | Seed only Gaia stars brighter than this G magnitude |
-| `fit_gaia_offset`, `seed_max_drift_px` | True, 1.5 px | Remove a global WCS offset; how far a seed may move |
+| `gmag_max` (`run_session_gaia`) | None | Start only from Gaia stars brighter than this G magnitude |
+| `fit_gaia_offset`, `gaia_max_drift_px` | True, 1.5 px | Remove a global WCS offset; how far a Gaia source may move from its Gaia position |
 | `subtract_initial_bg` | True | Subtract `session.bgImage` in pass 1 (refit mode only) |
 | `bg_mode` | `"plane"` | Background refit between passes: `"plane"` (sigma-clipped tilted plane), `"constant"`, `"spline"` (`SubtractBackgroundTask` surface; can swing in the corners of a small, heavily masked cutout) or `"none"` |
 | `bg_bin_size`, `bg_sat_mask_fwhm` | 32 px, 6 FWHM | Spline background grid; mask around saturated stars |
@@ -146,7 +177,7 @@ cfg = crowd.make_config(crowd.CROWDED_FIELD_CONFIG)
 sess = crowd.prepare_session(VISIT, DET, cutouts=["1000,1000,300", "2500,2000,300"], pad=20,
                              psf_source="visit",        # or "refit"
                              visit_image=visit_image)
-crowd.attach_gaia(sess, visit_image=visit_image)          # Gaia DR3 seeds, cached in gaia_cache/
+crowd.attach_gaia(sess, visit_image=visit_image)          # Gaia DR3 catalogue, cached in gaia_cache/
 runs = crowd.run_session_gaia(sess, cfg, out_dir="results", max_outer=3, max_inner=15)
 run = runs[next(iter(runs))]
 crowd.report(run)                                         # what each pass did

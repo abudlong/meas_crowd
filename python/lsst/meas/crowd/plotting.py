@@ -1,7 +1,23 @@
 # This file is part of meas_crowd.
 #
 # Developed for the LSST Data Management System.
-# See the COPYRIGHT file at the top-level directory of this distribution.
+# This product includes software developed by the LSST Project
+# (https://www.lsst.org).
+# See the COPYRIGHT file at the top-level directory of this distribution
+# for details of code ownership.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """Diagnostic plots of a finished run.
 
@@ -129,7 +145,7 @@ def show_star_zooms(run, stars=None, n=8, half=12, sigma="model", grayscale=Fals
                     min_snr=30.0, cuts=False):
     """Show zooms of individual stars: data | model | residual | residual/sigma.
 
-    Every source in the window is marked (o = Gaia-seeded, x = found in the residual), with a line
+    Every source in the window is marked (o = started from Gaia, x = found in the residual), with a line
     from each Gaia source's catalogue position (+) to its fitted position.  Prints each star's
     neighbours (offset, flux ratio, Gaia or not, distance from its Gaia position).
 
@@ -216,7 +232,7 @@ def show_star_zooms(run, stars=None, n=8, half=12, sigma="model", grayscale=Fals
             mc = "w" if c < 2 else ("#00b4d8" if grayscale else "k")
             for k in near:
                 px, py = xy[k]
-                if S["seed"][k]:
+                if S["from_gaia"][k]:
                     ax.plot(px, py, "o", mfc="none", mec=mc, ms=9 if k == j else 6, mew=1.2)
                     rx, ry = S["ref"][k]
                     if np.isfinite(rx):
@@ -230,19 +246,19 @@ def show_star_zooms(run, stars=None, n=8, half=12, sigma="model", grayscale=Fals
             ax.set_title(ttl, fontsize=9)
         row[0].set_ylabel(f"({x:.0f}, {y:.0f})\nflux {amps[j]:.3g}" +
                           (f"\nchi2 {chi:.2f}" if np.isfinite(chi) else ""), fontsize=9)
-        print(f"star ({x:.1f}, {y:.1f})  flux {amps[j]:.3g}  {'Gaia' if S['seed'][j] else 'non-Gaia'}"
+        print(f"star ({x:.1f}, {y:.1f})  flux {amps[j]:.3g}  {'Gaia' if S['from_gaia'][j] else 'non-Gaia'}"
               + (f"  chi2 {chi:.2f}" if np.isfinite(chi) else "")
               + (f"  [{np.hypot(*(xy[j] - S['ref'][j])):.2f}px from its Gaia position]"
-                 if S["seed"][j] and np.isfinite(S["ref"][j, 0]) else ""))
+                 if S["from_gaia"][j] and np.isfinite(S["ref"][j, 0]) else ""))
         for k in sorted(near, key=lambda k: np.hypot(*(xy[k] - xy[j]))):
             if k == j:
                 continue
             dx, dy = xy[k] - xy[j]
             off = (f", {np.hypot(*(xy[k] - S['ref'][k])):.2f}px from its Gaia position"
-                   if S["seed"][k] and np.isfinite(S["ref"][k, 0]) else "")
+                   if S["from_gaia"][k] and np.isfinite(S["ref"][k, 0]) else "")
             print(f"    neighbour dx {dx:+6.1f} dy {dy:+6.1f}  flux ratio {amps[k] / max(amps[j], 1e-30):6.3f}"
-                  f"  {'Gaia' if S['seed'][k] else 'found in residual'}{off}")
-    fig.suptitle("o = Gaia-seeded source (+ = its Gaia position, line = fitted shift), "
+                  f"  {'Gaia' if S['from_gaia'][k] else 'found in residual'}{off}")
+    fig.suptitle("o = source started from Gaia (+ = its Gaia position, line = fitted shift), "
                  "x = source found in the residual; magenta = bad, orange = near-saturated core",
                  fontsize=10)
     plt.tight_layout()
@@ -386,9 +402,9 @@ def show_cross_sections(run, stars=None, n=4, half=15, width=1, sigma="model", m
             chi_c = float(np.mean((r_[good_] / sg[good_]) ** 2)) if good_.any() else np.nan
             a2.text(0.01, 0.95, f"χ²/pt = {chi_c:.2f}", transform=a2.transAxes, va="top", fontsize=8)
             for k, off in other:
-                ls = ":" if S["seed"][k] else "--"
+                ls = ":" if S["from_gaia"][k] else "--"
                 for a in (a1, a2):
-                    a.axvline(off, color="C0" if S["seed"][k] else "C3", ls=ls, lw=0.9, alpha=0.8)
+                    a.axvline(off, color="C0" if S["from_gaia"][k] else "C3", ls=ls, lw=0.9, alpha=0.8)
             a1.set_title(ttl + (f"  (width {2 * w2 + 1} px)" if name != "r" and w2 else ""), fontsize=9)
             a1.tick_params(labelbottom=False)
             a2.set_xlabel("offset from star centre [px]" if name != "r" else "radius [px]", fontsize=8)
@@ -771,7 +787,7 @@ def star_residual_table(run, min_snr=30.0, r_fwhm=2.5, plot=True, n_worst=10):
     for i in o[:n_worst]:
         j = out["idx"][i]
         print(f"    {out['x'][i]:8.1f} {out['y'][i]:8.1f} {out['flux'][i]:9.3g} {out['snr'][i]:6.0f} "
-              f"{out['chi2_final'][i]:6.2f} {100 * mis[i]:8.2f}% {int(out['n_nb'][i]):5d} {'yes' if S['seed'][j] else 'no':>5s}")
+              f"{out['chi2_final'][i]:6.2f} {100 * mis[i]:8.2f}% {int(out['n_nb'][i]):5d} {'yes' if S['from_gaia'][j] else 'no':>5s}")
     out.update(correlations=corr, core_vs_flux=(float(rho_core), float(p_core)),
                outliers=out["idx"][outl], verdict=verdict)
     if plot:
@@ -1067,7 +1083,7 @@ def plot_gaia_comparison(phot, min_snr=20.0, figsize=(22, 5.5), out=None):
     unit = "mas" if sky else "px"
     nd = 1 if sky else 3                       # decimals of the offsets
     dm = np.asarray(t["gaia_dmag_rel"], float)
-    seed = np.asarray(t["gaia_match_type"]) == "seed"
+    linked = np.asarray(t["gaia_match_type"]) == "linked"
 
     def rstd(v):
         v = v[np.isfinite(v)]
@@ -1076,9 +1092,10 @@ def plot_gaia_comparison(phot, min_snr=20.0, figsize=(22, 5.5), out=None):
     fig, ax = plt.subplots(1, 4, figsize=figsize)
     for a, xv, xl in ((ax[0], np.asarray(t["gaia_G"], float), "Gaia G [mag]"),
                       (ax[1], np.asarray(t["gaia_bp_rp"], float), "Gaia BP - RP [mag]")):
-        a.scatter(xv[seed], dm[seed], s=8, c="C0", label=f"Gaia-seeded ({int(seed.sum())})")
-        a.scatter(xv[~seed], dm[~seed], s=14, c="C3", marker="x",
-                  label=f"matched by position ({int((~seed).sum())})")
+        a.scatter(xv[linked], dm[linked], s=8, c="C0",
+                  label=f"fitted from the Gaia position ({int(linked.sum())})")
+        a.scatter(xv[~linked], dm[~linked], s=14, c="C3", marker="x",
+                  label=f"matched by position ({int((~linked).sum())})")
         a.axhline(0, color="k", lw=0.8)
         a.set_xlabel(xl)
         a.set_ylabel("psf_mag - G - offset [mag]")

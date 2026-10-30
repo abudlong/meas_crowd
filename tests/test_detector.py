@@ -1,7 +1,23 @@
 # This file is part of meas_crowd.
 #
 # Developed for the LSST Data Management System.
-# See the COPYRIGHT file at the top-level directory of this distribution.
+# This product includes software developed by the LSST Project
+# (https://www.lsst.org).
+# See the COPYRIGHT file at the top-level directory of this distribution
+# for details of code ownership.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """Tests of the whole-detector tiling, per-tile products, stitching and plotting.  The per-tile
 fit itself is replaced by a perfect synthetic model (it needs the stack); everything around it
@@ -92,7 +108,7 @@ class _Synthetic:
         xy, fl = self.xy[inside], self.flux[inside]
         comps = [lsstStubs.gaussian_comp(shape, x, y, self.sigma, self.half, x0, y0) for x, y in xy]
         model = self.truth[y0:y0 + shape[0], x0:x0 + shape[1]].copy()
-        S = pipeline._state(xy, seed=True)
+        S = pipeline._state(xy, from_gaia=True)
         fit = dict(amps=fl, model_full=model, good=np.ones(shape, bool), variance=exp.variance.array,
                    comps=comps)
         res = dict(S=S, snaps=[dict(fit=fit)], model_full=model, amps=fl.copy(), bright_corr={},

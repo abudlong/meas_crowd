@@ -1,7 +1,23 @@
 # This file is part of meas_crowd.
 #
 # Developed for the LSST Data Management System.
-# See the COPYRIGHT file at the top-level directory of this distribution.
+# This product includes software developed by the LSST Project
+# (https://www.lsst.org).
+# See the COPYRIGHT file at the top-level directory of this distribution
+# for details of code ownership.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """Plots of the pipeline's intermediate stages.
 
@@ -407,8 +423,8 @@ def _pass_sources(h):
     amps = np.asarray(res["snaps"][-1]["fit"]["amps"], float)
     peak = float(h["psf"].computeKernelImage(exp.getBBox().getCenter()).array.max())
     noise = float(np.sqrt(np.nanmedian(exp.variance.array)))
-    seed = np.asarray(res["S"].get("seed", np.zeros(len(xy), bool)), bool)
-    return xy, amps, amps * peak / noise, seed
+    from_gaia = np.asarray(res["S"].get("from_gaia", np.zeros(len(xy), bool)), bool)
+    return xy, amps, amps * peak / noise, from_gaia
 
 
 def _matched_flux(resid, var, good, kernel, x, y, x0, y0):

@@ -1,9 +1,25 @@
 # This file is part of meas_crowd.
 #
 # Developed for the LSST Data Management System.
-# See the COPYRIGHT file at the top-level directory of this distribution.
+# This product includes software developed by the LSST Project
+# (https://www.lsst.org).
+# See the COPYRIGHT file at the top-level directory of this distribution
+# for details of code ownership.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Gaia-seeded, adaptive, iterative joint PSF photometry in crowded fields.
+"""Adaptive, iterative joint PSF photometry in crowded fields, starting from Gaia positions.
 
 Typical use (a notebook, with the Rubin stack set up)::
 
@@ -33,12 +49,12 @@ except ImportError:
 # public name -> submodule that defines it
 _API = {
     "pipeline": [
-        "SEEDED_DEFAULTS", "run_session_gaia", "run_cutout_gaia", "run_seeded_pipeline",
-        "run_inner_seeded", "report", "check_bright_neighbours", "diagnose_residual",
+        "PIPELINE_DEFAULTS", "run_session_gaia", "run_cutout_gaia", "run_adaptive_pipeline",
+        "run_inner_adaptive", "report", "check_bright_neighbours", "diagnose_residual",
         "try_elliptical", "profile", "enable_speedups", "disable_speedups",
         "clear_stamp_cache", "smooth_psf_kernel", "unmodeled_near_mask",
     ],
-    "gaiaCatalog": ["attach_gaia", "gaia_catalog", "select_seeds", "visit_epoch"],
+    "gaiaCatalog": ["attach_gaia", "gaia_catalog", "select_gaia_sources", "visit_epoch"],
     "plotting": [
         "plot_final_comparison", "plot_residual_gray", "show_star_zooms", "show_cross_sections",
         "show_bright_star_stack", "star_residual_table", "core_excess_diagnostic",

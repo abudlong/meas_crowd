@@ -2,7 +2,23 @@
 # This file is part of meas_crowd.
 #
 # Developed for the LSST Data Management System.
-# See the COPYRIGHT file at the top-level directory of this distribution.
+# This product includes software developed by the LSST Project
+# (https://www.lsst.org).
+# See the COPYRIGHT file at the top-level directory of this distribution
+# for details of code ownership.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """Write doc/function_reference.md from the package's numpydoc docstrings.
 
@@ -28,10 +44,10 @@ OUT = os.path.join(HERE, "function_reference.md")
 # (module, one-line role), in reading order: the driver and user-facing modules first, the
 # original notebook libraries last
 MODULES = [
-    ("pipeline", "the driver: run the Gaia-seeded pipeline on cutouts, inner / outer loops, "
+    ("pipeline", "the driver: run the pipeline on cutouts from Gaia starting positions, inner / outer loops, "
                  "PSF refinement, diagnostics"),
     ("session", "load a visit, cut out regions, set up the PSF; configuration; saving runs"),
-    ("gaiaCatalog", "the Gaia catalogue and the seeds of each cutout"),
+    ("gaiaCatalog", "the Gaia catalogue and the starting positions of each cutout"),
     ("photometry", "PSF and aperture photometry, errors, the Gaia comparison"),
     ("plotting", "final data / model / residual plots and residual diagnostics"),
     ("stagePlots", "plots of the intermediate stages and pass-to-pass comparison"),
@@ -91,7 +107,8 @@ def _public(mod):
     """Return the module's public functions and classes in source order."""
     items = [(n, o) for n, o in vars(mod).items()
              if not n.startswith("_") and getattr(o, "__module__", None) == mod.__name__
-             and (inspect.isfunction(o) or inspect.isclass(o))]
+             and (inspect.isfunction(o) or inspect.isclass(o))
+             and o.__name__ == n]                  # skip aliases kept for old names
     return sorted(items, key=lambda t: inspect.getsourcelines(t[1])[1])
 
 

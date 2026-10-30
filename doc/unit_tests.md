@@ -4,7 +4,7 @@ Every unit test in `tests/`: what it checks, what it feeds in, and what it must 
 pass.  How to run them and read the results is in the
 [pipeline guide](pipeline_guide.md#unit-tests-running-them-and-checking-the-results).
 
-The suite has **97 tests in 9 files**.  Without the Rubin stack 95 run and the 2 in
+The suite has **98 tests in 9 files**.  Without the Rubin stack 96 run and the 2 in
 `test_fastStampsStack.py` are skipped; `testCxxEqualsNumpy` is also skipped if the C++ extension
 was not built.  `test_docstrings.py` checks that this page lists every test and that the
 [function reference](function_reference.md) is up to date.
@@ -87,7 +87,7 @@ Magnitudes, aperture photometry, flux errors, the photometry catalogue and the G
 | `FisherErrorTestCase.testErrorsMatchScatter` | The Fisher errors are the real scatter | two overlapping sources, 400 noise realisations fitted by least squares | standard deviation of the fitted fluxes = predicted error (within 12 %) |
 | `MeasurePhotometryTestCase.testSyntheticRun` | The full photometry catalogue | `fakeRun` with 25 stars | 25 rows; (PSF flux − truth) / error has mean < 1 and std < 1.6; ap − PSF median < 0.01 mag for S/N > 50; `psf_mag` = 31.4 − 2.5 log10(flux) |
 | `MeasurePhotometryTestCase.testPhotoCalib` | Magnitudes use the PhotoCalib | `fakeRun` with 1 count = 2 nJy | `psf_mag` = 31.4 − 2.5 log10(2 × flux) |
-| `GaiaComparisonTestCase.testMatchingAndDifferences` | Gaia matching and every difference column | 5 sources (3 Gaia-seeded, 1 within 0.45 px of a Gaia star, 1 unmatched), 6 Gaia stars; known offsets 0.1 px, 2 mas in RA, 1 mas in Dec, +0.3 mag | match flags and types (seed / position / none), source ids, `gaia_dx` = 0.1, `gaia_dra` = 2, `gaia_ddec` = 1, `gaia_sep` = √5 mas, offset 0.3, `gaia_dmag_rel` = 0, flux ratio 1, BP − RP 0.7, 1 unmatched Gaia star; input table unchanged |
+| `GaiaComparisonTestCase.testMatchingAndDifferences` | Gaia matching and every difference column | 5 sources (3 started from Gaia, 1 within 0.45 px of a Gaia star, 1 unmatched), 6 Gaia stars; known offsets 0.1 px, 2 mas in RA, 1 mas in Dec, +0.3 mag | match flags and types (linked / position / none), source ids, `gaia_dx` = 0.1, `gaia_dra` = 2, `gaia_ddec` = 1, `gaia_sep` = √5 mas, offset 0.3, `gaia_dmag_rel` = 0, flux ratio 1, BP − RP 0.7, 1 unmatched Gaia star; input table unchanged |
 | `GaiaComparisonTestCase.testRadiusAndNoSky` | Match radius; table without sky coordinates | the same, radius 0.3 px, no `ra`/`dec` | the 0.45 px source is not matched; no mas columns |
 | `GaiaComparisonTestCase.testFromSyntheticRun` | Gaia comparison through `measure_photometry` | `fakeRun` + Gaia table with G = true magnitude − 0.2 | every source matched, offset 0.2 ± 0.01 mag, flux-ratio scatter < 2 % |
 | `GaiaComparisonTestCase.testRunGaiaUsedByDefault` | The run's own Gaia table is used | `fakeRun` with `run.gaia` set | Gaia columns present by default, absent with `gaia=False` |
@@ -122,7 +122,7 @@ The joint fit itself is replaced by a plain least-squares fit where the test nee
 | `FastStampSwitchTestCase.testSwitchOff` | `fast_stamps=False` | switch off | fast path off |
 | `BackgroundLowFitTestCase.testPlaneRecovered` | Plane background refit | a tilted sky plane with noise, a masked star and an unmasked 80-count blob | plane recovered to 0.15 counts; subtracted in place |
 | `BackgroundLowFitTestCase.testConstantAndNone` | Constant and no refit; bad mode | the same image | constant = 4.0 ± 0.3 and flat; "none" subtracts nothing; "spline" here raises ValueError |
-| `BackgroundLowFitTestCase.testDefaultIsPlane` | The default | `SEEDED_DEFAULTS` | `bg_mode` is "plane" |
+| `BackgroundLowFitTestCase.testDefaultIsPlane` | The default | `PIPELINE_DEFAULTS` | `bg_mode` is "plane" |
 
 ## test_diagnostics.py
 
@@ -201,4 +201,5 @@ real code.
 | --- | --- | --- | --- |
 | `DocstringTestCase.testNumpydoc` | Every public function, class and method has an LSST (numpydoc) docstring | all 11 modules | numpydoc's validator reports no problems (Rubin's usual exemptions; skipped if numpydoc is not installed) |
 | `FunctionReferenceTestCase.testFunctionReferenceUpToDate` | The [function reference](function_reference.md) matches the docstrings | `doc/make_function_reference.py` run in memory | the generated page equals `doc/function_reference.md` (skipped if numpydoc is not installed) |
+| `LicenceHeaderTestCase.testEverySourceFileHasTheLicenceHeader` | Every source file carries the LSST GPLv3 licence header | all `.py`, `.cc`, `.h`, `.sh` files (except the two `lsst` namespace stubs) | each starts with "This file is part of meas_crowd." and the GPL notice |
 | `UnitTestDocTestCase.testUnitTestDocListsEveryTest` | This page is complete | the test methods of every `tests/test_*.py` | every `Class.method` appears on this page |

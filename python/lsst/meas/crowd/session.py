@@ -1,7 +1,23 @@
 # This file is part of meas_crowd.
 #
 # Developed for the LSST Data Management System.
-# See the COPYRIGHT file at the top-level directory of this distribution.
+# This product includes software developed by the LSST Project
+# (https://www.lsst.org).
+# See the COPYRIGHT file at the top-level directory of this distribution
+# for details of code ownership.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 # Vendored from the original notebook module cutout_notebook.py (behaviour unchanged; only the
 # imports of the sibling modules were made package-relative).
@@ -558,7 +574,7 @@ class CutoutRun:
     config : `dict`
         Configuration used.
     gaia : `astropy.table.Table`, optional
-        The Gaia catalogue the run was seeded from (used for the Gaia comparison columns).
+        The Gaia catalogue whose positions started the run (used for the Gaia comparison columns).
     photometry : `astropy.table.Table`, optional
         The photometry catalogue (see `lsst.meas.crowd.photometry.measure_photometry`), made at
         the end of the run and written by `save_run` as ``photometry.fits``.

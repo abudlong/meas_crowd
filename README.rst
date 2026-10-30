@@ -2,7 +2,7 @@
 meas_crowd
 ##########
 
-Gaia-seeded, adaptive, iterative joint PSF photometry for crowded Rubin/LSST fields.
+Adaptive, iterative joint PSF photometry for crowded Rubin/LSST fields, starting from Gaia positions.
 
 The fit starts from the Gaia DR3 sources that fall on a visit cutout, fits all sources jointly
 (non-negative least squares), subtracts the model, detects new sources in the residual and
@@ -17,6 +17,8 @@ into one mosaic and one catalogue.
 
 * `doc/pipeline_guide.md <doc/pipeline_guide.md>`_: the pipeline flow and the key parameters, a
   recipe for every plot, and how to run and check the unit tests;
+* `doc/algorithm.md <doc/algorithm.md>`_: how every step works, why it is there, and the exact
+  decision rules and thresholds;
 * `doc/catalog_columns.md <doc/catalog_columns.md>`_: every column of the output catalogue and
   its units.
 * `doc/function_reference.md <doc/function_reference.md>`_: every public function and class, its
@@ -30,7 +32,8 @@ Pipeline at a glance
 
 1. **Setup** (``prepare_session``): load the ``visit_image``, cut out each box grown by ``pad`` px,
    build the bad-pixel mask and the detector-level PSF (``psf_source="visit"`` or ``"refit"``).
-2. **Gaia seeds** (``attach_gaia``): Gaia DR3 at the visit epoch, cached on disk.
+2. **Gaia catalogue** (``attach_gaia``): Gaia DR3 at the visit epoch, cached on disk; its stars give
+   the fit its starting positions.
 3. **Preparation**: grow the saturated mask, extend the PSF wings to 81 px, remove a global
    Gaia-vs-image offset.
 4. **Outer pass**: the adaptive inner loop (detect, add, joint fit, refine, clean; the threshold
@@ -62,7 +65,7 @@ The package follows the Rubin DM layout (``sconsUtils`` + ``eups``)::
     python/lsst/meas/crowd/
         __init__.py               public API (submodules load on first use)
         pipeline.py               driver: run_session_gaia, inner / outer loops, PSF refinement
-        gaiaCatalog.py            Gaia catalogue (Butler refcat or ESA TAP), seed selection
+        gaiaCatalog.py            Gaia catalogue (Butler refcat or ESA TAP), starting positions
         photometry.py             PSF and aperture magnitudes with errors
         plotting.py               data | model | residual, residual diagnostics, star zooms
         sourcePlots.py            per-source cutouts + x / y / radial cross-sections + magnitudes
@@ -77,7 +80,7 @@ The package follows the Rubin DM layout (``sconsUtils`` + ``eups``)::
     tests/                        unit tests (run with or without the stack)
     examples/                     run_visit.py (notebook cells), run_visit_batch.py (terminal),
                                   usdf_job.sh, usdf_detector_array.sh (Slurm), benchmark_stamps.py
-    doc/                          user guide, function reference, catalogue columns, unit tests
+    doc/                          user guide, algorithm, function reference, catalogue, unit tests
 
 Building
 ========
@@ -123,7 +126,7 @@ Cutouts (notebook or Python)
     phot = crowd.measure_photometry(run)              # astropy Table, PSF + aperture magnitudes
 
 Options go to ``make_config`` or as keyword overrides to ``run_session_gaia``;
-``crowd.SEEDED_DEFAULTS`` lists them all with comments, and an unknown name raises an error.
+``crowd.PIPELINE_DEFAULTS`` lists them all with comments, and an unknown name raises an error.
 All function names of the old ``cutout_gaia.py`` are unchanged, so ``import lsst.meas.crowd as cg``
 works with existing notebooks.
 
@@ -211,8 +214,8 @@ Every cutout fit makes this catalogue at the end (``run.photometry``), and
 ``run_session_gaia(..., out_dir=...)`` saves it as ``photometry.fits`` / ``photometry.csv`` next
 to the images; whole-detector runs put it in each tile file and ``detector_catalog.fits``.
 
-The same table carries the comparison with Gaia (the run keeps the Gaia catalogue it was seeded
-from as ``run.gaia``; ``compare_with_gaia(phot, gaia)`` adds the columns to any table): a match flag (the seeding Gaia star, or the nearest unclaimed one within
+The same table carries the comparison with Gaia (the run keeps the Gaia catalogue it started
+from as ``run.gaia``; ``compare_with_gaia(phot, gaia)`` adds the columns to any table): a match flag (the Gaia star the source started from, or the nearest unclaimed one within
 1 px), the Gaia source id, G and BP - RP, position offsets in px and mas, ``psf_mag - G`` with and
 without the median offset, and the flux ratio to Gaia.  ``doc/catalog_columns.md`` lists every
 column with its unit.
@@ -255,11 +258,16 @@ With the stack set up, ``scons tests`` runs them too.  The tests run without the
 is set up (the 2 skips otherwise).  ``test_docstrings.py`` checks that every public function has a
 numpydoc docstring; CI (``.github/workflows/build.yaml``) also runs flake8 and pydocstyle.
 
+Licence
+=======
+
+GNU General Public License v3 or later, like other Rubin packages: see ``LICENSE``; copyright
+holders are listed in ``COPYRIGHT``.  Every source file carries the standard LSST licence header.
+
 Still to do
 ===========
 
-* choose a licence (Rubin packages use GPLv3) and add ``LICENSE``;
 * wrap the driver as an ``lsst.pipe.base`` Task with a ``pex_config`` Config (options are a
-  plain dict today, ``SEEDED_DEFAULTS``);
+  plain dict today, ``PIPELINE_DEFAULTS``);
 * Rubin naming conventions (camelCase) for the public functions;
 * end-to-end tests on a small real cutout (needs data access in CI).

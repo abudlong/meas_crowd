@@ -1,9 +1,25 @@
 # This file is part of meas_crowd.
 #
 # Developed for the LSST Data Management System.
-# See the COPYRIGHT file at the top-level directory of this distribution.
+# This product includes software developed by the LSST Project
+# (https://www.lsst.org).
+# See the COPYRIGHT file at the top-level directory of this distribution
+# for details of code ownership.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Gaia-seeded, adaptive, iterative joint PSF-fitting pipeline.
+"""Adaptive, iterative joint PSF-fitting pipeline starting from Gaia positions.
 
 Inner and outer loops, saturated and bright-star handling, PSF refinement, extended sources
 and residual diagnostics.
@@ -25,16 +41,16 @@ from . import fitLib as L
 from . import adaptive as ca
 from .gaiaCatalog import (
     attach_gaia,
-    select_seeds,
+    select_gaia_sources,
 )
 
 
 # Options of this driver on top of the run_cutout_pipeline config keys.
-SEEDED_DEFAULTS = dict(
+PIPELINE_DEFAULTS = dict(
     # ---- adaptive inner loop
     max_inner=30,              # safety cap on inner iterations per outer pass
-    seed_threshold_start=5.0,  # first detection threshold when Gaia seeds are used
-    threshold_start=None,      # without seeds (None: inner_kwargs['threshold_start'])
+    gaia_threshold_start=5.0,  # first detection threshold when the fit starts from Gaia
+    threshold_start=None,      # without Gaia (None: inner_kwargs['threshold_start'])
     threshold_step=None,       # None: inner_kwargs['threshold_step']
     threshold_min=None,        # None: inner_kwargs['threshold_min']
     grow_frac=0.02,            # "still finding sources": added >= grow_frac * N ...
@@ -55,11 +71,11 @@ SEEDED_DEFAULTS = dict(
     max_outer=6,               # safety cap
     outer_growth_tol=0.01,     # source count changed by < 1% ...
     psf_tol=0.01,              # ... and PSF kernel changed by < 1% (L2)  -> converged
-    # ---- seeds
-    protect_seeds=True,
-    seed_pad_fwhm=1.5,         # keep Gaia seeds up to this far OUTSIDE the cutout
-    seed_max_drift_px=1.5,     # max distance a seed may move from its Gaia position
-    seed_min_sep_px=0.5,       # Gaia duplicates closer than this are merged
+    # ---- Gaia starting positions
+    protect_gaia=True,
+    gaia_pad_fwhm=1.5,         # use Gaia stars up to this far OUTSIDE the cutout
+    gaia_max_drift_px=1.5,     # max distance a Gaia source may move from its Gaia position
+    gaia_min_sep_px=0.5,       # Gaia duplicates closer than this are merged
     fit_gaia_offset=True,      # remove a global WCS-vs-data offset first
     subtract_initial_bg=True,  # subtract session.bgImage in pass 1
     keep_all_fits=False,       # keep full fits (all PSF stamps) in every snapshot
@@ -230,10 +246,17 @@ _IGNORED = {"n_outer_iterations", "n_inner_iterations", "outer_convergence_frac"
             "view_half", "x_range", "y_range", "viz"}
 
 
+# option names used before the "Gaia starting positions" naming -> current names
+_OLD_KEYS = dict(seed_threshold_start="gaia_threshold_start", seed_pad_fwhm="gaia_pad_fwhm",
+                 seed_max_drift_px="gaia_max_drift_px", seed_min_sep_px="gaia_min_sep_px",
+                 protect_seeds="protect_gaia")
+
+
 def _params(cfg):
-    """Merge a configuration with the fitLib and seeded-pipeline defaults (unknown keys raise)."""
+    """Merge a configuration with the fitLib and pipeline defaults (unknown keys raise)."""
+    cfg = {_OLD_KEYS.get(k, k): v for k, v in cfg.items()}     # old option names still work
     P = dict(_LIB_DEFAULTS)
-    P.update(SEEDED_DEFAULTS)
+    P.update(PIPELINE_DEFAULTS)
     unknown = set(cfg) - set(P) - _IGNORED
     if unknown:
         raise ValueError(f"unknown option(s) {sorted(unknown)}")
@@ -703,20 +726,21 @@ def disable_speedups():
 
 
 # =====================================================================
-# Source state: positions + seed bookkeeping, kept aligned through every filter
+# Source state: positions + Gaia bookkeeping, kept aligned through every filter
 # =====================================================================
-def _state(xy=None, seed=False, gaia=None, gmag=None):
+def _state(xy=None, from_gaia=False, gaia=None, gmag=None):
     """Return a new source state.
 
-    Keys: ``xy`` (N, 2) positions, ``seed`` (Gaia-seeded), ``ext`` (extended-source size, 0 =
-    point source), ``g`` (Gaia G), ``ref`` (Gaia reference position), ``gaia`` (catalogue row),
-    ``uid`` (unique id) and ``next_uid``; all arrays stay aligned through every filter.
+    Keys: ``xy`` (N, 2) positions, ``from_gaia`` (started from a Gaia position), ``ext``
+    (extended-source size, 0 = point source), ``g`` (Gaia G), ``ref`` (Gaia reference
+    position), ``gaia`` (catalogue row), ``uid`` (unique id) and ``next_uid``; all arrays stay
+    aligned through every filter.
     """
     xy = np.asarray(xy if xy is not None else np.zeros((0, 2)), float).reshape(-1, 2)
     n = len(xy)
     g = np.full(n, np.nan) if gmag is None else np.asarray(gmag, float).reshape(n)
-    return dict(xy=xy.copy(), seed=np.full(n, bool(seed)), ext=np.zeros(n), g=g,
-                ref=xy.copy() if seed else np.full((n, 2), np.nan),
+    return dict(xy=xy.copy(), from_gaia=np.full(n, bool(from_gaia)), ext=np.zeros(n), g=g,
+                ref=xy.copy() if from_gaia else np.full((n, 2), np.nan),
                 gaia=(np.asarray(gaia, np.int64) if gaia is not None else np.full(n, -1, np.int64)),
                 uid=np.arange(n, dtype=np.int64), next_uid=n)
 
@@ -724,7 +748,7 @@ def _state(xy=None, seed=False, gaia=None, gmag=None):
 def _take(S, keep):
     """Return the source state restricted to ``keep`` (index or boolean array)."""
     keep = np.asarray(keep)
-    out = {k: S[k][keep] for k in ("xy", "seed", "ext", "g", "ref", "gaia", "uid")}
+    out = {k: S[k][keep] for k in ("xy", "from_gaia", "ext", "g", "ref", "gaia", "uid")}
     out["next_uid"] = S["next_uid"]
     return out
 
@@ -733,7 +757,7 @@ def _add(S, xy_new):
     """Return the source state with non-Gaia sources appended at ``xy_new``."""
     xy_new = np.asarray(xy_new, float).reshape(-1, 2)
     m = len(xy_new)
-    out = dict(xy=np.vstack([S["xy"], xy_new]), seed=np.concatenate([S["seed"], np.zeros(m, bool)]),
+    out = dict(xy=np.vstack([S["xy"], xy_new]), from_gaia=np.concatenate([S["from_gaia"], np.zeros(m, bool)]),
                ext=np.concatenate([S["ext"], np.zeros(m)]),
                g=np.concatenate([S["g"], np.full(m, np.nan)]),
                ref=np.vstack([S["ref"], np.full((m, 2), np.nan)]),
@@ -748,11 +772,11 @@ def _xy(S):
     return [tuple(p) for p in S["xy"]]
 
 
-def _clamp_seeds(S, max_drift):
-    """Pull Gaia-seeded sources back to within ``max_drift`` px of their Gaia position (in place)."""
-    if not max_drift or not S["seed"].any():
+def _clamp_to_gaia(S, max_drift):
+    """Pull sources started from Gaia back to within ``max_drift`` px of their Gaia position (in place)."""
+    if not max_drift or not S["from_gaia"].any():
         return
-    s = S["seed"]
+    s = S["from_gaia"]
     d = S["xy"][s] - S["ref"][s]
     r = np.hypot(d[:, 0], d[:, 1])
     over = r > max_drift
@@ -764,7 +788,7 @@ def estimate_gaia_offset(exposure, S, fwhm, bad_bitmask, noise, min_peak_snr=20.
                          min_stars=5, verbose=True):
     """Measure the global offset between the image and the Gaia positions.
 
-    The median (data centroid - Gaia position) of bright, unsaturated, fairly isolated seeds,
+    The median (data centroid - Gaia position) of bright, unsaturated, fairly isolated Gaia sources,
     from background-subtracted windowed centroids.
 
     Parameters
@@ -772,7 +796,7 @@ def estimate_gaia_offset(exposure, S, fwhm, bad_bitmask, noise, min_peak_snr=20.
     exposure : `lsst.afw.image.Exposure`
         The cutout.
     S : `dict`
-        Source state with the Gaia seeds (see ``_state``).
+        Source state with the Gaia starting positions (see ``_state``).
     fwhm : `float`
         PSF FWHM [px].
     bad_bitmask : `int`
@@ -801,7 +825,7 @@ def estimate_gaia_offset(exposure, S, fwhm, bad_bitmask, noise, min_peak_snr=20.
     hw = max(3, int(round(1.25 * fwhm)))
     d = []
     others = cKDTree(S["xy"]) if len(S["xy"]) > 1 else None
-    for x, y in S["xy"][S["seed"]]:
+    for x, y in S["xy"][S["from_gaia"]]:
         ix, iy = int(round(x)) - X0, int(round(y)) - Y0
         if not (hw <= ix < nx - hw and hw <= iy < ny - hw):
             continue
@@ -832,7 +856,7 @@ def estimate_gaia_offset(exposure, S, fwhm, bad_bitmask, noise, min_peak_snr=20.
 
 
 # =====================================================================
-# Index-preserving versions of the cleaning steps (seeds protected)
+# Index-preserving versions of the cleaning steps (Gaia sources protected)
 # =====================================================================
 def _fit(exposure, psf, S, bad_bitmask, var_model, fitkw):
     """Run the joint fit of the source state's positions (extended sources broadened)."""
@@ -907,8 +931,8 @@ def _prune_merge(fit, S, min_snr, min_sep, bright, near_sep, near_snr, protect,
     n_zone_low = 0
     if in_zone is not None and zone_snr and in_zone.any():
         thresh[in_zone] = np.maximum(thresh[in_zone], zone_snr)
-        n_zone_low = int((in_zone & (snr < thresh) & ~S["seed"]).sum())
-    prot = S["seed"] if protect else np.zeros(n, bool)
+        n_zone_low = int((in_zone & (snr < thresh) & ~S["from_gaia"]).sum())
+    prot = S["from_gaia"] if protect else np.zeros(n, bool)
     alive = (snr >= thresh) | prot
     n_low = int((~alive).sum())
     tree = cKDTree(S["xy"]) if n else None
@@ -938,7 +962,7 @@ def _eliminate_weak(exposure, psf, S, fit, bad_bitmask, P, fitkw, fwhm=None):
         if n <= 1:
             break
         snr = amp_snr_full_fast(fit, scale)
-        cand = ~S["seed"] if P["protect_seeds"] else np.ones(n, bool)
+        cand = ~S["from_gaia"] if P["protect_gaia"] else np.ones(n, bool)
         weak = np.flatnonzero(cand & (snr < min_snr))
         if len(weak) == 0:
             break
@@ -957,7 +981,7 @@ def _eliminate_weak(exposure, psf, S, fit, bad_bitmask, P, fitkw, fwhm=None):
         S = _take(S, keep)
         fit = _fit(exposure, psf, S, bad_bitmask, fit["model_full"], fitkw)
     print(f"  eliminate_weak: noise_scale={scale:.2f}, {n0} -> {len(S['xy'])} sources in "
-          f"{rounds} round(s) (honest S/N>={min_snr:g}{', Gaia protected' if P['protect_seeds'] else ''})")
+          f"{rounds} round(s) (honest S/N>={min_snr:g}{', Gaia protected' if P['protect_gaia'] else ''})")
     return S, fit
 
 
@@ -977,7 +1001,7 @@ def _shape_cut(exposure, psf, S, fit, bad_bitmask, P, fitkw, drop_frac=0.25, max
     pscale = L.empirical_noise_scale(fit, exposure, matched=False)
     for _ in range(max_rounds):
         n = len(S["xy"])
-        ok = (S["ext"] == 0) & (~S["seed"] if P["protect_seeds"] else True)
+        ok = (S["ext"] == 0) & (~S["from_gaia"] if P["protect_gaia"] else True)
         if judge_uids is not None:
             ok &= np.isin(S["uid"], list(judge_uids))
         cand = np.flatnonzero(ok)
@@ -1075,7 +1099,7 @@ def measure_model_error(exposure, res, P, verbose=True):
     exposure : `lsst.afw.image.Exposure`
         The fitted exposure.
     res : `dict`
-        Result of `run_inner_seeded`.
+        Result of `run_inner_adaptive`.
     P : `dict`
         Pipeline options.
     verbose : `bool`, optional
@@ -1285,7 +1309,7 @@ def _refine_saturated(exposure, psf, S, fit, core_lab, X0, Y0, fwhm, n_iter=6, m
     xy = S["xy"].copy()
     moved = 0
     for j in np.flatnonzero(core > 0):
-        if S["seed"][j] and np.isfinite(S["g"][j]):
+        if S["from_gaia"][j] and np.isfinite(S["g"][j]):
             continue
         a = amps[j]
         if a <= 0 or fit["comps"][j] is None:
@@ -1573,7 +1597,7 @@ def ring_mimics(exposure, S, fit, model_full, P, fwhm, psf_peak, noise):
     drop, n_checked = set(), 0
     for b in bright:
         cand = [k for k in tree.query_ball_point(xy[b], rmax)
-                if k != b and not S["seed"][k] and S["ext"][k] == 0 and amps[k] > 0
+                if k != b and not S["from_gaia"][k] and S["ext"][k] == 0 and amps[k] > 0
                 and amps[k] < P["ring_max_ratio"] * amps[b]
                 and np.hypot(*(xy[k] - xy[b])) >= fwhm and fit["comps"][k] is not None]
         if not cand:
@@ -1880,15 +1904,15 @@ def ellip_test(exposure, psf, S, fit, model_full, P, fwhm, psf_peak, noise, bad_
         near = [k for k in tree.query_ball_point(xy[j], P["ellip_group_fwhm"] * fwhm)
                 if k != j and k not in used and S["ext"][k] == 0 and amps[k] > 0
                 and fit["comps"][k] is not None]
-        gaia_near = [k for k in near if S["seed"][k]]
-        if (S["seed"][j] and gaia_near) or len(gaia_near) > 1:
+        gaia_near = [k for k in near if S["from_gaia"][k]]
+        if (S["from_gaia"][j] and gaia_near) or len(gaia_near) > 1:
             if explain:
                 print(f"    ({x:.1f}, {y:.1f}): another Gaia source within {P['ellip_group_fwhm']:g} "
                       f"FWHM -> not merged (two Gaia stars)")
             continue
-        gsrc = j if S["seed"][j] else (gaia_near[0] if gaia_near else None)
+        gsrc = j if S["from_gaia"][j] else (gaia_near[0] if gaia_near else None)
         grp = list(dict.fromkeys(([gsrc] if gsrc is not None else []) +
-                                 [k for k in [j] + near if not S["seed"][k]]))
+                                 [k for k in [j] + near if not S["from_gaia"][k]]))
         if any(fit["comps"][k] is None for k in grp):
             continue
         stamps = {}
@@ -1974,9 +1998,9 @@ def ellip_test(exposure, psf, S, fit, model_full, P, fwhm, psf_peak, noise, bad_
     S = dict(S, xy=S["xy"].copy(), ext=S["ext"].copy(), ref=S["ref"].copy())
     keep = np.ones(len(S["xy"]), bool)
     for vname, keep_pt, repl, ex, ey, sa, q, th, prof, c0, c1 in accepted:
-        host = repl[0] if keep_pt is not None else (next((k for k in repl if S["seed"][k]), repl[0]))
+        host = repl[0] if keep_pt is not None else (next((k for k in repl if S["from_gaia"][k]), repl[0]))
         S["xy"][host] = (ex, ey)
-        if S["seed"][host]:            # a galaxy's Gaia centroid is unreliable: no drift limit
+        if S["from_gaia"][host]:            # a galaxy's Gaia centroid is unreliable: no drift limit
             S["ref"][host] = (ex, ey)
         S["ext"][host] = sa
         _ELLIP[int(S["uid"][host])] = (float(q), float(th), prof)
@@ -1987,7 +2011,7 @@ def ellip_test(exposure, psf, S, fit, model_full, P, fwhm, psf_peak, noise, bad_
               f"source(s){' next to the Gaia star' if keep_pt is not None else ''}: scale {sa:.2f} px, "
               f"axis ratio {q:.2f}, PA {np.degrees(th) % 180:.0f} deg; local chi2 {c0:.0f} -> {c1:.0f}")
     S = _take(S, keep)
-    _clamp_seeds(S, P["seed_max_drift_px"])
+    _clamp_to_gaia(S, P["gaia_max_drift_px"])
     f2 = _fit(exposure, psf, S, bad_bitmask, fit["model_full"], fitkw)
     return S, f2, n_try, len(accepted)
 
@@ -2037,7 +2061,7 @@ def try_elliptical(run, xy, chi2_min=None, dchi2=None):
     noise = float(np.sqrt(np.nanmedian(exp.variance.array)))
     j = int(cKDTree(S["xy"]).query(xy)[1])
     print(f"nearest source: index {j} at ({S['xy'][j, 0]:.1f}, {S['xy'][j, 1]:.1f}), "
-          f"{'Gaia' if S['seed'][j] else 'non-Gaia'}, flux {fit['amps'][j]:.3g}, "
+          f"{'Gaia' if S['from_gaia'][j] else 'non-Gaia'}, flux {fit['amps'][j]:.3g}, "
           f"peak S/N {fit['amps'][j] * psf_peak / noise:.1f}; FWHM {fwhm:.2f} px")
     S = {k: (v.copy() if isinstance(v, np.ndarray) else v) for k, v in S.items()}
     fitkw = dict(support_frac=P["support_frac"], sys_frac=P["sys_frac"], poisson_k=P["poisson_k"])
@@ -2103,7 +2127,7 @@ def final_position_polish(exposure, psf, S, fit, bad_bitmask, P, fitkw, fwhm, ps
         before = S["xy"].copy()
         S["xy"] = _refine_subset(exposure, psf, S, best, allidx, P["final_polish_cap"],
                                  P["centroid_min_amp"], P["freeze_fwhm"] * fwhm, psf_sigma)
-        _clamp_seeds(S, P["seed_max_drift_px"])
+        _clamp_to_gaia(S, P["gaia_max_drift_px"])
         f_new = _fit(exposure, psf, S, bad_bitmask, best["model_full"], fitkw)
         c_new = chi_all(f_new)
         if c_new >= c_prev:
@@ -2117,11 +2141,11 @@ def final_position_polish(exposure, psf, S, fit, bad_bitmask, P, fitkw, fwhm, ps
     return S, best, dict(rounds=n_r, moved=moved, chi0=c0, chi1=c_prev)
 
 
-def run_inner_seeded(exposure, psf, bad_bitmask, S, P, outer_idx=0, threshold_start=None,
+def run_inner_adaptive(exposure, psf, bad_bitmask, S, P, outer_idx=0, threshold_start=None,
                      shape_now=False, timer=None):
-    """Run one outer pass of the seeded pipeline.
+    """Run one outer pass of the adaptive pipeline.
 
-    A warm fit of the current sources (Gaia seeds or the previous pass), then detect -> add ->
+    A warm fit of the current sources (Gaia starting positions or the previous pass), then detect -> add ->
     joint fit -> refine -> clean, repeated until the residual check says stop; then the halo,
     ring, position-polish, pair-split and galaxy tests.
 
@@ -2151,7 +2175,7 @@ def run_inner_seeded(exposure, psf, bad_bitmask, S, P, outer_idx=0, threshold_st
     result : `dict`
         Compatible with `fitLib.run_inner_loop_verbose`'s result (``model_full``,
         ``residual_full``, ``peaks``, ``amps``, histories, ``snaps``), plus ``S``,
-        ``bright_corr``, ``adaptive`` (the loop decisions), ``is_seed`` and ``gaia_index``.
+        ``bright_corr``, ``adaptive`` (the loop decisions), ``is_gaia`` and ``gaia_index``.
     """
     timer = timer or L.TIMER
     bbox = exposure.getBBox()
@@ -2169,7 +2193,7 @@ def run_inner_seeded(exposure, psf, bad_bitmask, S, P, outer_idx=0, threshold_st
     t_floor, thr_min, step = P["t_floor"], P["threshold_min"], P["threshold_step"]
     thr = float(threshold_start if threshold_start is not None else P["threshold_start"])
     edge_px = (P["edge_margin_fwhm"] or 0.0) * fwhm
-    pad_px = P["seed_pad_fwhm"] * fwhm
+    pad_px = P["gaia_pad_fwhm"] * fwhm
     merge_sep = (P["merge_separation_sigma"] or 2.0) * psf_sigma
     sched = list(P["centroid_shift_schedule"] or [1.5, 0.8, 0.4, 0.2, 0.1])
     sched += [sched[-1]] * max(0, P["n_centroid_rounds"] - len(sched))
@@ -2236,7 +2260,7 @@ def run_inner_seeded(exposure, psf, bad_bitmask, S, P, outer_idx=0, threshold_st
         prev_amp_uid = dict(zip(S["uid"].tolist(), fit["amps"]))
         hist = dict(resid_std=[rstd(data - model_full)], n_peaks=[len(S["xy"])],
                     n_zero=[fit["n_at_zero"]])
-        print(f"  warm start: {len(S['xy'])} sources ({int(S['seed'].sum())} Gaia), residual "
+        print(f"  warm start: {len(S['xy'])} sources ({int(S['from_gaia'].sum())} Gaia), residual "
               f"std {hist['resid_std'][0]:.3f}")
 
     for it in range(P["max_inner"]):
@@ -2322,7 +2346,7 @@ def run_inner_seeded(exposure, psf, bad_bitmask, S, P, outer_idx=0, threshold_st
                         S["xy"] = _refine_subset(exposure, psf, S, fit, idx, cap,
                                                  P["centroid_min_amp"], P["freeze_fwhm"] * fwhm,
                                                  psf_sigma)
-                        _clamp_seeds(S, P["seed_max_drift_px"])
+                        _clamp_to_gaia(S, P["gaia_max_drift_px"])
                         fit = _fit(exposure, psf, S, bad_bitmask, fit["model_full"], fitkw)
                         shift = float(np.max(np.hypot(*(S["xy"] - before).T))) if len(before) else 0.0
                         if shift < P["centroid_shift_tol"]:
@@ -2340,11 +2364,11 @@ def run_inner_seeded(exposure, psf, bad_bitmask, S, P, outer_idx=0, threshold_st
                 bright = fit["amps"] * psf_peak > P["bright_peak_sigma"] * noise
                 alive, S["xy"] = _prune_merge(fit, S, P["min_snr"], P["prune_sep_sigma"] * psf_sigma,
                                               bright, P["near_bright_fwhm"] * fwhm,
-                                              P["near_bright_snr"], P["protect_seeds"],
+                                              P["near_bright_snr"], P["protect_gaia"],
                                               in_zone=_zone_flags(S["xy"], zone_mask, X0, Y0),
                                               zone_snr=P["sat_zone_snr"])
                 x, y = S["xy"][:, 0], S["xy"][:, 1]
-                m = np.where(S["seed"], pad_px, -edge_px)        # seeds may sit just outside
+                m = np.where(S["from_gaia"], pad_px, -edge_px)        # Gaia sources may sit just outside
                 inside = ((x >= X0 - m) & (x <= bbox.getMaxX() + m) &
                           (y >= Y0 - m) & (y <= bbox.getMaxY() + m))
                 n_edge = int((alive & ~inside).sum())
@@ -2354,7 +2378,7 @@ def run_inner_seeded(exposure, psf, bad_bitmask, S, P, outer_idx=0, threshold_st
                     one = _one_per_core(S, amps_now, core_lab, X0, Y0)
                     if not one.all():
                         print(f"  saturated cores: removed {int((~one).sum())} extra source(s) "
-                              f"({int((~one & S['seed']).sum())} of them Gaia entries)")
+                              f"({int((~one & S['from_gaia']).sum())} of them Gaia entries)")
                         S = _take(S, one)
                 if n_edge:
                     print(f"  dropped {n_edge} source(s) outside / within the edge margin")
@@ -2408,10 +2432,10 @@ def run_inner_seeded(exposure, psf, bad_bitmask, S, P, outer_idx=0, threshold_st
                               footprint_mask=L._footprints_to_mask(fps, exposure), fit=fit,
                               residual=resid.copy(), std_before=old_std, std_after=new_std,
                               times=times, bad_mask=bad_mask, shape_rejected=shape_rejected,
-                              is_seed=S["seed"].copy()))
+                              is_gaia=S["from_gaia"].copy()))
             with T("residual check"):
                 diag = check(fit, model_full)
-            print(f"  {len(S['xy'])} sources ({int(S['seed'].sum())} Gaia, "
+            print(f"  {len(S['xy'])} sources ({int(S['from_gaia'].sum())} Gaia, "
                   f"{int((S['ext'] > 0).sum())} extended, {n_added} new kept), "
                   f"residual std {old_std:.3f} -> {new_std:.3f}; time "
                   + ", ".join(f"{k}={v:.1f}s" for k, v in times.items()))
@@ -2483,7 +2507,7 @@ def run_inner_seeded(exposure, psf, bad_bitmask, S, P, outer_idx=0, threshold_st
             diag = check(fit, model_full)
             last = snaps[-1]
             last.update(fit=fit, merged_arr=S["xy"].copy(), merged_peaks=_xy(S),
-                        residual=(data - model_full).copy(), is_seed=S["seed"].copy(),
+                        residual=(data - model_full).copy(), is_gaia=S["from_gaia"].copy(),
                         is_new=np.asarray(last["is_new"])[keep] if len(last["is_new"]) == len(keep)
                         else np.zeros(len(S["xy"]), bool),
                         prev_amp=np.asarray(last["prev_amp"])[keep] if len(last["prev_amp"]) == len(keep)
@@ -2504,7 +2528,7 @@ def run_inner_seeded(exposure, psf, bad_bitmask, S, P, outer_idx=0, threshold_st
             diag = check(fit, model_full)
             last = snaps[-1]
             last.update(fit=fit, merged_arr=S["xy"].copy(), merged_peaks=_xy(S),
-                        residual=(data - model_full).copy(), is_seed=S["seed"].copy(),
+                        residual=(data - model_full).copy(), is_gaia=S["from_gaia"].copy(),
                         is_new=np.asarray(last["is_new"])[keep] if len(last["is_new"]) == len(keep)
                         else np.zeros(len(S["xy"]), bool),
                         prev_amp=np.asarray(last["prev_amp"])[keep] if len(last["prev_amp"]) == len(keep)
@@ -2521,7 +2545,7 @@ def run_inner_seeded(exposure, psf, bad_bitmask, S, P, outer_idx=0, threshold_st
             model_full = corrected(fit)
             diag = check(fit, model_full)
             snaps[-1].update(fit=fit, merged_arr=S["xy"].copy(), merged_peaks=_xy(S),
-                             residual=(data - model_full).copy(), is_seed=S["seed"].copy())
+                             residual=(data - model_full).copy(), is_gaia=S["from_gaia"].copy())
         print(f"  {label}: {info['rounds']} round(s), up to {info['moved']} source(s) "
               f"moved, total chi2 {info['chi0']:.4g} -> {info['chi1']:.4g} "
               f"({100 * (info['chi0'] - info['chi1']) / max(info['chi0'], 1e-12):+.2f}%)")
@@ -2538,7 +2562,7 @@ def run_inner_seeded(exposure, psf, bad_bitmask, S, P, outer_idx=0, threshold_st
             model_full = corrected(fit)
             diag = check(fit, model_full)
             snaps[-1].update(fit=fit, merged_arr=S["xy"].copy(), merged_peaks=_xy(S),
-                             residual=(data - model_full).copy(), is_seed=S["seed"].copy(),
+                             residual=(data - model_full).copy(), is_gaia=S["from_gaia"].copy(),
                              is_new=np.zeros(len(S["xy"]), bool),
                              prev_amp=np.full(len(S["xy"]), np.nan))
             if P["final_polish"]:
@@ -2553,7 +2577,7 @@ def run_inner_seeded(exposure, psf, bad_bitmask, S, P, outer_idx=0, threshold_st
             model_full = corrected(fit)
             diag = check(fit, model_full)
             snaps[-1].update(fit=fit, merged_arr=S["xy"].copy(), merged_peaks=_xy(S),
-                             residual=(data - model_full).copy(), is_seed=S["seed"].copy(),
+                             residual=(data - model_full).copy(), is_gaia=S["from_gaia"].copy(),
                              is_new=np.zeros(len(S["xy"]), bool),
                              prev_amp=np.full(len(S["xy"]), np.nan))
     final_missing = bool(ca.is_missing(diag, target, P["z_sig"], P["min_excess"])[0]) if diag else True
@@ -2567,7 +2591,7 @@ def run_inner_seeded(exposure, psf, bad_bitmask, S, P, outer_idx=0, threshold_st
                 amps=amps_out, bright_corr=bcorr,
                 resid_std_history=hist["resid_std"], n_peaks_history=hist["n_peaks"],
                 n_zero_amp_history=hist["n_zero"], first_seen=first_seen, snaps=snaps,
-                S=S, is_seed=S["seed"].copy(), gaia_index=S["gaia"].copy(),
+                S=S, is_gaia=S["from_gaia"].copy(), gaia_index=S["gaia"].copy(),
                 adaptive=dict(final=diag, target=target, missing=final_missing, stop=stop,
                               log=log, n_inner=len(log)))
 
@@ -2583,7 +2607,7 @@ def select_psf_stars(exposure, res, fwhm, psf_peak, noise, P, verbose=True):
     exposure : `lsst.afw.image.Exposure`
         The fitted exposure.
     res : `dict`
-        Result of `run_inner_seeded`.
+        Result of `run_inner_adaptive`.
     fwhm : `float`
         PSF FWHM [px].
     psf_peak : `float`
@@ -2669,7 +2693,7 @@ def refine_psf_clean(exposure, psf, res, bad_bitmask, P, fitkw, n_cycles=3, verb
     psf : `lsst.afw.detection.Psf`
         Current PSF.
     res : `dict`
-        Result of `run_inner_seeded`.
+        Result of `run_inner_adaptive`.
     bad_bitmask : `int`
         Mask bits of pixels to ignore.
     P : `dict`
@@ -2792,7 +2816,7 @@ def refine_psf_median(exposure, psf, res, bad_bitmask, P, fitkw, fit0=None, verb
     psf : `lsst.afw.detection.Psf`
         Current PSF.
     res : `dict`
-        Result of `run_inner_seeded`.
+        Result of `run_inner_adaptive`.
     bad_bitmask : `int`
         Mask bits of pixels to ignore.
     P : `dict`
@@ -3079,7 +3103,7 @@ def wing_profile_psf(exposure, res, psf, P, verbose=True):
     exposure : `lsst.afw.image.Exposure`
         The fitted exposure.
     res : `dict`
-        Result of `run_inner_seeded`.
+        Result of `run_inner_adaptive`.
     psf : `lsst.afw.detection.Psf`
         Current PSF.
     P : `dict`
@@ -3311,7 +3335,7 @@ def refine_psf_spatial(exposure, psf_old, psf_new, res, bad_bitmask, P, fitkw, s
     psf_new : `lsst.afw.detection.Psf`
         Constant PSF to add the variation to.
     res : `dict`
-        Result of `run_inner_seeded`.
+        Result of `run_inner_adaptive`.
     bad_bitmask : `int`
         Mask bits of pixels to ignore.
     P : `dict`
@@ -3402,7 +3426,7 @@ def fit_brightness_term(exposure, psf, res, bad_bitmask, P, fitkw, verbose=True)
     psf : `lsst.afw.detection.Psf`
         Current PSF.
     res : `dict`
-        Result of `run_inner_seeded`.
+        Result of `run_inner_adaptive`.
     bad_bitmask : `int`
         Mask bits of pixels to ignore.
     P : `dict`
@@ -3646,11 +3670,11 @@ def print_timing(timer=None):
     print(f"wall clock: {time.perf_counter() - timer.t_start:.1f}s")
 
 
-def run_seeded_pipeline(exposure_crop, psf, bad_bitmask, seeds=None, seed_gaia_index=None,
-                        starCat=None, bgImage=None, viz=False, seed_gmag=None, **cfg):
-    """Run the Gaia-seeded adaptive pipeline on a whole cutout.
+def run_adaptive_pipeline(exposure_crop, psf, bad_bitmask, gaia_xy=None, gaia_rows=None,
+                        starCat=None, bgImage=None, viz=False, gaia_gmag=None, **cfg):
+    """Run the adaptive pipeline on a whole cutout, starting from Gaia positions.
 
-    The replacement for `fitLib.run_cutout_pipeline`: outer passes of `run_inner_seeded`, with
+    The replacement for `fitLib.run_cutout_pipeline`: outer passes of `run_inner_adaptive`, with
     background refit and PSF refinement in between, until the source list and the PSF stop
     changing.
 
@@ -3662,20 +3686,20 @@ def run_seeded_pipeline(exposure_crop, psf, bad_bitmask, seeds=None, seed_gaia_i
         Initial PSF.
     bad_bitmask : `int`
         Mask bits of pixels to ignore.
-    seeds : `numpy.ndarray`, optional
-        Seed positions (detector px), shape (N, 2); None or empty = no seeds.
-    seed_gaia_index : `numpy.ndarray`, optional
-        Gaia catalogue row of each seed.
+    gaia_xy : `numpy.ndarray`, optional
+        Gaia starting positions (detector px), shape (N, 2); None or empty = no Gaia.
+    gaia_rows : `numpy.ndarray`, optional
+        Gaia catalogue row of each starting position.
     starCat : `lsst.afw.table.SourceCatalog`, optional
         Detector-level PSF stars.
     bgImage : `lsst.afw.image.Image`, optional
         Detector-level background, subtracted in the first pass.
     viz : `bool`, optional
         Draw the per-pass overview.
-    seed_gmag : `numpy.ndarray`, optional
-        Gaia G magnitude of each seed.
+    gaia_gmag : `numpy.ndarray`, optional
+        Gaia G magnitude of each starting position.
     **cfg
-        Configuration: `fitLib.run_cutout_pipeline` keys and ``SEEDED_DEFAULTS`` keys.
+        Configuration: `fitLib.run_cutout_pipeline` keys and ``PIPELINE_DEFAULTS`` keys.
 
     Returns
     -------
@@ -3745,15 +3769,15 @@ def run_seeded_pipeline(exposure_crop, psf, bad_bitmask, seeds=None, seed_gaia_i
             print(f"(could not subtract initial background: {e})")
     exp_w.setPsf(psf)
 
-    S = _state(seeds if seeds is not None else None, seed=True, gaia=seed_gaia_index,
-               gmag=seed_gmag)
+    S = _state(gaia_xy if gaia_xy is not None else None, from_gaia=True, gaia=gaia_rows,
+               gmag=gaia_gmag)
     if len(S["xy"]) and P["fit_gaia_offset"]:
         noise = float(np.sqrt(np.nanmedian(exp_w.variance.array)))
         dx, dy, n = estimate_gaia_offset(exp_w, S, L._fwhm(psf, c), bad_bitmask, noise)
         if n:
             S["xy"] += (dx, dy)
             S["ref"] += (dx, dy)
-    print(f"{len(S['xy'])} Gaia seed(s) for cutout {cb}")
+    print(f"{len(S['xy'])} Gaia starting position(s) for cutout {cb}")
 
     starpos = None
     if starCat is not None and len(starCat):
@@ -3764,13 +3788,13 @@ def run_seeded_pipeline(exposure_crop, psf, bad_bitmask, seeds=None, seed_gaia_i
     for k in range(P["max_outer"]):
         clear_stamp_cache()
         shape_now = P["use_shape_cut"] and (k > 0 or P["shape_in_first_pass"])
-        thr0 = (P["seed_threshold_start"] if len(S["xy"]) else P["threshold_start"]) if k == 0 \
+        thr0 = (P["gaia_threshold_start"] if len(S["xy"]) else P["threshold_start"]) if k == 0 \
             else P["threshold_min"]
         print(f"\n{'=' * 70}\n===== Outer pass {k + 1} (cap {P['max_outer']}), PSF FWHM "
               f"{L._fwhm(psf_w, c):.3f}px, shape cut {'ON' if shape_now else 'off'} =====")
         t0 = time.perf_counter()
         with L.TIMER.step("INNER LOOP (total)", outer=k, kind="wall"):
-            res = run_inner_seeded(exp_w, psf_w, bad_bitmask, S, P, outer_idx=k,
+            res = run_inner_adaptive(exp_w, psf_w, bad_bitmask, S, P, outer_idx=k,
                                    threshold_start=thr0, shape_now=shape_now)
         S = res["S"]
         res["adaptive"]["seconds"] = time.perf_counter() - t0
@@ -3820,7 +3844,7 @@ def run_seeded_pipeline(exposure_crop, psf, bad_bitmask, seeds=None, seed_gaia_i
         growth = (abs(n_now - hist[-2]["n_peaks"]) / max(hist[-2]["n_peaks"], 1)
                   if len(hist) > 1 else np.inf)
         psf_settled = (not P["refit_psf"]) or (np.isfinite(psf_change) and psf_change < P["psf_tol"])
-        print(f"\nouter pass {k + 1}: {n_now} sources ({int(res['is_seed'].sum())} Gaia), "
+        print(f"\nouter pass {k + 1}: {n_now} sources ({int(res['is_gaia'].sum())} Gaia), "
               f"{ad['n_inner']} inner iteration(s), stop: {ad['stop']}, residual "
               f"{'has EXCESS' if ad['missing'] else 'clean'}, source change "
               f"{100 * growth:.1f}%, PSF change into this pass {100 * psf_change:.2f}%, "
@@ -3948,7 +3972,7 @@ def run_seeded_pipeline(exposure_crop, psf, bad_bitmask, seeds=None, seed_gaia_i
 def run_cutout_gaia(raw_crop, psf, bad_bitmask, gaia_tbl=None, config=None, interior_bbox=None,
                     starCat=None, bgImage=None, viz=False, name="cutout", gmag_max=None,
                     **overrides):
-    """Run the seeded adaptive pipeline on one cropped exposure.
+    """Run the adaptive pipeline on one cropped exposure, starting from Gaia positions.
 
     Parameters
     ----------
@@ -3959,7 +3983,7 @@ def run_cutout_gaia(raw_crop, psf, bad_bitmask, gaia_tbl=None, config=None, inte
     bad_bitmask : `int`
         Mask bits of pixels to ignore.
     gaia_tbl : `astropy.table.Table`, optional
-        Gaia catalogue (see `lsst.meas.crowd.gaiaCatalog.gaia_catalog`); None = no seeds.
+        Gaia catalogue (see `lsst.meas.crowd.gaiaCatalog.gaia_catalog`); None = no Gaia.
     config : `dict`, optional
         Pipeline configuration.
     interior_bbox : `lsst.geom.Box2I`, optional
@@ -3973,7 +3997,7 @@ def run_cutout_gaia(raw_crop, psf, bad_bitmask, gaia_tbl=None, config=None, inte
     name : `str`, optional
         Cutout name.
     gmag_max : `float`, optional
-        Only seed Gaia sources brighter than this G magnitude.
+        Only start from Gaia stars brighter than this G magnitude.
     **overrides
         Configuration overrides.
 
@@ -3988,17 +4012,17 @@ def run_cutout_gaia(raw_crop, psf, bad_bitmask, gaia_tbl=None, config=None, inte
     P = _params(cfg)
     cb = raw_crop.getBBox()
     interior_bbox = interior_bbox or cb
-    seeds, rows = select_seeds(gaia_tbl, cb, L._fwhm(psf, cb.getCenter()),
-                               P["seed_pad_fwhm"], gmag_max, P["seed_min_sep_px"])
+    gaia_xy, rows = select_gaia_sources(gaia_tbl, cb, L._fwhm(psf, cb.getCenter()),
+                               P["gaia_pad_fwhm"], gmag_max, P["gaia_min_sep_px"])
     t0 = time.perf_counter()
     gm = (np.asarray(gaia_tbl["phot_g_mean_mag"], float)[rows]
           if gaia_tbl is not None and len(rows) and "phot_g_mean_mag" in gaia_tbl.colnames else None)
-    hist = run_seeded_pipeline(raw_crop, psf, bad_bitmask, seeds=seeds, seed_gaia_index=rows,
-                               starCat=starCat, bgImage=bgImage, viz=viz, seed_gmag=gm, **cfg)
+    hist = run_adaptive_pipeline(raw_crop, psf, bad_bitmask, gaia_xy=gaia_xy, gaia_rows=rows,
+                               starCat=starCat, bgImage=bgImage, viz=viz, gaia_gmag=gm, **cfg)
     res = hist[-1]["result"]
     S = res["S"]
     cat = cn.build_catalog(hist, interior_bbox)
-    cat["from_gaia"] = S["seed"]
+    cat["from_gaia"] = S["from_gaia"]
     gi = S["gaia"]
     has = gi >= 0
     sid = np.full(len(gi), -1, np.int64)
@@ -4013,7 +4037,7 @@ def run_cutout_gaia(raw_crop, psf, bad_bitmask, gaia_tbl=None, config=None, inte
     cat["extended"] = S["ext"] > 0
     cat["ext_sigma_px"] = S["ext"]
     summary = dict(name=name, status="ok", n_sources=len(res["peaks"]),
-                   n_gaia_seeds=int(len(seeds)), n_from_gaia=int(S["seed"].sum()),
+                   n_gaia_input=int(len(gaia_xy)), n_from_gaia=int(S["from_gaia"].sum()),
                    n_in_interior=int(np.sum(cat["in_interior"])),
                    bbox_fitted=[cb.getMinX(), cb.getMaxX(), cb.getMinY(), cb.getMaxY()],
                    interior_bbox=[interior_bbox.getMinX(), interior_bbox.getMaxX(),
@@ -4181,7 +4205,7 @@ def check_bright_neighbours(run, bright_snr=300.0, within_fwhm=4.0, flux_ratio=5
                 n_sim = int((ctrl >= 0.5 * a_j).sum()) if a_j > 0 else len(ctrl)
             else:
                 med, spread, sig = np.nan, np.nan, np.nan
-            if S["seed"][j]:
+            if S["from_gaia"][j]:
                 verdict = "Gaia"
             elif not np.isfinite(sig):
                 verdict = "n/a"
@@ -4476,7 +4500,7 @@ def unmodeled_near_mask(resid, var, bad, fwhm, pad_fwhm=1.5, grow_snr=2.5, reach
 
 def run_session_gaia(session, config=None, names=None, out_dir=None, viz=False, plot_final=True,
                      gmag_max=None, n_jobs=1, plot_kwargs=None, **overrides):
-    """Run the seeded pipeline on every (or the named) cutout of a session.
+    """Run the adaptive pipeline on every (or the named) cutout of a session.
 
     Calls `lsst.meas.crowd.gaiaCatalog.attach_gaia` first if the session has no Gaia catalogue.
 
@@ -4496,7 +4520,7 @@ def run_session_gaia(session, config=None, names=None, out_dir=None, viz=False, 
     plot_final : `bool`, optional
         Plot the final comparison of each cutout.
     gmag_max : `float`, optional
-        Only seed Gaia sources brighter than this G magnitude.
+        Only start from Gaia stars brighter than this G magnitude.
     n_jobs : `int`, optional
         Fit cutouts in this many parallel worker processes (Linux fork; one core each).
     plot_kwargs : `dict`, optional
@@ -4516,7 +4540,7 @@ def run_session_gaia(session, config=None, names=None, out_dir=None, viz=False, 
         try:
             attach_gaia(session)
         except Exception as e:
-            print(f"Gaia unavailable ({e}) -- running WITHOUT seeds (adaptive loops still on)")
+            print(f"Gaia unavailable ({e}) -- running WITHOUT Gaia starting positions (adaptive loops still on)")
             session.gaia = None
     runs = {}
     todo = names or list(session.jobs)
@@ -4587,7 +4611,7 @@ def report(run):
     for i, h in enumerate(hist, 1):
         ad = h["result"]["adaptive"]
         res = h["result"]
-        print(f"outer {i}: {h['n_peaks']} sources ({int(res['is_seed'].sum())} Gaia), "
+        print(f"outer {i}: {h['n_peaks']} sources ({int(res['is_gaia'].sum())} Gaia), "
               f"{ad['n_inner']} inner it., PSF change into pass "
               f"{100 * h['psf_change']:.2f}%, {ad.get('seconds', np.nan):.0f}s, stop: {ad['stop']}")
         for r in ad["log"]:
@@ -4601,3 +4625,9 @@ def report(run):
         print("top remaining positive residual peaks (x, y, S/N, px to nearest fitted):")
         for x, y, s, d in [c for c in last["final"]["candidates"] if c[2] >= last["target"]][:10]:
             print(f"    ({x:7.1f}, {y:7.1f})  S/N {s:5.1f}  {d:5.1f}")
+
+
+# the names used before the "Gaia starting positions" naming, so existing notebooks keep working
+SEEDED_DEFAULTS = PIPELINE_DEFAULTS
+run_seeded_pipeline = run_adaptive_pipeline
+run_inner_seeded = run_inner_adaptive

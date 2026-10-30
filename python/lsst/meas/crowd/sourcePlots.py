@@ -1,7 +1,23 @@
 # This file is part of meas_crowd.
 #
 # Developed for the LSST Data Management System.
-# See the COPYRIGHT file at the top-level directory of this distribution.
+# This product includes software developed by the LSST Project
+# (https://www.lsst.org).
+# See the COPYRIGHT file at the top-level directory of this distribution
+# for details of code ownership.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """Per-source cutouts, cross-sections and magnitudes.
 
@@ -281,7 +297,7 @@ def plot_source_cutouts(run, how="worst", n=6, positions=None, half=15, width=1,
                     mc = "w" if c < 2 else ("#00b4d8" if grayscale else "k")
                     for k in near:
                         px, py = xy[k]
-                        if S["seed"][k]:
+                        if S["from_gaia"][k]:
                             ax.plot(px, py, "o", mfc="none", mec=mc, ms=10 if k == j else 6, mew=1.2)
                         else:
                             ax.plot(px, py, "x", color="#ff3b3b", ms=7, mew=1.5)
@@ -290,7 +306,7 @@ def plot_source_cutouts(run, how="worst", n=6, positions=None, half=15, width=1,
                     ax.set_title(ttl, fontsize=9)
                     if c == 0:
                         p = phot[j]
-                        lab = (f"#{j} ({x:.1f}, {y:.1f})  {'Gaia' if S['seed'][j] else 'non-Gaia'}"
+                        lab = (f"#{j} ({x:.1f}, {y:.1f})  {'Gaia' if S['from_gaia'][j] else 'non-Gaia'}"
                                f"{', extended' if S['ext'][j] > 0 else ''}\n"
                                f"PSF  {p['psf_mag']:.3f} ± {p['psf_mag_err']:.3f} mag  "
                                f"(S/N {p['psf_snr']:.0f})\n"
@@ -325,8 +341,8 @@ def plot_source_cutouts(run, how="worst", n=6, positions=None, half=15, width=1,
                             perp = (xy[k, 1] - y) if key == "xcut" else (xy[k, 0] - x)
                             if abs(perp) <= max(width // 2, 0) + 1.0 and abs(off) <= half:
                                 for a in (a1, a2):
-                                    a.axvline(off, color="C0" if S["seed"][k] else "C3",
-                                              ls=":" if S["seed"][k] else "--", lw=0.9)
+                                    a.axvline(off, color="C0" if S["from_gaia"][k] else "C3",
+                                              ls=":" if S["from_gaia"][k] else "--", lw=0.9)
                     a1.set_title(ttl, fontsize=9)
                     a1.tick_params(labelbottom=False)
                     a2.set_xlabel(xl, fontsize=8)

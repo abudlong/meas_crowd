@@ -1,7 +1,23 @@
 # This file is part of meas_crowd.
 #
 # Developed for the LSST Data Management System.
-# See the COPYRIGHT file at the top-level directory of this distribution.
+# This product includes software developed by the LSST Project
+# (https://www.lsst.org).
+# See the COPYRIGHT file at the top-level directory of this distribution
+# for details of code ownership.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """Tests of the pipeline's building blocks on synthetic images with a known answer: PSF model
 regularisation and correction, bright-star correction terms, model-error measurement, saturation
@@ -102,7 +118,7 @@ class PsfKernelTestCase(unittest.TestCase):
             return dict(amps=a, model_full=(A @ a).reshape(n, n), good=np.ones((n, n), bool))
 
         exp = lsstStubs.FakeExposure(data, var)
-        S = pl._state(xy, seed=True)
+        S = pl._state(xy, from_gaia=True)
         P = dict(pl._params({}))
         P["_halo_rejects"] = np.zeros((0, 2))
         with mock.patch.object(pl, "_fit", fakefit), \
@@ -141,7 +157,7 @@ class BrightStarTermsTestCase(unittest.TestCase):
         fit = dict(amps=np.array([F]), good=np.ones((n, n), bool),
                    comps=[dict(stamp=psf[sy, sx], ys=sy, xs=sx)])
         exp = lsstStubs.FakeExposure(data, var)
-        S = pl._state(np.array([[x0, y0]]), seed=True)
+        S = pl._state(np.array([[x0, y0]]), from_gaia=True)
         return exp, S, fit, F * psf, psf.max(), 2.355 * s0, (int(round(y0)), int(round(x0)))
 
     def testCoreRings(self):
@@ -184,7 +200,7 @@ class ModelErrorTestCase(unittest.TestCase):
         truth = model * (1 + eps_true * rng.normal(0, 1, (n, n)))
         data = truth + rng.normal(0, 1, (n, n)) * np.sqrt(100 + truth)
         exp = lsstStubs.FakeExposure(data, 100 + model, psf=psf)
-        res = dict(S=pl._state(xy, seed=True), model_full=model,
+        res = dict(S=pl._state(xy, from_gaia=True), model_full=model,
                    snaps=[dict(fit=dict(amps=fl, good=np.ones((n, n), bool)))])
         with mock.patch.object(L, "_fwhm", lambda p, pt: 2.355 * s0, create=True):
             eps, _ = pl.measure_model_error(exp, res, dict(pl._params({})), verbose=False)
@@ -244,7 +260,7 @@ class RingMimicTestCase(unittest.TestCase):
         A = np.array([lsstStubs.place((n, n), c).ravel() for c in comps]).T
         amps = np.linalg.lstsq(A, data.ravel(), rcond=None)[0]
         S = pl._state(xy)
-        S["seed"][0] = True
+        S["from_gaia"][0] = True
         fit = dict(amps=amps, variance=var, good=np.ones((n, n), bool), comps=comps)
         exp = lsstStubs.FakeExposure(data, var)
         drop, nchk = pl.ring_mimics(exp, S, fit, (A @ amps).reshape(n, n), dict(pl._params({})),
@@ -294,7 +310,7 @@ class SplitAndPolishTestCase(unittest.TestCase):
             den = np.sqrt(gaussian_filter(var, s / np.sqrt(2)) * 4 * np.pi * s * s / 2)
             return (num / den / np.sqrt(2),)
 
-        S = pl._state(self.model_xy, seed=True)
+        S = pl._state(self.model_xy, from_gaia=True)
         with mock.patch.object(pl, "_fit", self.fakefit), mock.patch.object(pl.ca, "_matched_snr", msnr):
             f0 = self.fakefit(self.exp, None, S, 0, None, {})
             S2, f2, ntry, nkeep = pl.split_test(self.exp, None, S, f0, f0["model_full"],
@@ -331,7 +347,7 @@ class SplitAndPolishTestCase(unittest.TestCase):
         exp = lsstStubs.FakeExposure(data, var)
         fakefit = lstsq_fit(data, var, lambda x, y: lsstStubs.gaussian_comp((n, n), x, y, s0, h))
         stale = truth + rng.normal(0, 0.2, truth.shape) * (rng.uniform(size=(len(truth), 1)) < 0.4)
-        S = pl._state(stale, seed=True)
+        S = pl._state(stale, from_gaia=True)
         S["ref"] = truth.copy()
         P = dict(pl._params({}))
         P["final_polish_rounds"] = 8
@@ -354,7 +370,7 @@ class SplitAndPolishTestCase(unittest.TestCase):
 class EllipticalSourceTestCase(unittest.TestCase):
     n, s0, h = 120, 1.9, 14
 
-    def _run(self, truth_fn, xy, seeds):
+    def _run(self, truth_fn, xy, gaia_idx):
         from scipy.signal import fftconvolve
         n, s0, h = self.n, self.s0, self.h
         big = geom.Box2I(geom.Point2I(0, 0), geom.Point2I(n - 1, n - 1))
@@ -390,7 +406,7 @@ class EllipticalSourceTestCase(unittest.TestCase):
 
         exp = lsstStubs.FakeExposure(data, var)
         S = pl._state(np.array(xy, float))
-        S["seed"][seeds] = True
+        S["from_gaia"][gaia_idx] = True
         S["ref"] = S["xy"].copy()
         pl._bf_reset()
         pl.clear_stamp_cache()
@@ -521,7 +537,7 @@ class BackgroundLowFitTestCase(unittest.TestCase):
             pl.refit_background_lowfit(exp, "spline")
 
     def testDefaultIsPlane(self):
-        self.assertEqual(pl.SEEDED_DEFAULTS["bg_mode"], "plane")
+        self.assertEqual(pl.PIPELINE_DEFAULTS["bg_mode"], "plane")
 
 
 if __name__ == "__main__":

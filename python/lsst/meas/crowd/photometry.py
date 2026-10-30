@@ -1,7 +1,23 @@
 # This file is part of meas_crowd.
 #
 # Developed for the LSST Data Management System.
-# See the COPYRIGHT file at the top-level directory of this distribution.
+# This product includes software developed by the LSST Project
+# (https://www.lsst.org).
+# See the COPYRIGHT file at the top-level directory of this distribution
+# for details of code ownership.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """Magnitudes of the fitted sources.
 
@@ -246,8 +262,8 @@ def zero_point_from_run(run):
 def compare_with_gaia(phot, gaia, match_radius_px=1.0, offset_min_snr=50.0, verbose=True):
     """Add Gaia comparison columns to a photometry table.
 
-    Every fitted source is paired with a Gaia star: a Gaia-seeded source with the star it was
-    seeded from (``gaia_index``), any other source with the nearest unclaimed Gaia star within
+    Every fitted source is paired with a Gaia star: a source started from a Gaia position with
+    that star (``gaia_index``), any other source with the nearest unclaimed Gaia star within
     ``match_radius_px``.  Positions are compared with Gaia's at the visit epoch (as placed on the
     detector by the visit WCS); magnitudes with Gaia G.  Gaia G is a much broader band than any
     LSST filter, so ``gaia_dmag`` contains a zero-point offset and a colour term: the median
@@ -260,11 +276,11 @@ def compare_with_gaia(phot, gaia, match_radius_px=1.0, offset_min_snr=50.0, verb
         Output of `measure_photometry` (``x``, ``y``, ``psf_flux``, ``psf_mag``, ``gaia_index``;
         ``ra``, ``dec`` if the exposure had a WCS).
     gaia : `astropy.table.Table`
-        The Gaia catalogue the run was seeded from (``session.gaia``: ``source_id``, ``ra``,
+        The Gaia catalogue the run started from (``session.gaia``: ``source_id``, ``ra``,
         ``dec``, ``x``, ``y``, ``phot_g_mean_mag``, optionally ``phot_bp_mean_mag`` and
         ``phot_rp_mean_mag``).
     match_radius_px : `float`, optional
-        Match radius for sources that were not Gaia-seeded [px].
+        Match radius for sources that did not start from a Gaia position [px].
     offset_min_snr : `float`, optional
         Minimum PSF S/N of the matches that set the median magnitude offset.
     verbose : `bool`, optional
@@ -289,14 +305,14 @@ def compare_with_gaia(phot, gaia, match_radius_px=1.0, offset_min_snr=50.0, verb
     row = np.full(n, -1, np.int64)
     kind = np.array([""] * n, dtype="U8")
     gi = np.asarray(t["gaia_index"], np.int64) if "gaia_index" in t.colnames else np.full(n, -1)
-    seeded = (gi >= 0) & (gi < len(gaia))
-    row[seeded], kind[seeded] = gi[seeded], "seed"
-    claimed = set(row[seeded].tolist())
+    linked = (gi >= 0) & (gi < len(gaia))
+    row[linked], kind[linked] = gi[linked], "linked"
+    claimed = set(row[linked].tolist())
     ok = np.isfinite(gx) & np.isfinite(gy)
-    if ok.any() and (~seeded).any():
+    if ok.any() and (~linked).any():
         idx_ok = np.flatnonzero(ok)
         tree = cKDTree(np.column_stack([gx[ok], gy[ok]]))
-        rest = np.flatnonzero(~seeded)
+        rest = np.flatnonzero(~linked)
         d, k = tree.query(np.column_stack([x[rest], y[rest]]))
         for j in np.argsort(d):                        # closest pairs first
             r = int(idx_ok[k[j]])
@@ -356,7 +372,7 @@ def compare_with_gaia(phot, gaia, match_radius_px=1.0, offset_min_snr=50.0, verb
         sep = (np.nanmedian(np.asarray(t["gaia_sep"])[m]) if "gaia_sep" in t.colnames and m.any()
                else np.nan)
         print(f"Gaia comparison: {int(m.sum())} of {n} sources matched "
-              f"({int(np.sum(kind == 'seed'))} seeded, {int(np.sum(kind == 'position'))} by position); "
+              f"({int(np.sum(kind == 'linked'))} linked, {int(np.sum(kind == 'position'))} by position); "
               f"{n_unm} Gaia stars in the area without a fitted source; psf_mag - G median "
               f"{off:+.3f} from {n_off} stars (S/N >= {offset_min_snr:g}), scatter {sc:.3f} mag; "
               f"median separation {sep:.1f} mas")
@@ -408,10 +424,10 @@ def measure_photometry(run, aperture_fwhm=1.5, zero_point=None, verbose=True, ga
         Print a summary.
     gaia : `astropy.table.Table` or `bool`, optional
         The Gaia catalogue for the Gaia comparison columns of `compare_with_gaia`; None (default)
-        uses the run's own (``run.gaia``, the catalogue it was seeded from) if it has one, False
+        uses the run's own (``run.gaia``, the catalogue it started from) if it has one, False
         leaves the columns out.
     gaia_match_px : `float`, optional
-        Gaia match radius for sources that were not Gaia-seeded [px].
+        Gaia match radius for sources that did not start from a Gaia position [px].
 
     Returns
     -------
@@ -471,7 +487,7 @@ def measure_photometry(run, aperture_fwhm=1.5, zero_point=None, verbose=True, ga
         t["ra"], t["dec"] = np.asarray(ra), np.asarray(dec)
     except Exception:
         pass
-    t["gaia"] = np.asarray(S["seed"], bool)
+    t["gaia"] = np.asarray(S["from_gaia"], bool)
     t["gaia_index"] = np.asarray(S["gaia"])
     t["gaia_G"] = np.asarray(S["g"], float)
     t["extended"] = np.asarray(S["ext"]) > 0

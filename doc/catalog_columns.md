@@ -43,7 +43,7 @@ One row is one fitted source.  `id` is the source's index in the final fit: the 
 ## Photometry catalogue
 
 One table holds both the measurements and the comparison with Gaia.  The Gaia columns are
-included whenever the run was seeded from Gaia (the run keeps its Gaia table as `run.gaia`, and
+included whenever the run started from Gaia positions (the run keeps its Gaia table as `run.gaia`, and
 `measure_photometry` uses it by default); `measure_photometry(run, gaia=False)` leaves them out.
 
 ### Measurement columns
@@ -56,9 +56,9 @@ exposure has a WCS (always for a `visit_image`).
 | `id` | int | – | Source index in the final fit (0 … N−1) |
 | `x`, `y` | float | px | Fitted centre, detector coordinates (see [Conventions](#conventions)) |
 | `ra`, `dec` | float | deg | Sky position of the fitted centre (ICRS, from the visit WCS) |
-| `gaia` | bool | – | The source was **seeded** from a Gaia star (and kept that link through the fit) |
-| `gaia_index` | int | – | Row of that Gaia star in `session.gaia` (−1 = not seeded) |
-| `gaia_G` | float | mag | Gaia G of the matched star (seeded sources; with `gaia=`, also position matches) |
+| `gaia` | bool | – | The source **started from a Gaia position** (and kept that link through the fit) |
+| `gaia_index` | int | – | Row of that Gaia star in `session.gaia` (−1 = did not start from Gaia) |
+| `gaia_G` | float | mag | Gaia G of the matched star (sources started from Gaia, and position matches) |
 | `extended` | bool | – | Fitted as an extended source (PSF broadened by a Gaussian, or the elliptical galaxy model) |
 | `in_interior` | bool | – | Centre lies inside the requested box (False = in the `pad` margin; fitted only so edge stars have their neighbours) |
 | `psf_flux` | float | image units (nJy) | Total flux from the joint PSF fit (the PSF is normalised to unit sum, so the amplitude is the total flux).  For bright stars it includes the flux of their per-star correction terms |
@@ -77,13 +77,13 @@ exposure has a WCS (always for a `visit_image`).
 Part of the photometry catalogue, after the measurement columns (made by `compare_with_gaia`,
 which `measure_photometry` calls; `crowd.compare_with_gaia(phot, gaia)` adds them to a table
 made without them).
-A source is matched to the Gaia star it was seeded from; a source that was not seeded is matched
+A source is matched to the Gaia star whose position it started from; any other source is matched
 to the nearest Gaia star within `gaia_match_px` (default 1 px) that no other source has claimed.
 
 | Column | Type | Unit | Description |
 | --- | --- | --- | --- |
 | `gaia_match` | bool | – | The source has a Gaia counterpart |
-| `gaia_match_type` | str | – | `"seed"` (seeded from it), `"position"` (nearest Gaia star within the radius) or `""` |
+| `gaia_match_type` | str | – | `"linked"` (started from this Gaia star's position), `"position"` (nearest Gaia star within the radius) or `""` |
 | `gaia_source_id` | int | – | Gaia DR3 `source_id` (−1 = no match) |
 | `gaia_ra`, `gaia_dec` | float | deg | Gaia position at the visit epoch (ICRS) |
 | `gaia_x`, `gaia_y` | float | px | Gaia position on the detector, through the visit WCS |
@@ -109,7 +109,7 @@ Notes:
   the Butler reference catalogue gives `−2.5 log10(flux) + 31.4` of the catalogue's G flux in
   nJy.  The header keyword `GAIASYS` says which.  The offset absorbs the difference.
 - **Position offsets.**  A common offset of all stars is a WCS offset (the pipeline removes one
-  from the seeds before fitting, but the catalogue compares with Gaia as placed by the visit WCS);
+  from the Gaia starting positions before fitting, but the catalogue compares with Gaia as placed by the visit WCS);
   a pattern across the image is a WCS distortion; the scatter is the centroid noise.
 - **Gaia stars without a source.**  `GAIAUNM` counts Gaia stars inside the fitted area that no
   source matched (too faint, masked, merged into a neighbour, or missing from the fit).
@@ -164,8 +164,8 @@ errors, aperture photometry and the Gaia comparison.
 | `edge_pix` | px | Distance to the cutout edge |
 | `group_size` | – | Number of sources fitted jointly with it (overlapping group) |
 | `from_gaia` | – | Same as `gaia` |
-| `gaia_source_id`, `gaia_G` | –, mag | The seeding Gaia star |
-| `gaia_dx`, `gaia_dy` | px | Fitted position minus the Gaia **seed** position after the pipeline's global offset correction (so not the same as the comparison columns above, which use Gaia as placed by the WCS) |
+| `gaia_source_id`, `gaia_G` | –, mag | The Gaia star the source started from |
+| `gaia_dx`, `gaia_dy` | px | Fitted position minus the Gaia **starting** position after the pipeline's global offset correction (so not the same as the comparison columns above, which use Gaia as placed by the WCS) |
 | `ext_sigma_px` | px | Size of the Gaussian broadening of an extended source (0 = point source) |
 
 ## Selecting a clean sample

@@ -11,7 +11,7 @@ Every public function and class of `lsst.meas.crowd`: what it does, its paramete
 | [`session.make_config`](#sessionmake_config) | Build a pipeline configuration (keyword arguments of `fitLib.run_cutout_pipeline`). |
 | [`session.prepare_session`](#sessionprepare_session) | Load a visit image, cut out the regions and set up the detector-level PSF. |
 | [`gaiaCatalog.attach_gaia`](#gaiacatalogattach_gaia) | Load Gaia once for a session and store it as ``session.gaia``. |
-| [`pipeline.run_session_gaia`](#pipelinerun_session_gaia) | Run the seeded pipeline on every (or the named) cutout of a session. |
+| [`pipeline.run_session_gaia`](#pipelinerun_session_gaia) | Run the adaptive pipeline on every (or the named) cutout of a session. |
 | [`pipeline.report`](#pipelinereport) | Print what the adaptive loops did, pass by pass. |
 | [`photometry.measure_photometry`](#photometrymeasure_photometry) | Measure PSF and aperture magnitudes of a run's sources. |
 | [`plotting.plot_final_comparison`](#plottingplot_final_comparison) | Plot original \| final model \| residual \| residual/sigma of a run. |
@@ -27,9 +27,9 @@ Every public function and class of `lsst.meas.crowd`: what it does, its paramete
 
 | Module | Role | Public functions / classes |
 | --- | --- | --- |
-| [`pipeline`](#pipeline) | the driver: run the Gaia-seeded pipeline on cutouts, inner / outer loops, PSF refinement, diagnostics | 39 |
+| [`pipeline`](#pipeline) | the driver: run the pipeline on cutouts from Gaia starting positions, inner / outer loops, PSF refinement, diagnostics | 39 |
 | [`session`](#session) | load a visit, cut out regions, set up the PSF; configuration; saving runs | 19 |
-| [`gaiaCatalog`](#gaiacatalog) | the Gaia catalogue and the seeds of each cutout | 4 |
+| [`gaiaCatalog`](#gaiacatalog) | the Gaia catalogue and the starting positions of each cutout | 4 |
 | [`photometry`](#photometry) | PSF and aperture photometry, errors, the Gaia comparison | 9 |
 | [`plotting`](#plotting) | final data / model / residual plots and residual diagnostics | 9 |
 | [`stagePlots`](#stageplots) | plots of the intermediate stages and pass-to-pass comparison | 6 |
@@ -41,9 +41,9 @@ Every public function and class of `lsst.meas.crowd`: what it does, its paramete
 
 ## pipeline
 
-`lsst.meas.crowd.pipeline`: the driver: run the Gaia-seeded pipeline on cutouts, inner / outer loops, PSF refinement, diagnostics.
+`lsst.meas.crowd.pipeline`: the driver: run the pipeline on cutouts from Gaia starting positions, inner / outer loops, PSF refinement, diagnostics.
 
-Gaia-seeded, adaptive, iterative joint PSF-fitting pipeline.
+Adaptive, iterative joint PSF-fitting pipeline starting from Gaia positions.
 
 | Name | Summary |
 | --- | --- |
@@ -65,7 +65,7 @@ Gaia-seeded, adaptive, iterative joint PSF-fitting pipeline.
 | [`ellip_test`](#pipelineellip_test) | Model badly fitted sources as small galaxies. |
 | [`try_elliptical`](#pipelinetry_elliptical) | Try the elliptical-source test on one source of a finished run, printing every step. |
 | [`final_position_polish`](#pipelinefinal_position_polish) | Re-optimise all source positions jointly. |
-| [`run_inner_seeded`](#pipelinerun_inner_seeded) | Run one outer pass of the seeded pipeline. |
+| [`run_inner_adaptive`](#pipelinerun_inner_adaptive) | Run one outer pass of the adaptive pipeline. |
 | [`select_psf_stars`](#pipelineselect_psf_stars) | Select clean, bright, isolated, unsaturated point sources for the PSF stack. |
 | [`refine_psf_clean`](#pipelinerefine_psf_clean) | Update the PSF from the residual stack of clean stars, cross-validated. |
 | [`refine_psf_median`](#pipelinerefine_psf_median) | Correct the PSF core with the median residual/flux of the bright clean stars. |
@@ -78,13 +78,13 @@ Gaia-seeded, adaptive, iterative joint PSF-fitting pipeline.
 | [`fit_brightness_term`](#pipelinefit_brightness_term) | Measure or update the brightness-dependent PSF term (brighter-fatter). |
 | [`refit_background_lowfit`](#pipelinerefit_background_lowfit) | Fit a constant or tilted-plane background to the unmasked pixels and subtract it in place. |
 | [`print_timing`](#pipelineprint_timing) | Print the time spent per pipeline step. |
-| [`run_seeded_pipeline`](#pipelinerun_seeded_pipeline) | Run the Gaia-seeded adaptive pipeline on a whole cutout. |
-| [`run_cutout_gaia`](#pipelinerun_cutout_gaia) | Run the seeded adaptive pipeline on one cropped exposure. |
+| [`run_adaptive_pipeline`](#pipelinerun_adaptive_pipeline) | Run the adaptive pipeline on a whole cutout, starting from Gaia positions. |
+| [`run_cutout_gaia`](#pipelinerun_cutout_gaia) | Run the adaptive pipeline on one cropped exposure, starting from Gaia positions. |
 | [`check_bright_neighbours`](#pipelinecheck_bright_neighbours) | Test whether sources on the edges of bright stars are real. |
 | [`diagnose_residual`](#pipelinediagnose_residual) | Decide whether what is left around bright stars is noise or model error. |
 | [`modeled_near`](#pipelinemodeled_near) | Return the pixels closer to a modelled (near-saturated) core than to any other masked pixel. |
 | [`unmodeled_near_mask`](#pipelineunmodeled_near_mask) | Find the pixels whose residual cannot be judged because a source there is partly masked. |
-| [`run_session_gaia`](#pipelinerun_session_gaia) | Run the seeded pipeline on every (or the named) cutout of a session. |
+| [`run_session_gaia`](#pipelinerun_session_gaia) | Run the adaptive pipeline on every (or the named) cutout of a session. |
 | [`report`](#pipelinereport) | Print what the adaptive loops did, pass by pass. |
 
 ### pipeline.clear_stamp_cache
@@ -174,12 +174,12 @@ Undo `enable_speedups` and empty the caches.
 
 Measure the global offset between the image and the Gaia positions.
 
-The median (data centroid - Gaia position) of bright, unsaturated, fairly isolated seeds, from background-subtracted windowed centroids.
+The median (data centroid - Gaia position) of bright, unsaturated, fairly isolated Gaia sources, from background-subtracted windowed centroids.
 
 | Parameter | Type | Description |
 | --- | --- | --- |
 | `exposure` | `lsst.afw.image.Exposure` | The cutout. |
-| `S` | `dict` | Source state with the Gaia seeds (see ``_state``). |
+| `S` | `dict` | Source state with the Gaia starting positions (see ``_state``). |
 | `fwhm` | `float` | PSF FWHM [px]. |
 | `bad_bitmask` | `int` | Mask bits of pixels to ignore. |
 | `noise` | `float` | Typical pixel noise. |
@@ -221,7 +221,7 @@ Around unsaturated point sources with peak S/N >= ``model_err_min_snr``, the rob
 | Parameter | Type | Description |
 | --- | --- | --- |
 | `exposure` | `lsst.afw.image.Exposure` | The fitted exposure. |
-| `res` | `dict` | Result of `run_inner_seeded`. |
+| `res` | `dict` | Result of `run_inner_adaptive`. |
 | `P` | `dict` | Pipeline options. |
 | `verbose` | `bool`, optional | Print the result. |
 
@@ -441,13 +441,13 @@ Gauss-Newton steps (capped at ``final_polish_cap`` px, Gaia drift limit kept) an
 | `fit` | `dict` | Joint fit (the input object if nothing improved). |
 | `info` | `dict` | ``rounds``, ``moved``, ``chi0`` and ``chi1`` (total chi2 before / after). |
 
-### pipeline.run_inner_seeded
+### pipeline.run_inner_adaptive
 
-`run_inner_seeded(exposure, psf, bad_bitmask, S, P, outer_idx=0, threshold_start=None, shape_now=False, timer=None)`
+`run_inner_adaptive(exposure, psf, bad_bitmask, S, P, outer_idx=0, threshold_start=None, shape_now=False, timer=None)`
 
-Run one outer pass of the seeded pipeline.
+Run one outer pass of the adaptive pipeline.
 
-A warm fit of the current sources (Gaia seeds or the previous pass), then detect -> add -> joint fit -> refine -> clean, repeated until the residual check says stop; then the halo, ring, position-polish, pair-split and galaxy tests.
+A warm fit of the current sources (Gaia starting positions or the previous pass), then detect -> add -> joint fit -> refine -> clean, repeated until the residual check says stop; then the halo, ring, position-polish, pair-split and galaxy tests.
 
 | Parameter | Type | Description |
 | --- | --- | --- |
@@ -463,7 +463,7 @@ A warm fit of the current sources (Gaia seeds or the previous pass), then detect
 
 | Returns | Type | Description |
 | --- | --- | --- |
-| `result` | `dict` | Compatible with `fitLib.run_inner_loop_verbose`'s result (``model_full``, ``residual_full``, ``peaks``, ``amps``, histories, ``snaps``), plus ``S``, ``bright_corr``, ``adaptive`` (the loop decisions), ``is_seed`` and ``gaia_index``. |
+| `result` | `dict` | Compatible with `fitLib.run_inner_loop_verbose`'s result (``model_full``, ``residual_full``, ``peaks``, ``amps``, histories, ``snaps``), plus ``S``, ``bright_corr``, ``adaptive`` (the loop decisions), ``is_gaia`` and ``gaia_index``. |
 
 ### pipeline.select_psf_stars
 
@@ -474,7 +474,7 @@ Select clean, bright, isolated, unsaturated point sources for the PSF stack.
 | Parameter | Type | Description |
 | --- | --- | --- |
 | `exposure` | `lsst.afw.image.Exposure` | The fitted exposure. |
-| `res` | `dict` | Result of `run_inner_seeded`. |
+| `res` | `dict` | Result of `run_inner_adaptive`. |
 | `fwhm` | `float` | PSF FWHM [px]. |
 | `psf_peak` | `float` | Peak value of the unit-flux PSF. |
 | `noise` | `float` | Typical pixel noise. |
@@ -497,7 +497,7 @@ The clean stars are split into two halves A and B (alternating in brightness).  
 | --- | --- | --- |
 | `exposure` | `lsst.afw.image.Exposure` | The fitted exposure. |
 | `psf` | `lsst.afw.detection.Psf` | Current PSF. |
-| `res` | `dict` | Result of `run_inner_seeded`. |
+| `res` | `dict` | Result of `run_inner_adaptive`. |
 | `bad_bitmask` | `int` | Mask bits of pixels to ignore. |
 | `P` | `dict` | Pipeline options. |
 | `fitkw` | `dict` | Keyword arguments of the joint fit. |
@@ -520,7 +520,7 @@ The median is robust to neighbours, cosmic rays and per-star noise, so it keeps 
 | --- | --- | --- |
 | `exposure` | `lsst.afw.image.Exposure` | The fitted exposure. |
 | `psf` | `lsst.afw.detection.Psf` | Current PSF. |
-| `res` | `dict` | Result of `run_inner_seeded`. |
+| `res` | `dict` | Result of `run_inner_adaptive`. |
 | `bad_bitmask` | `int` | Mask bits of pixels to ignore. |
 | `P` | `dict` | Pipeline options (``psf_core_*``). |
 | `fitkw` | `dict` | Keyword arguments of the joint fit. |
@@ -601,7 +601,7 @@ Neighbour-subtracted radial profiles of unsaturated bright stars (peak S/N >= ``
 | Parameter | Type | Description |
 | --- | --- | --- |
 | `exposure` | `lsst.afw.image.Exposure` | The fitted exposure. |
-| `res` | `dict` | Result of `run_inner_seeded`. |
+| `res` | `dict` | Result of `run_inner_adaptive`. |
 | `psf` | `lsst.afw.detection.Psf` | Current PSF. |
 | `P` | `dict` | Pipeline options (``wing_*``, ``psf_wing_size``). |
 | `verbose` | `bool`, optional | Print the fitted profile. |
@@ -642,7 +642,7 @@ Measured from the clean stars' residuals in ``res`` (fitted with ``psf_old``); t
 | `exposure` | `lsst.afw.image.Exposure` | The fitted exposure. |
 | `psf_old` | `lsst.afw.detection.Psf` | PSF the residuals were fitted with. |
 | `psf_new` | `lsst.afw.detection.Psf` | Constant PSF to add the variation to. |
-| `res` | `dict` | Result of `run_inner_seeded`. |
+| `res` | `dict` | Result of `run_inner_adaptive`. |
 | `bad_bitmask` | `int` | Mask bits of pixels to ignore. |
 | `P` | `dict` | Pipeline options (``psf_spatial_*``). |
 | `fitkw` | `dict` | Keyword arguments of the joint fit. |
@@ -665,7 +665,7 @@ From isolated, unsaturated stars with peak S/N >= ``bf_min_snr``: per 1-px ring,
 | --- | --- | --- |
 | `exposure` | `lsst.afw.image.Exposure` | The fitted exposure. |
 | `psf` | `lsst.afw.detection.Psf` | Current PSF. |
-| `res` | `dict` | Result of `run_inner_seeded`. |
+| `res` | `dict` | Result of `run_inner_adaptive`. |
 | `bad_bitmask` | `int` | Mask bits of pixels to ignore. |
 | `P` | `dict` | Pipeline options (``bf_*``). |
 | `fitkw` | `dict` | Keyword arguments of the joint fit. |
@@ -709,26 +709,26 @@ Print the time spent per pipeline step.
 | --- | --- | --- |
 | `timer` | `lsst.meas.crowd.fitLib.StepTimer`, optional | Timer (default: fitLib's ``TIMER``). |
 
-### pipeline.run_seeded_pipeline
+### pipeline.run_adaptive_pipeline
 
-`run_seeded_pipeline(exposure_crop, psf, bad_bitmask, seeds=None, seed_gaia_index=None, starCat=None, bgImage=None, viz=False, seed_gmag=None, **cfg)`
+`run_adaptive_pipeline(exposure_crop, psf, bad_bitmask, gaia_xy=None, gaia_rows=None, starCat=None, bgImage=None, viz=False, gaia_gmag=None, **cfg)`
 
-Run the Gaia-seeded adaptive pipeline on a whole cutout.
+Run the adaptive pipeline on a whole cutout, starting from Gaia positions.
 
-The replacement for `fitLib.run_cutout_pipeline`: outer passes of `run_inner_seeded`, with background refit and PSF refinement in between, until the source list and the PSF stop changing.
+The replacement for `fitLib.run_cutout_pipeline`: outer passes of `run_inner_adaptive`, with background refit and PSF refinement in between, until the source list and the PSF stop changing.
 
 | Parameter | Type | Description |
 | --- | --- | --- |
 | `exposure_crop` | `lsst.afw.image.Exposure` | Cutout before background subtraction. |
 | `psf` | `lsst.afw.detection.Psf` | Initial PSF. |
 | `bad_bitmask` | `int` | Mask bits of pixels to ignore. |
-| `seeds` | `numpy.ndarray`, optional | Seed positions (detector px), shape (N, 2); None or empty = no seeds. |
-| `seed_gaia_index` | `numpy.ndarray`, optional | Gaia catalogue row of each seed. |
+| `gaia_xy` | `numpy.ndarray`, optional | Gaia starting positions (detector px), shape (N, 2); None or empty = no Gaia. |
+| `gaia_rows` | `numpy.ndarray`, optional | Gaia catalogue row of each starting position. |
 | `starCat` | `lsst.afw.table.SourceCatalog`, optional | Detector-level PSF stars. |
 | `bgImage` | `lsst.afw.image.Image`, optional | Detector-level background, subtracted in the first pass. |
 | `viz` | `bool`, optional | Draw the per-pass overview. |
-| `seed_gmag` | `numpy.ndarray`, optional | Gaia G magnitude of each seed. |
-| `**cfg` | – | Configuration: `fitLib.run_cutout_pipeline` keys and ``SEEDED_DEFAULTS`` keys. |
+| `gaia_gmag` | `numpy.ndarray`, optional | Gaia G magnitude of each starting position. |
+| `**cfg` | – | Configuration: `fitLib.run_cutout_pipeline` keys and ``PIPELINE_DEFAULTS`` keys. |
 
 | Returns | Type | Description |
 | --- | --- | --- |
@@ -738,21 +738,21 @@ The replacement for `fitLib.run_cutout_pipeline`: outer passes of `run_inner_see
 
 `run_cutout_gaia(raw_crop, psf, bad_bitmask, gaia_tbl=None, config=None, interior_bbox=None, starCat=None, bgImage=None, viz=False, name='cutout', gmag_max=None, **overrides)`
 
-Run the seeded adaptive pipeline on one cropped exposure.
+Run the adaptive pipeline on one cropped exposure, starting from Gaia positions.
 
 | Parameter | Type | Description |
 | --- | --- | --- |
 | `raw_crop` | `lsst.afw.image.Exposure` | Cutout before background subtraction. |
 | `psf` | `lsst.afw.detection.Psf` | Initial PSF. |
 | `bad_bitmask` | `int` | Mask bits of pixels to ignore. |
-| `gaia_tbl` | `astropy.table.Table`, optional | Gaia catalogue (see `lsst.meas.crowd.gaiaCatalog.gaia_catalog`); None = no seeds. |
+| `gaia_tbl` | `astropy.table.Table`, optional | Gaia catalogue (see `lsst.meas.crowd.gaiaCatalog.gaia_catalog`); None = no Gaia. |
 | `config` | `dict`, optional | Pipeline configuration. |
 | `interior_bbox` | `lsst.geom.Box2I`, optional | The requested box without padding (default: the whole cutout). |
 | `starCat` | `lsst.afw.table.SourceCatalog`, optional | Detector-level PSF stars. |
 | `bgImage` | `lsst.afw.image.Image`, optional | Detector-level background. |
 | `viz` | `bool`, optional | Draw the per-pass overview. |
 | `name` | `str`, optional | Cutout name. |
-| `gmag_max` | `float`, optional | Only seed Gaia sources brighter than this G magnitude. |
+| `gmag_max` | `float`, optional | Only start from Gaia stars brighter than this G magnitude. |
 | `**overrides` | – | Configuration overrides. |
 
 | Returns | Type | Description |
@@ -847,7 +847,7 @@ Everything within ``pad_fwhm`` FWHM of a bad pixel, plus any positive residual b
 
 `run_session_gaia(session, config=None, names=None, out_dir=None, viz=False, plot_final=True, gmag_max=None, n_jobs=1, plot_kwargs=None, **overrides)`
 
-Run the seeded pipeline on every (or the named) cutout of a session.
+Run the adaptive pipeline on every (or the named) cutout of a session.
 
 Calls `lsst.meas.crowd.gaiaCatalog.attach_gaia` first if the session has no Gaia catalogue.
 
@@ -859,7 +859,7 @@ Calls `lsst.meas.crowd.gaiaCatalog.attach_gaia` first if the session has no Gaia
 | `out_dir` | `str`, optional | Save each run under ``<out_dir>/visit<V>_det<D>/<name>/``; needed with ``n_jobs > 1``, since results that cannot be sent back are only on disk. |
 | `viz` | `bool`, optional | Draw the per-pass overview. |
 | `plot_final` | `bool`, optional | Plot the final comparison of each cutout. |
-| `gmag_max` | `float`, optional | Only seed Gaia sources brighter than this G magnitude. |
+| `gmag_max` | `float`, optional | Only start from Gaia stars brighter than this G magnitude. |
 | `n_jobs` | `int`, optional | Fit cutouts in this many parallel worker processes (Linux fork; one core each). |
 | `plot_kwargs` | `dict`, optional | Keyword arguments of `lsst.meas.crowd.plotting.plot_final_comparison`. |
 | `**overrides` | – | Configuration overrides (e.g. ``max_outer=3``). |
@@ -1081,7 +1081,7 @@ Result of running the pipeline on one cutout.
 | `interior_bbox` | `lsst.geom.Box2I` | The requested box (without padding). |
 | `bad_bitmask` | `int` | Mask bits of pixels the fit ignored. |
 | `config` | `dict` | Configuration used. |
-| `gaia` | `astropy.table.Table`, optional | The Gaia catalogue the run was seeded from (used for the Gaia comparison columns). |
+| `gaia` | `astropy.table.Table`, optional | The Gaia catalogue whose positions started the run (used for the Gaia comparison columns). |
 | `photometry` | `astropy.table.Table`, optional | The photometry catalogue (see `lsst.meas.crowd.photometry.measure_photometry`), made at the end of the run and written by `save_run` as ``photometry.fits``. |
 
 ### session.build_catalog
@@ -1262,16 +1262,16 @@ No LSST stack and no re-fit needed.
 
 ## gaiaCatalog
 
-`lsst.meas.crowd.gaiaCatalog`: the Gaia catalogue and the seeds of each cutout.
+`lsst.meas.crowd.gaiaCatalog`: the Gaia catalogue and the starting positions of each cutout.
 
-Gaia DR3 seed catalogue for a visit.
+The Gaia DR3 catalogue of a visit and the Gaia starting positions of each cutout.
 
 | Name | Summary |
 | --- | --- |
 | [`visit_epoch`](#gaiacatalogvisit_epoch) | Return the observation epoch of an exposure. |
 | [`gaia_catalog`](#gaiacataloggaia_catalog) | Load the Gaia DR3 stars overlapping a box, with positions at the observation epoch. |
 | [`attach_gaia`](#gaiacatalogattach_gaia) | Load Gaia once for a session and store it as ``session.gaia``. |
-| [`select_seeds`](#gaiacatalogselect_seeds) | Select the Gaia stars that seed a cutout. |
+| [`select_gaia_sources`](#gaiacatalogselect_gaia_sources) | Select the Gaia stars whose positions start the fit of a cutout. |
 
 ### gaiaCatalog.visit_epoch
 
@@ -1334,11 +1334,11 @@ Covers the whole visit image or, without one, the union of the session's cutouts
 | --- | --- | --- |
 | `gaia` | `astropy.table.Table` | The Gaia catalogue (see `gaia_catalog`). |
 
-### gaiaCatalog.select_seeds
+### gaiaCatalog.select_gaia_sources
 
-`select_seeds(gaia_tbl, bbox, fwhm, pad_fwhm=1.5, gmag_max=None, min_sep_px=0.5)`
+`select_gaia_sources(gaia_tbl, bbox, fwhm, pad_fwhm=1.5, gmag_max=None, min_sep_px=0.5)`
 
-Select the Gaia stars that seed a cutout.
+Select the Gaia stars whose positions start the fit of a cutout.
 
 Stars inside the box grown by ``pad_fwhm * fwhm``, brightest first, with near-duplicates (closer than ``min_sep_px``) removed.
 
@@ -1353,7 +1353,7 @@ Stars inside the box grown by ``pad_fwhm * fwhm``, brightest first, with near-du
 
 | Returns | Type | Description |
 | --- | --- | --- |
-| `xy` | `numpy.ndarray` | Seed positions, shape (N, 2). |
+| `xy` | `numpy.ndarray` | Starting positions, shape (N, 2). |
 | `rows` | `numpy.ndarray` [`int`] | Their rows in ``gaia_tbl``. |
 
 ## photometry
@@ -1481,13 +1481,13 @@ Return the magnitude zero point of a run's image units.
 
 Add Gaia comparison columns to a photometry table.
 
-Every fitted source is paired with a Gaia star: a Gaia-seeded source with the star it was seeded from (``gaia_index``), any other source with the nearest unclaimed Gaia star within ``match_radius_px``.  Positions are compared with Gaia's at the visit epoch (as placed on the detector by the visit WCS); magnitudes with Gaia G.  Gaia G is a much broader band than any LSST filter, so ``gaia_dmag`` contains a zero-point offset and a colour term: the median offset of bright, point-like matches is removed in ``gaia_dmag_rel``, and ``gaia_bp_rp`` is given to fit the colour term.
+Every fitted source is paired with a Gaia star: a source started from a Gaia position with that star (``gaia_index``), any other source with the nearest unclaimed Gaia star within ``match_radius_px``.  Positions are compared with Gaia's at the visit epoch (as placed on the detector by the visit WCS); magnitudes with Gaia G.  Gaia G is a much broader band than any LSST filter, so ``gaia_dmag`` contains a zero-point offset and a colour term: the median offset of bright, point-like matches is removed in ``gaia_dmag_rel``, and ``gaia_bp_rp`` is given to fit the colour term.
 
 | Parameter | Type | Description |
 | --- | --- | --- |
 | `phot` | `astropy.table.Table` | Output of `measure_photometry` (``x``, ``y``, ``psf_flux``, ``psf_mag``, ``gaia_index``; ``ra``, ``dec`` if the exposure had a WCS). |
-| `gaia` | `astropy.table.Table` | The Gaia catalogue the run was seeded from (``session.gaia``: ``source_id``, ``ra``, ``dec``, ``x``, ``y``, ``phot_g_mean_mag``, optionally ``phot_bp_mean_mag`` and ``phot_rp_mean_mag``). |
-| `match_radius_px` | `float`, optional | Match radius for sources that were not Gaia-seeded [px]. |
+| `gaia` | `astropy.table.Table` | The Gaia catalogue the run started from (``session.gaia``: ``source_id``, ``ra``, ``dec``, ``x``, ``y``, ``phot_g_mean_mag``, optionally ``phot_bp_mean_mag`` and ``phot_rp_mean_mag``). |
+| `match_radius_px` | `float`, optional | Match radius for sources that did not start from a Gaia position [px]. |
 | `offset_min_snr` | `float`, optional | Minimum PSF S/N of the matches that set the median magnitude offset. |
 | `verbose` | `bool`, optional | Print a summary. |
 
@@ -1523,8 +1523,8 @@ Measure PSF and aperture magnitudes of a run's sources.
 | `aperture_fwhm` | `float`, optional | Aperture radius [FWHM]; aperture fluxes are corrected to total. |
 | `zero_point` | `float`, optional | Override the zero point (default: PhotoCalib, else 31.4 for nJy). |
 | `verbose` | `bool`, optional | Print a summary. |
-| `gaia` | `astropy.table.Table` or `bool`, optional | The Gaia catalogue for the Gaia comparison columns of `compare_with_gaia`; None (default) uses the run's own (``run.gaia``, the catalogue it was seeded from) if it has one, False leaves the columns out. |
-| `gaia_match_px` | `float`, optional | Gaia match radius for sources that were not Gaia-seeded [px]. |
+| `gaia` | `astropy.table.Table` or `bool`, optional | The Gaia catalogue for the Gaia comparison columns of `compare_with_gaia`; None (default) uses the run's own (``run.gaia``, the catalogue it started from) if it has one, False leaves the columns out. |
+| `gaia_match_px` | `float`, optional | Gaia match radius for sources that did not start from a Gaia position [px]. |
 
 | Returns | Type | Description |
 | --- | --- | --- |
@@ -1573,7 +1573,7 @@ The median of the bright, clean, unsaturated stars' residuals, each divided by t
 
 Show zooms of individual stars: data | model | residual | residual/sigma.
 
-Every source in the window is marked (o = Gaia-seeded, x = found in the residual), with a line from each Gaia source's catalogue position (+) to its fitted position.  Prints each star's neighbours (offset, flux ratio, Gaia or not, distance from its Gaia position).
+Every source in the window is marked (o = started from Gaia, x = found in the residual), with a line from each Gaia source's catalogue position (+) to its fitted position.  Prints each star's neighbours (offset, flux ratio, Gaia or not, distance from its Gaia position).
 
 | Parameter | Type | Description |
 | --- | --- | --- |

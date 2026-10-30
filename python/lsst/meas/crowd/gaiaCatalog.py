@@ -1,12 +1,28 @@
 # This file is part of meas_crowd.
 #
 # Developed for the LSST Data Management System.
-# See the COPYRIGHT file at the top-level directory of this distribution.
+# This product includes software developed by the LSST Project
+# (https://www.lsst.org).
+# See the COPYRIGHT file at the top-level directory of this distribution
+# for details of code ownership.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Gaia DR3 seed catalogue for a visit.
+"""The Gaia DR3 catalogue of a visit and the Gaia starting positions of each cutout.
 
 Butler reference catalogue (or ESA TAP), proper motions propagated to the visit epoch, and
-seed selection for a cutout.
+the selection of the Gaia stars that start the fit of a cutout.
 """
 
 import os
@@ -267,8 +283,8 @@ def attach_gaia(session, visit_image=None, pad=64, cache_dir="gaia_cache", **kw)
 # =====================================================================
 # Cutout / session front ends (mirror cutout_notebook.run_cutout / run_session)
 # =====================================================================
-def select_seeds(gaia_tbl, bbox, fwhm, pad_fwhm=1.5, gmag_max=None, min_sep_px=0.5):
-    """Select the Gaia stars that seed a cutout.
+def select_gaia_sources(gaia_tbl, bbox, fwhm, pad_fwhm=1.5, gmag_max=None, min_sep_px=0.5):
+    """Select the Gaia stars whose positions start the fit of a cutout.
 
     Stars inside the box grown by ``pad_fwhm * fwhm``, brightest first, with near-duplicates
     (closer than ``min_sep_px``) removed.
@@ -291,7 +307,7 @@ def select_seeds(gaia_tbl, bbox, fwhm, pad_fwhm=1.5, gmag_max=None, min_sep_px=0
     Returns
     -------
     xy : `numpy.ndarray`
-        Seed positions, shape (N, 2).
+        Starting positions, shape (N, 2).
     rows : `numpy.ndarray` [`int`]
         Their rows in ``gaia_tbl``.
     """
@@ -320,3 +336,6 @@ def select_seeds(gaia_tbl, bbox, fwhm, pad_fwhm=1.5, gmag_max=None, min_sep_px=0
         keep = idx[alive]
     keep = np.asarray(keep, np.int64)
     return np.column_stack([x[keep], y[keep]]) if len(keep) else np.zeros((0, 2)), keep
+
+
+select_seeds = select_gaia_sources     # the old name, so existing code keeps working

@@ -18,53 +18,19 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-#
-# Vendored from the original notebook module cutout_adaptive.py (behaviour unchanged; only the
-# imports of the sibling modules were made package-relative).
 
-"""Residual-driven adaptive control for the cutout pipeline (the original cutout_adaptive.py).
+"""Residual check that decides whether sources are still missing.
 
-IDEA
-----
-After every inner loop the pipeline looks at its own residual.  A matched-filter S/N map
-of the residual is searched for local maxima (candidate missing sources) and local MINIMA
-(pure noise, since real sources are positive).  In the *clean region* (away from the
-cutout edge, bright-star halos, bad pixels, and fitted sources) the two counts should agree
-if nothing is missing:
+A matched-filter S/N map of the residual is searched for local maxima and minima in a clean
+region (away from the edge, bright stars, bad pixels and fitted sources).  Real missing sources
+only add positive peaks, while noise gives positive and negative ones equally, so the excess
+``N_pos - N_neg`` above an S/N threshold (error ``sqrt(N_pos + N_neg)``) estimates how many
+sources are missing; the negative count is measured in the same field, so the test adapts to
+crowding and correlated noise.  `residual_excess`, `is_missing`, `counts_at` and
+`pick_threshold` are used by the pipeline's inner loop.
 
-        excess(t) = N_pos(>= t) - N_neg(>= t)        error ~ sqrt(N_pos + N_neg)
-
-The negative count is measured IN THE SAME FIELD, so the test adapts by itself to dense /
-sparse regions and to correlated noise: in a crowded field the noise scale and the negative
-count rise, and a significant excess needs more positive peaks.
-
-If the excess is significant the inner loop is CONTINUED (warm start from the current
-sources, a few extra iterations) with a ladder of relaxations, one rung per round:
-
-    rung 0  lower thresholds  -> min_snr / near_bright_snr / shape min_snr_local / detection
-                                 threshold go down to the lowest S/N at which the estimated
-                                 false fraction  N_neg/N_pos  is still <= `fdr` (>= t_floor)
-    rung 1  relax gates       -> shape-cut chi2 / width limits x1.5, min_contrast <= 1,
-                                 reject_fwhm x0.7, near-bright S/N x0.75
-    rung 2  relax separations -> merge / prune separations x0.8 (blends), reject_fwhm x0.7
-
-A round is KEPT only if the excess at the evaluation S/N drops clearly and the negative
-count does not grow (no noise fitting); otherwise it is reverted and the controller stops.
-Optionally the OUTER loop is extended too (PSF / background refit + new inner loop) while
-excess remains and the last outer pass still added sources.
-
-SETUP (once)
-------------
-    python patch_cutout_fit_lib.py cutout_fit_lib.py      # 3 tiny hooks; makes a .bak
-    # restart the kernel, then:
-    from . import adaptive as ca
-    ca.install(target_snr=None, max_rounds=3, max_outer=6)   # BEFORE cn.run_session(...)
-    runs = cn.run_session(sess, cfg, ...)                    # unchanged
-    ca.report(runs[name])                                    # what the controller did
-
-`ca.install(enabled=False)` or `ca.uninstall()` gives back the original behaviour.
-
-Everything in the diagnostic is plain numpy/scipy (importable and testable without LSST).
+`install` adds the same check, with a ladder of relaxed thresholds, to
+`lsst.meas.crowd.fitLib.run_cutout_pipeline`.
 """
 import copy
 import inspect

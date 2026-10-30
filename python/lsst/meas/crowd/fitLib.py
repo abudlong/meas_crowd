@@ -18,21 +18,13 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-#
-# Vendored from the original notebook module cutout_fit_lib.py (behaviour unchanged; only the
-# imports of the sibling modules were made package-relative).
 
-"""Crowded-field iterative joint PSF fitting (the original cutout_fit_lib.py).
+"""Crowded-field iterative joint PSF fitting: the core library.
 
-Crowded-field iterative joint PSF-fit pipeline, extracted verbatim from
-pipelineAnalysis-update5.ipynb (inner loop, outer loop, cutout analysis,
-final-comparison and representative-source plotting).
-
-This module has no side effects on import: all notebook "RUN" / usage cells were
-removed. Drive it with run_cutouts.py (CLI) or call run_cutout_pipeline() yourself.
-
-Plotting functions call plt.show(); run_cutouts.py patches plt.show to save
-every open figure to disk instead.
+The joint non-negative PSF fit, source detection and filtering, centroid refinement, PSF and
+background re-determination, the iterative inner / outer loop of `run_cutout_pipeline`, and
+the plots used to inspect each step.  The Gaia-started adaptive pipeline in
+`lsst.meas.crowd.pipeline` builds on these functions.
 """
 import math
 import time

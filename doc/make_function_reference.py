@@ -42,7 +42,7 @@ ROOT = os.path.dirname(HERE)
 OUT = os.path.join(HERE, "function_reference.md")
 
 # (module, one-line role), in reading order: the driver and user-facing modules first, the
-# original notebook libraries last
+# core libraries last
 MODULES = [
     ("pipeline", "the driver: run the pipeline on cutouts from Gaia starting positions, inner / outer loops, "
                  "PSF refinement, diagnostics"),
@@ -54,9 +54,9 @@ MODULES = [
     ("sourcePlots", "per-source cutouts, cross-sections and magnitudes"),
     ("detector", "whole-detector runs: tiles, stitching, mosaic and tile plots"),
     ("fastKernels", "fast PSF stamps (C++ with a NumPy fallback)"),
-    ("fitLib", "the original cutout_fit_lib: joint fit, detection, PSF and background tools, "
+    ("fitLib", "the core library: joint fit, detection, PSF and background tools, "
                "plots"),
-    ("adaptive", "the original cutout_adaptive: the adaptive inner-loop decisions"),
+    ("adaptive", "the residual check deciding whether sources are still missing"),
 ]
 
 START_HERE = [

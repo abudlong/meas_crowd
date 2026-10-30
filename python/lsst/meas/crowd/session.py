@@ -18,42 +18,16 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-#
-# Vendored from the original notebook module cutout_notebook.py (behaviour unchanged; only the
-# imports of the sibling modules were made package-relative).
 
-"""Notebook-friendly front end for the pipeline (the original cutout_notebook.py).
+"""Sessions, configuration and saving of runs.
 
-Notebook-friendly front end for cutout_fit_lib.py (the run_cutouts.py / plot_from_fits.py
-logic turned into plain functions; nothing here touches matplotlib's backend, so figures
-show inline in Jupyter).
+`prepare_session` loads a visit image, cuts out the requested regions and sets up the PSF;
+`make_config` builds a configuration (``CROWDED_FIELD_CONFIG`` is the recommended starting
+point); `CutoutRun` holds a finished run and `save_run` writes it to disk.
 
-Quick start
------------
-    import cutout_notebook as cn
-
-    cfg = cn.make_config("crowded_cfg_v5_testing.json",      # optional JSON / dict
-                         n_outer=3, min_snr=4.0,              # any run_cutout_pipeline kwarg
-                         shape_kwargs=dict(chi2_max=2.5))     # (see `deep` note below)
-    cn.show_config(cfg)
-
-    sess = cn.prepare_session(visit=2025062100433, detector=80,
-                              cutouts=["3750,3750,250", (1000, 2000, 300, 300)],
-                              pad=0, psf_source="refit")
-
-    runs = cn.run_session(sess, cfg, viz=False, out_dir="results")   # dict name -> CutoutRun
-    run = runs[next(iter(runs))]
-    stats = cn.plot_final_comparison_robust(run)                      # new residual plot
-
-    # later, without re-fitting (needs only numpy/matplotlib/astropy):
-    cn.plot_final_comparison_from_fits("results/visit2025062100433_det80/<cutout name>")
-
-Config merging
---------------
-make_config() starts from DEFAULT_CONFIG (the run_cutouts.py defaults). A nested dict you
-pass (e.g. shape_kwargs, stack_kwargs, inner_kwargs) REPLACES the whole default dict by
-default -- exactly what run_cutouts.py --config does, so results match the CLI. Pass
-deep=True to merge nested dicts key-by-key instead (then unspecified keys keep defaults).
+``make_config`` starts from ``DEFAULT_CONFIG``.  A nested dict you pass (e.g. ``shape_kwargs``,
+``stack_kwargs``, ``inner_kwargs``) replaces the whole default dict; pass ``deep=True`` to merge
+nested dicts key by key instead (unspecified keys keep their defaults).
 """
 import copy
 import json

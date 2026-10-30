@@ -73,9 +73,9 @@ The package follows the Rubin DM layout (``sconsUtils`` + ``eups``)::
         detector.py               whole-detector tiling, stitching, mosaic and tile plots
         fastKernels.py            fast PSF stamps (C++ via pybind11, NumPy fallback)
         _crowdLib.cc              pybind11 wrapper of src/
-        fitLib.py, adaptive.py, session.py
-                                  the original cutout_fit_lib / cutout_adaptive / cutout_notebook
-                                  modules (package-relative imports, numpydoc docstrings)
+        fitLib.py                 core library: joint fit, detection, PSF / background tools
+        adaptive.py               residual check deciding whether sources are still missing
+        session.py                sessions, configuration, saving runs
     bin.src/crowdDetector.py      command line: fit / stitch / plot a whole detector
     tests/                        unit tests (run with or without the stack)
     examples/                     run_visit.py (notebook cells), run_visit_batch.py (terminal),

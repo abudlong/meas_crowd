@@ -34,4 +34,6 @@ Modules
 ``stagePlots``    PSF stars, backgrounds, rounds and colour-linked source pages
 ``detector``      whole-detector tiling, stitching and mosaic / tile plots
 ``fastKernels``   C++ (pybind11) / NumPy rendering of PSF stamps for a constant PSF
-``fitLib``, ``adaptive``, ``session``  the original notebook modules (vendored)
+``fitLib``        core library: joint fit, detection, PSF and background tools
+``adaptive``      residual check deciding whether sources are still missing
+``session``       sessions, configuration, saving runs

@@ -36,8 +36,8 @@ Every public function and class of `lsst.meas.crowd`: what it does, its paramete
 | [`sourcePlots`](#sourceplots) | per-source cutouts, cross-sections and magnitudes | 3 |
 | [`detector`](#detector) | whole-detector runs: tiles, stitching, mosaic and tile plots | 9 |
 | [`fastKernels`](#fastkernels) | fast PSF stamps (C++ with a NumPy fallback) | 6 |
-| [`fitLib`](#fitlib) | the original cutout_fit_lib: joint fit, detection, PSF and background tools, plots | 68 |
-| [`adaptive`](#adaptive) | the original cutout_adaptive: the adaptive inner-loop decisions | 7 |
+| [`fitLib`](#fitlib) | the core library: joint fit, detection, PSF and background tools, plots | 68 |
+| [`adaptive`](#adaptive) | the residual check deciding whether sources are still missing | 7 |
 
 ## pipeline
 
@@ -882,7 +882,7 @@ Print what the adaptive loops did, pass by pass.
 
 `lsst.meas.crowd.session`: load a visit, cut out regions, set up the PSF; configuration; saving runs.
 
-Notebook-friendly front end for the pipeline (the original cutout_notebook.py).
+Sessions, configuration and saving of runs.
 
 | Name | Summary |
 | --- | --- |
@@ -2344,9 +2344,9 @@ Compare the fast stamps with a reference renderer.
 
 ## fitLib
 
-`lsst.meas.crowd.fitLib`: the original cutout_fit_lib: joint fit, detection, PSF and background tools, plots.
+`lsst.meas.crowd.fitLib`: the core library: joint fit, detection, PSF and background tools, plots.
 
-Crowded-field iterative joint PSF fitting (the original cutout_fit_lib.py).
+Crowded-field iterative joint PSF fitting: the core library.
 
 | Name | Summary |
 | --- | --- |
@@ -3810,9 +3810,9 @@ Each category is split into pages of ``sources_per_page`` rows, so a page never 
 
 ## adaptive
 
-`lsst.meas.crowd.adaptive`: the original cutout_adaptive: the adaptive inner-loop decisions.
+`lsst.meas.crowd.adaptive`: the residual check deciding whether sources are still missing.
 
-Residual-driven adaptive control for the cutout pipeline (the original cutout_adaptive.py).
+Residual check that decides whether sources are still missing.
 
 | Name | Summary |
 | --- | --- |

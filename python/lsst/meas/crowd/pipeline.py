@@ -4027,8 +4027,14 @@ def run_cutout_gaia(raw_crop, psf, bad_bitmask, gaia_tbl=None, config=None, inte
                                         if k != "final"} for h in hist],
                    residual_clean=not res["adaptive"]["missing"],
                    wall_seconds=time.perf_counter() - t0, pipeline_kwargs=cfg)
-    return cn.CutoutRun(name, hist, cat, summary, raw_crop, interior_bbox,
-                        hist[0].get("bad_bitmask", bad_bitmask), cfg)
+    run = cn.CutoutRun(name, hist, cat, summary, raw_crop, interior_bbox,
+                       hist[0].get("bad_bitmask", bad_bitmask), cfg, gaia=gaia_tbl)
+    try:                                 # the photometry catalogue, with the Gaia comparison
+        from .photometry import measure_photometry
+        run.photometry = measure_photometry(run)
+    except Exception as e:
+        print(f"photometry failed ({type(e).__name__}: {e}); run.photometry is None")
+    return run
 
 
 _PAR = {}

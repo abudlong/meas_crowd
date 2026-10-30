@@ -2,7 +2,8 @@
 
 How the pipeline works, its key options, a recipe for every diagnostic plot, and how to run and
 check the unit tests.  The output catalogue's columns are described in
-[catalog_columns.md](catalog_columns.md).
+[catalog_columns.md](catalog_columns.md), every function's parameters and return values in
+[function_reference.md](function_reference.md).
 
 - [Pipeline overview](#pipeline-overview)
 - [Key parameters and options](#key-parameters-and-options)
@@ -49,8 +50,8 @@ whole-detector run repeats steps 1–7 for every tile.
    residual stack of up to 25 clean stars, then measure its wings from the bright stars. Return
    to step 4.
 7. **Outputs** (`run_cutout_gaia` → `CutoutRun`): the full history of every pass
-   (`run.outer_history`), a source catalogue, a summary, and on request photometry with the Gaia
-   comparison (`measure_photometry(run, gaia=sess.gaia)`) and files on disk (`save_run`).
+   (`run.outer_history`), the photometry catalogue with the Gaia comparison (`run.photometry`), a
+   summary, and with `out_dir` files on disk (`save_run`: `photometry.fits`, images, PSF kernels).
 8. **Whole detector** (`fit_tiles` → `stitch_tiles` → `plot_detector`): 400 px tiles, each fitted
    with 30 px padding and written to `tile_<name>.fits`. These are stitched into
    `detector_mosaic.fits` (DATA, MODEL, RESIDUAL, VARIANCE, BAD, TILE) and one catalogue in which
@@ -149,8 +150,8 @@ crowd.attach_gaia(sess, visit_image=visit_image)          # Gaia DR3 seeds, cach
 runs = crowd.run_session_gaia(sess, cfg, out_dir="results", max_outer=3, max_inner=15)
 run = runs[next(iter(runs))]
 crowd.report(run)                                         # what each pass did
-phot = crowd.measure_photometry(run, gaia=sess.gaia)      # PSF + aperture magnitudes + Gaia comparison
-crowd.plot_gaia_comparison(phot)
+phot = run.photometry                                     # PSF + aperture magnitudes + Gaia comparison
+crowd.plot_gaia_comparison(phot)                          # (saved as results/.../photometry.fits)
 ```
 
 The whole detector as a Slurm array (25 tasks share about 100 tiles, then one stitch job):
@@ -279,7 +280,8 @@ extensions).
 ## Unit tests: running them and checking the results
 
 The suite in `tests/` builds small synthetic images with a known answer, runs one function on
-each and checks the result. The stand-ins in `tests/lsstStubs.py` let every test except
+each and checks the result. [unit_tests.md](unit_tests.md) describes every test: what it checks,
+its input and what it must return to pass. The stand-ins in `tests/lsstStubs.py` let every test except
 `test_fastStampsStack.py` run on a laptop without the Rubin stack (those 2 are skipped there).
 
 ### Running tests

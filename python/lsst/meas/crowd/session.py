@@ -557,6 +557,11 @@ class CutoutRun:
         Mask bits of pixels the fit ignored.
     config : `dict`
         Configuration used.
+    gaia : `astropy.table.Table`, optional
+        The Gaia catalogue the run was seeded from (used for the Gaia comparison columns).
+    photometry : `astropy.table.Table`, optional
+        The photometry catalogue (see `lsst.meas.crowd.photometry.measure_photometry`), made at
+        the end of the run and written by `save_run` as ``photometry.fits``.
     """
 
     name: str
@@ -567,6 +572,8 @@ class CutoutRun:
     interior_bbox: object
     bad_bitmask: int
     config: dict
+    gaia: object = None
+    photometry: object = None
 
 
 def build_catalog(outer_history, interior_bbox, gaia_tbl=None, match_radius=2.0):
@@ -799,11 +806,53 @@ def _wcs_header(exposure):
     return hdr
 
 
-def save_run(run, outdir):
-    """Write a run's catalogue, images, PSF kernels and summary to a directory.
+def write_photometry(run, outdir, verbose=True):
+    """Write a run's photometry catalogue as photometry.fits and photometry.csv.
 
-    Writes catalog.csv / catalog.fits, images.fits, psf_kernels.fits and summary.json, the layout
-    `plot_final_comparison_from_fits` reads.
+    The catalogue is computed (with the Gaia comparison when the run has its Gaia table) if the
+    run does not have one yet.  A failure is reported, not raised, so the other products are
+    still written.
+
+    Parameters
+    ----------
+    run : `CutoutRun`
+        The run.
+    outdir : `str`
+        Output directory (created if needed).
+    verbose : `bool`, optional
+        Print where the catalogue went.
+
+    Returns
+    -------
+    path : `str` or `None`
+        The FITS file written (None if the photometry failed).
+    """
+    from .photometry import fits_meta, measure_photometry
+    os.makedirs(outdir, exist_ok=True)
+    try:
+        phot = getattr(run, "photometry", None)
+        if phot is None:
+            phot = measure_photometry(run, verbose=False)
+            run.photometry = phot
+        out = phot.copy(copy_data=False)
+        out.meta = fits_meta(phot.meta)
+        path = os.path.join(outdir, "photometry.fits")
+        out.write(path, overwrite=True)
+        out.write(os.path.join(outdir, "photometry.csv"), format="ascii.csv", overwrite=True)
+        if verbose:
+            print(f"  photometry catalogue ({len(phot)} sources) -> {path}")
+        return path
+    except Exception as e:
+        print(f"  photometry catalogue not written ({type(e).__name__}: {e})")
+        return None
+
+
+def save_run(run, outdir):
+    """Write a run's catalogues, images, PSF kernels and summary to a directory.
+
+    Writes photometry.fits / photometry.csv (the photometry catalogue with the Gaia comparison,
+    computed here if the run has none), catalog.csv / catalog.fits, images.fits,
+    psf_kernels.fits and summary.json, the layout `plot_final_comparison_from_fits` reads.
 
     Parameters
     ----------
@@ -840,6 +889,7 @@ def save_run(run, outdir):
         k_hdus.append(fits.ImageHDU(np.asarray(k, dtype=np.float32), name=f"PSF_OUTER{i + 1}"))
     fits.HDUList(k_hdus).writeto(os.path.join(outdir, "psf_kernels.fits"), overwrite=True)
 
+    write_photometry(run, outdir)
     run.catalog.write(os.path.join(outdir, "catalog.csv"), format="ascii.csv", overwrite=True)
     run.catalog.write(os.path.join(outdir, "catalog.fits"), overwrite=True)
     with open(os.path.join(outdir, "summary.json"), "w") as fh:

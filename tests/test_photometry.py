@@ -208,6 +208,46 @@ class GaiaComparisonTestCase(unittest.TestCase):
         self.assertAlmostEqual(t.meta["GAIAOFF"], 0.2, delta=0.01)
         self.assertLess(np.std(t["gaia_flux_ratio"]), 0.02)
 
+    def testRunGaiaUsedByDefault(self):
+        import fakeRun
+        from astropy.table import Table
+        run = fakeRun.make_run(seed=7)
+        xy = run.outer_history[-1]["result"]["S"]["xy"]
+        run.gaia = Table(dict(source_id=np.arange(len(xy)), x=xy[:, 0], y=xy[:, 1],
+                              ra=np.zeros(len(xy)), dec=np.zeros(len(xy)),
+                              phot_g_mean_mag=np.full(len(xy), 18.0)))
+        self.assertIn("gaia_dmag", ph.measure_photometry(run, verbose=False).colnames)
+        self.assertNotIn("gaia_dmag", ph.measure_photometry(run, verbose=False, gaia=False).colnames)
+
+    def testWritePhotometry(self):
+        import os
+        import tempfile
+        import fakeRun
+        from astropy.io import fits
+        from astropy.table import Table
+        from lsst.meas.crowd import session
+        run = fakeRun.make_run(seed=7)
+        xy = run.outer_history[-1]["result"]["S"]["xy"]
+        run.gaia = Table(dict(source_id=np.arange(len(xy)), x=xy[:, 0], y=xy[:, 1],
+                              ra=np.zeros(len(xy)), dec=np.zeros(len(xy)),
+                              phot_g_mean_mag=np.full(len(xy), 18.0)))
+        run.photometry = None
+        with tempfile.TemporaryDirectory() as d:
+            path = session.write_photometry(run, d, verbose=False)
+            self.assertTrue(os.path.exists(os.path.join(d, "photometry.csv")))
+            back = Table.read(path)
+            hdr = fits.getheader(path, 1)
+        self.assertEqual(len(back), len(xy))
+        self.assertIn("gaia_dmag_rel", back.colnames)
+        self.assertEqual(hdr["ZP"], ph.AB_NJY_ZERO_POINT)        # short FITS keywords
+        self.assertIn("GAIAOFF", hdr)
+        self.assertIsNotNone(run.photometry)                     # kept on the run
+
+    def testFitsMeta(self):
+        m = ph.fits_meta(dict(zero_point=31.4, aperture_radius_px=3.0, GAIAOFF=np.nan,
+                              GAIASYS="Vega", obj=[1, 2]))
+        self.assertEqual(m, dict(ZP=31.4, APRAD=3.0, GAIASYS="Vega"))
+
     def testPlot(self):
         import os
         import tempfile

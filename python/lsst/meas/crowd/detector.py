@@ -142,11 +142,8 @@ def save_tile_products(run, path, phot=None, meta=None):
     cat["owned"] = ((x >= ib.getMinX() - 0.5) & (x < ib.getMaxX() + 0.5) &
                     (y >= ib.getMinY() - 0.5) & (y < ib.getMaxY() + 0.5))
     cat["tile"] = run.name
-    short = dict(zero_point="ZP", zero_point_source="ZPSRC", aperture_radius_px="APRAD",
-                 aperture_correction="APCORR", fwhm_px="FWHM")      # FITS keywords <= 8 chars
-    cat.meta = {short.get(k, k[:8].upper()): v for k, v in cat.meta.items()
-                if isinstance(v, (str, bool, np.bool_)) or
-                (isinstance(v, (int, float, np.floating, np.integer)) and np.isfinite(v))}
+    from .photometry import fits_meta
+    cat.meta = fits_meta(cat.meta)                         # FITS keywords <= 8 characters
     hdus = [fits.PrimaryHDU(header=hdr)]
     for nm, arr in (("DATA", data), ("MODEL", model), ("VARIANCE", var), ("BAD", bad)):
         hdus.append(fits.ImageHDU(arr, header=hdr, name=nm))
@@ -254,7 +251,8 @@ def fit_tiles(visit, detector, config=None, out_dir="detector_run", tile=400, pa
             runs = run_session_gaia(sess, cfg, names=[name], plot_final=False, **kw)
             run = runs[name]
             with contextlib.redirect_stdout(io.StringIO()):
-                phot = measure_photometry(run, verbose=False, gaia=getattr(sess, "gaia", None))
+                phot = (run.photometry if getattr(run, "photometry", None) is not None
+                        else measure_photometry(run, verbose=False, gaia=getattr(sess, "gaia", None)))
             save_tile_products(run, paths[name], phot,
                                meta=dict(visit=visit, detector=detector,
                                          seconds=time.perf_counter() - t0))

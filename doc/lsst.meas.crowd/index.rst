@@ -19,7 +19,8 @@ User guide
 
 ``doc/pipeline_guide.md``: the pipeline flow, key parameters, how-to recipes for every plot and
 how to run and check the unit tests.  ``doc/catalog_columns.md``: the output catalogue's columns
-and units.
+and units.  ``doc/unit_tests.md``: every unit test, its input and what it checks.
+``doc/function_reference.md``: every public function, its parameters and return values.
 
 Modules
 =======

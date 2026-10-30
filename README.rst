@@ -19,6 +19,11 @@ into one mosaic and one catalogue.
   recipe for every plot, and how to run and check the unit tests;
 * `doc/catalog_columns.md <doc/catalog_columns.md>`_: every column of the output catalogue and
   its units.
+* `doc/function_reference.md <doc/function_reference.md>`_: every public function and class, its
+  parameters and what it returns (generated from the docstrings by
+  ``doc/make_function_reference.py``);
+* `doc/unit_tests.md <doc/unit_tests.md>`_: every unit test, what it checks, its input and what it
+  must return to pass.
 
 Pipeline at a glance
 ====================
@@ -72,7 +77,7 @@ The package follows the Rubin DM layout (``sconsUtils`` + ``eups``)::
     tests/                        unit tests (run with or without the stack)
     examples/                     run_visit.py (notebook cells), run_visit_batch.py (terminal),
                                   usdf_job.sh, usdf_detector_array.sh (Slurm), benchmark_stamps.py
-    doc/                          user guide, catalogue columns, package documentation
+    doc/                          user guide, function reference, catalogue columns, unit tests
 
 Building
 ========
@@ -202,8 +207,12 @@ get honest errors), PSF magnitude, aperture flux on the neighbour-subtracted ima
 total with the PSF's curve of growth, aperture magnitude, and ap - PSF.  Magnitudes use the
 exposure's PhotoCalib when present, else the nJy AB zero point (31.4).
 
-``measure_photometry(run, gaia=sess.gaia)`` (or ``compare_with_gaia(phot, gaia)``) adds the
-comparison with Gaia: a match flag (the seeding Gaia star, or the nearest unclaimed one within
+Every cutout fit makes this catalogue at the end (``run.photometry``), and
+``run_session_gaia(..., out_dir=...)`` saves it as ``photometry.fits`` / ``photometry.csv`` next
+to the images; whole-detector runs put it in each tile file and ``detector_catalog.fits``.
+
+The same table carries the comparison with Gaia (the run keeps the Gaia catalogue it was seeded
+from as ``run.gaia``; ``compare_with_gaia(phot, gaia)`` adds the columns to any table): a match flag (the seeding Gaia star, or the nearest unclaimed one within
 1 px), the Gaia source id, G and BP - RP, position offsets in px and mas, ``psf_mag - G`` with and
 without the median offset, and the flux ratio to Gaia.  ``doc/catalog_columns.md`` lists every
 column with its unit.

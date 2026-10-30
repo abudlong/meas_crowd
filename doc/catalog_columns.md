@@ -6,7 +6,8 @@ in [pipeline_guide.md](pipeline_guide.md).
 - [Which file is which](#which-file-is-which)
 - [Conventions](#conventions)
 - [Photometry catalogue](#photometry-catalogue)
-- [Gaia comparison columns](#gaia-comparison-columns)
+    - [Measurement columns](#measurement-columns)
+    - [Gaia comparison columns](#gaia-comparison-columns)
 - [Whole-detector columns](#whole-detector-columns)
 - [Header keywords (table metadata)](#header-keywords-table-metadata)
 - [The run catalogue (`catalog.fits` from `save_run`)](#the-run-catalogue-catalogfits-from-save_run)
@@ -16,8 +17,8 @@ in [pipeline_guide.md](pipeline_guide.md).
 
 | Catalogue | Made by | Where | Columns |
 | --- | --- | --- | --- |
-| Photometry catalogue (the main output) | `crowd.measure_photometry(run, gaia=sess.gaia)` | in memory (an `astropy.table.Table`); `phot.write("x.fits")` to save | [Photometry](#photometry-catalogue) + [Gaia](#gaia-comparison-columns) |
-| Tile catalogue | `fit_tiles` | `CATALOG` extension of each `tile_<name>.fits` | Photometry + Gaia + [whole-detector](#whole-detector-columns) |
+| Photometry catalogue (the main output) | automatically at the end of every cutout fit (`run_session_gaia`, `run_cutout_gaia`); again on demand with `crowd.measure_photometry(run)` | `run.photometry` in memory; **saved** as `<out_dir>/visit<V>_det<D>/<cutout>/photometry.fits` and `photometry.csv` when `run_session_gaia` has an `out_dir` (or by `save_run` / `write_photometry`) | [measurement](#measurement-columns) + [Gaia comparison](#gaia-comparison-columns) |
+| Tile catalogue | `fit_tiles` | `CATALOG` extension of each `tile_<name>.fits` | the photometry catalogue + [whole-detector](#whole-detector-columns) |
 | Detector catalogue | `stitch_tiles` | `detector_catalog.fits` | the tile catalogues merged, each source once (`owned` rows only) |
 | Run catalogue | `run_session_gaia(..., out_dir=...)` / `save_run` | `<out_dir>/visit<V>_det<D>/<cutout>/catalog.fits` and `.csv` | [a smaller, older set](#the-run-catalogue-catalogfits-from-save_run) |
 
@@ -35,11 +36,17 @@ One row is one fitted source.  `id` is the source's index in the final fit: the 
 - **Fluxes** are in the **image's units**.  LSST `visit_image`s are calibrated to **nJy**, so
   `psf_flux` etc. are in nJy for normal runs.  `meta["zero_point"]` (header `ZP`) converts them:
   `mag = ZP − 2.5 log10(flux)`; ZP = 31.4 for nJy.
-- **Magnitudes** are **AB**.  Gaia G is not: see [`gaia_G`](#gaia-comparison-columns).
+- **Magnitudes** are **AB**.  Gaia G is not: see [Gaia comparison columns](#gaia-comparison-columns).
 - Missing values are `NaN` (floats), `-1` (integer ids / indices) or `""` (strings).
 - Differences are always **fitted − Gaia**.
 
 ## Photometry catalogue
+
+One table holds both the measurements and the comparison with Gaia.  The Gaia columns are
+included whenever the run was seeded from Gaia (the run keeps its Gaia table as `run.gaia`, and
+`measure_photometry` uses it by default); `measure_photometry(run, gaia=False)` leaves them out.
+
+### Measurement columns
 
 Columns written by `measure_photometry`, in order.  `ra`, `dec` are present only when the
 exposure has a WCS (always for a `visit_image`).
@@ -65,9 +72,11 @@ exposure has a WCS (always for a `visit_image`).
 | `ap_mag`, `ap_mag_err` | float | mag (AB), mag | Magnitude of `ap_flux` and its error |
 | `ap_minus_psf` | float | mag | `ap_mag − psf_mag`; ≈ 0 for well-fitted point sources, < 0 for extended sources or a PSF that is too narrow |
 
-## Gaia comparison columns
+### Gaia comparison columns
 
-Added by `measure_photometry(run, gaia=sess.gaia)` or `crowd.compare_with_gaia(phot, gaia)`.
+Part of the photometry catalogue, after the measurement columns (made by `compare_with_gaia`,
+which `measure_photometry` calls; `crowd.compare_with_gaia(phot, gaia)` adds them to a table
+made without them).
 A source is matched to the Gaia star it was seeded from; a source that was not seeded is matched
 to the nearest Gaia star within `gaia_match_px` (default 1 px) that no other source has claimed.
 
@@ -139,9 +148,9 @@ The tile files' primary header also has `X0`, `Y0` (fit-box origin), `IX0`, `IY0
 
 ## The run catalogue (`catalog.fits` from `save_run`)
 
-`save_run` (called by `run_session_gaia(..., out_dir=...)`) writes `run.catalog`, a smaller
-table made during the fit.  Prefer the photometry catalogue: it has errors, aperture photometry
-and the Gaia comparison.
+`save_run` (called by `run_session_gaia(..., out_dir=...)`) also writes `run.catalog`, a smaller
+table made during the fit, next to `photometry.fits`.  Prefer the photometry catalogue: it has
+errors, aperture photometry and the Gaia comparison.
 
 | Column | Unit | Description |
 | --- | --- | --- |

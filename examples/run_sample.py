@@ -118,10 +118,11 @@ def main():
     crowd.report(run)
     crowd.plot_final_comparison(run)
     crowd.plot_residual_gray(run)
-    phot = crowd.measure_photometry(run, gaia=sess.gaia)       # + Gaia comparison columns
+    # made by the fit, with the Gaia comparison columns; saved as
+    # <out>/visit<V>_det<D>/<cutout>/photometry.fits (and .csv)
+    phot = run.photometry
     if getattr(sess, "gaia", None) is not None:
         crowd.plot_gaia_comparison(phot)
-    phot.write(os.path.join(args.out, f"{name}_photometry.fits"), overwrite=True)
 
     # ---- 2. PSF stars and the PSF model
     step("2_psf")

@@ -20,7 +20,7 @@ The numerical pieces (`flux_to_mag`, `aperture_flux`, `aperture_correction`,
 
 __all__ = ["AB_NJY_ZERO_POINT", "flux_to_mag", "aperture_flux", "aperture_correction",
            "fisher_flux_errors", "psf_flux_errors", "zero_point_from_run", "compare_with_gaia",
-           "measure_photometry"]
+           "measure_photometry", "fits_meta", "FITS_META_KEYS"]
 
 import numpy as np
 from scipy.sparse import coo_matrix
@@ -363,6 +363,35 @@ def compare_with_gaia(phot, gaia, match_radius_px=1.0, offset_min_snr=50.0, verb
     return t
 
 
+# FITS header keywords (<= 8 characters) of the photometry catalogue's metadata
+FITS_META_KEYS = dict(zero_point="ZP", zero_point_source="ZPSRC", aperture_radius_px="APRAD",
+                      aperture_correction="APCORR", fwhm_px="FWHM")
+
+
+def fits_meta(meta):
+    """Return catalogue metadata with FITS-compatible keywords and values.
+
+    Long names are shortened (`FITS_META_KEYS`, else the first 8 characters, upper case);
+    values that are not numbers, strings or booleans, and non-finite numbers, are dropped.
+
+    Parameters
+    ----------
+    meta : `dict`
+        Table metadata.
+
+    Returns
+    -------
+    meta : `dict`
+        The metadata to write.
+    """
+    out = {}
+    for k, v in meta.items():
+        if isinstance(v, (str, bool, np.bool_)) or (
+                isinstance(v, (int, float, np.floating, np.integer)) and np.isfinite(v)):
+            out[FITS_META_KEYS.get(k, k[:8].upper())] = v
+    return out
+
+
 def measure_photometry(run, aperture_fwhm=1.5, zero_point=None, verbose=True, gaia=None,
                        gaia_match_px=1.0):
     """Measure PSF and aperture magnitudes of a run's sources.
@@ -377,9 +406,10 @@ def measure_photometry(run, aperture_fwhm=1.5, zero_point=None, verbose=True, ga
         Override the zero point (default: PhotoCalib, else 31.4 for nJy).
     verbose : `bool`, optional
         Print a summary.
-    gaia : `astropy.table.Table`, optional
-        The Gaia catalogue the run was seeded from (``session.gaia``); adds the Gaia comparison
-        columns of `compare_with_gaia`.
+    gaia : `astropy.table.Table` or `bool`, optional
+        The Gaia catalogue for the Gaia comparison columns of `compare_with_gaia`; None (default)
+        uses the run's own (``run.gaia``, the catalogue it was seeded from) if it has one, False
+        leaves the columns out.
     gaia_match_px : `float`, optional
         Gaia match radius for sources that were not Gaia-seeded [px].
 
@@ -464,6 +494,8 @@ def measure_photometry(run, aperture_fwhm=1.5, zero_point=None, verbose=True, ga
         print(f"photometry: {n} sources; zero point {zp:.3f} ({how}); aperture r = {radius:.1f} px "
               f"({aperture_fwhm:g} FWHM, aperture correction {apcorr:.3f}); median ap - PSF "
               f"(S/N > 20, point sources) = {med:+.3f} mag")
-    if gaia is not None:
+    if gaia is None:
+        gaia = getattr(run, "gaia", None)
+    if gaia is not None and gaia is not False and len(gaia):
         t = compare_with_gaia(t, gaia, match_radius_px=gaia_match_px, verbose=verbose)
     return t

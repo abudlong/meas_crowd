@@ -31,7 +31,7 @@ MODULES = [
     ("pipeline", "the driver: run the Gaia-seeded pipeline on cutouts, inner / outer loops, "
                  "PSF refinement, diagnostics"),
     ("session", "load a visit, cut out regions, set up the PSF; configuration; saving runs"),
-    ("gaiaSeeds", "the Gaia catalogue and the seeds of each cutout"),
+    ("gaiaCatalog", "the Gaia catalogue and the seeds of each cutout"),
     ("photometry", "PSF and aperture photometry, errors, the Gaia comparison"),
     ("plotting", "final data / model / residual plots and residual diagnostics"),
     ("stagePlots", "plots of the intermediate stages and pass-to-pass comparison"),
@@ -44,7 +44,7 @@ MODULES = [
 ]
 
 START_HERE = [
-    ("session", "make_config"), ("session", "prepare_session"), ("gaiaSeeds", "attach_gaia"),
+    ("session", "make_config"), ("session", "prepare_session"), ("gaiaCatalog", "attach_gaia"),
     ("pipeline", "run_session_gaia"), ("pipeline", "report"),
     ("photometry", "measure_photometry"), ("plotting", "plot_final_comparison"),
     ("plotting", "plot_gaia_comparison"), ("stagePlots", "show_rounds"),

@@ -23,7 +23,7 @@ from scipy.spatial import cKDTree
 from astropy.table import Table
 from . import fitLib as L
 from . import adaptive as ca
-from .gaiaSeeds import (
+from .gaiaCatalog import (
     attach_gaia,
     select_seeds,
 )
@@ -3959,7 +3959,7 @@ def run_cutout_gaia(raw_crop, psf, bad_bitmask, gaia_tbl=None, config=None, inte
     bad_bitmask : `int`
         Mask bits of pixels to ignore.
     gaia_tbl : `astropy.table.Table`, optional
-        Gaia catalogue (see `lsst.meas.crowd.gaiaSeeds.gaia_catalog`); None = no seeds.
+        Gaia catalogue (see `lsst.meas.crowd.gaiaCatalog.gaia_catalog`); None = no seeds.
     config : `dict`, optional
         Pipeline configuration.
     interior_bbox : `lsst.geom.Box2I`, optional
@@ -4478,7 +4478,7 @@ def run_session_gaia(session, config=None, names=None, out_dir=None, viz=False, 
                      gmag_max=None, n_jobs=1, plot_kwargs=None, **overrides):
     """Run the seeded pipeline on every (or the named) cutout of a session.
 
-    Calls `lsst.meas.crowd.gaiaSeeds.attach_gaia` first if the session has no Gaia catalogue.
+    Calls `lsst.meas.crowd.gaiaCatalog.attach_gaia` first if the session has no Gaia catalogue.
 
     Parameters
     ----------

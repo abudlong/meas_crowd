@@ -38,7 +38,7 @@ _API = {
         "try_elliptical", "profile", "enable_speedups", "disable_speedups",
         "clear_stamp_cache", "smooth_psf_kernel", "unmodeled_near_mask",
     ],
-    "gaiaSeeds": ["attach_gaia", "gaia_catalog", "select_seeds", "visit_epoch"],
+    "gaiaCatalog": ["attach_gaia", "gaia_catalog", "select_seeds", "visit_epoch"],
     "plotting": [
         "plot_final_comparison", "plot_residual_gray", "show_star_zooms", "show_cross_sections",
         "show_bright_star_stack", "star_residual_table", "core_excess_diagnostic",
@@ -67,13 +67,15 @@ def __getattr__(name):
         value = getattr(mod, name)
         globals()[name] = value
         return value
-    if name in ("pipeline", "gaiaSeeds", "plotting", "photometry", "sourcePlots", "session",
+    if name in ("pipeline", "gaiaCatalog", "plotting", "photometry", "sourcePlots", "session",
                 "fitLib", "adaptive", "fastKernels", "detector", "stagePlots"):
         return importlib.import_module(f".{name}", __name__)
+    if name == "gaiaSeeds":                       # the old name of gaiaCatalog
+        return importlib.import_module(".gaiaCatalog", __name__)
     if not name.startswith("__"):
         # any other public name of the old cutout_gaia.py (so `import lsst.meas.crowd as cg` keeps
         # working in existing notebooks)
-        for modname in ("pipeline", "plotting", "gaiaSeeds"):
+        for modname in ("pipeline", "plotting", "gaiaCatalog"):
             mod = importlib.import_module(f".{modname}", __name__)
             if hasattr(mod, name):
                 return getattr(mod, name)

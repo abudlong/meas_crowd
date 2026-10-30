@@ -218,7 +218,7 @@ def fit_tiles(visit, detector, config=None, out_dir="detector_run", tile=400, pa
     import contextlib
     import io
     from . import session as cn
-    from .gaiaSeeds import attach_gaia
+    from .gaiaCatalog import attach_gaia
     from .photometry import measure_photometry
     from .pipeline import run_session_gaia
     os.makedirs(out_dir, exist_ok=True)

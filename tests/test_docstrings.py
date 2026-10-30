@@ -24,7 +24,7 @@ try:
 except ImportError:
     validate = None
 
-MODULES = ["adaptive", "detector", "fastKernels", "fitLib", "gaiaSeeds", "photometry",
+MODULES = ["adaptive", "detector", "fastKernels", "fitLib", "gaiaCatalog", "photometry",
            "pipeline", "plotting", "session", "sourcePlots", "stagePlots"]
 IGNORE = {"SA01", "EX01", "SS06", "GL01", "ES01", "RT02", "SS05", "GL02"}
 

@@ -23,7 +23,7 @@ import lsstStubs  # noqa: E402
 lsstStubs.install()
 
 from lsst.meas.crowd import detector as det  # noqa: E402
-from lsst.meas.crowd import gaiaSeeds, pipeline, session  # noqa: E402
+from lsst.meas.crowd import gaiaCatalog, pipeline, session  # noqa: E402
 
 geom = pipeline.L.geom
 plt.show = lambda *a, **k: None
@@ -109,7 +109,7 @@ class FitStitchTestCase(unittest.TestCase):
         self.out = self.tmp.name
         self.patches = [mock.patch.object(session, "prepare_session", self.syn.prepare_session),
                         mock.patch.object(session, "make_config", lambda *a, **k: {}),
-                        mock.patch.object(gaiaSeeds, "attach_gaia", lambda *a, **k: None),
+                        mock.patch.object(gaiaCatalog, "attach_gaia", lambda *a, **k: None),
                         mock.patch.object(pipeline, "run_session_gaia", self.syn.run_session_gaia)]
         for p in self.patches:
             p.start()

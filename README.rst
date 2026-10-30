@@ -62,7 +62,7 @@ The package follows the Rubin DM layout (``sconsUtils`` + ``eups``)::
     python/lsst/meas/crowd/
         __init__.py               public API (submodules load on first use)
         pipeline.py               driver: run_session_gaia, inner / outer loops, PSF refinement
-        gaiaSeeds.py              Gaia catalogue (Butler refcat or ESA TAP), seed selection
+        gaiaCatalog.py            Gaia catalogue (Butler refcat or ESA TAP), seed selection
         photometry.py             PSF and aperture magnitudes with errors
         plotting.py               data | model | residual, residual diagnostics, star zooms
         sourcePlots.py            per-source cutouts + x / y / radial cross-sections + magnitudes

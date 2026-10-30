@@ -10,7 +10,7 @@ Every public function and class of `lsst.meas.crowd`: what it does, its paramete
 | --- | --- |
 | [`session.make_config`](#sessionmake_config) | Build a pipeline configuration (keyword arguments of `fitLib.run_cutout_pipeline`). |
 | [`session.prepare_session`](#sessionprepare_session) | Load a visit image, cut out the regions and set up the detector-level PSF. |
-| [`gaiaSeeds.attach_gaia`](#gaiaseedsattach_gaia) | Load Gaia once for a session and store it as ``session.gaia``. |
+| [`gaiaCatalog.attach_gaia`](#gaiacatalogattach_gaia) | Load Gaia once for a session and store it as ``session.gaia``. |
 | [`pipeline.run_session_gaia`](#pipelinerun_session_gaia) | Run the seeded pipeline on every (or the named) cutout of a session. |
 | [`pipeline.report`](#pipelinereport) | Print what the adaptive loops did, pass by pass. |
 | [`photometry.measure_photometry`](#photometrymeasure_photometry) | Measure PSF and aperture magnitudes of a run's sources. |
@@ -29,7 +29,7 @@ Every public function and class of `lsst.meas.crowd`: what it does, its paramete
 | --- | --- | --- |
 | [`pipeline`](#pipeline) | the driver: run the Gaia-seeded pipeline on cutouts, inner / outer loops, PSF refinement, diagnostics | 39 |
 | [`session`](#session) | load a visit, cut out regions, set up the PSF; configuration; saving runs | 19 |
-| [`gaiaSeeds`](#gaiaseeds) | the Gaia catalogue and the seeds of each cutout | 4 |
+| [`gaiaCatalog`](#gaiacatalog) | the Gaia catalogue and the seeds of each cutout | 4 |
 | [`photometry`](#photometry) | PSF and aperture photometry, errors, the Gaia comparison | 9 |
 | [`plotting`](#plotting) | final data / model / residual plots and residual diagnostics | 9 |
 | [`stagePlots`](#stageplots) | plots of the intermediate stages and pass-to-pass comparison | 6 |
@@ -745,7 +745,7 @@ Run the seeded adaptive pipeline on one cropped exposure.
 | `raw_crop` | `lsst.afw.image.Exposure` | Cutout before background subtraction. |
 | `psf` | `lsst.afw.detection.Psf` | Initial PSF. |
 | `bad_bitmask` | `int` | Mask bits of pixels to ignore. |
-| `gaia_tbl` | `astropy.table.Table`, optional | Gaia catalogue (see `lsst.meas.crowd.gaiaSeeds.gaia_catalog`); None = no seeds. |
+| `gaia_tbl` | `astropy.table.Table`, optional | Gaia catalogue (see `lsst.meas.crowd.gaiaCatalog.gaia_catalog`); None = no seeds. |
 | `config` | `dict`, optional | Pipeline configuration. |
 | `interior_bbox` | `lsst.geom.Box2I`, optional | The requested box without padding (default: the whole cutout). |
 | `starCat` | `lsst.afw.table.SourceCatalog`, optional | Detector-level PSF stars. |
@@ -849,7 +849,7 @@ Everything within ``pad_fwhm`` FWHM of a bad pixel, plus any positive residual b
 
 Run the seeded pipeline on every (or the named) cutout of a session.
 
-Calls `lsst.meas.crowd.gaiaSeeds.attach_gaia` first if the session has no Gaia catalogue.
+Calls `lsst.meas.crowd.gaiaCatalog.attach_gaia` first if the session has no Gaia catalogue.
 
 | Parameter | Type | Description |
 | --- | --- | --- |
@@ -1260,20 +1260,20 @@ No LSST stack and no re-fit needed.
 | --- | --- | --- |
 | `stats` | `dict` | See `plot_final_comparison_robust`. |
 
-## gaiaSeeds
+## gaiaCatalog
 
-`lsst.meas.crowd.gaiaSeeds`: the Gaia catalogue and the seeds of each cutout.
+`lsst.meas.crowd.gaiaCatalog`: the Gaia catalogue and the seeds of each cutout.
 
 Gaia DR3 seed catalogue for a visit.
 
 | Name | Summary |
 | --- | --- |
-| [`visit_epoch`](#gaiaseedsvisit_epoch) | Return the observation epoch of an exposure. |
-| [`gaia_catalog`](#gaiaseedsgaia_catalog) | Load the Gaia DR3 stars overlapping a box, with positions at the observation epoch. |
-| [`attach_gaia`](#gaiaseedsattach_gaia) | Load Gaia once for a session and store it as ``session.gaia``. |
-| [`select_seeds`](#gaiaseedsselect_seeds) | Select the Gaia stars that seed a cutout. |
+| [`visit_epoch`](#gaiacatalogvisit_epoch) | Return the observation epoch of an exposure. |
+| [`gaia_catalog`](#gaiacataloggaia_catalog) | Load the Gaia DR3 stars overlapping a box, with positions at the observation epoch. |
+| [`attach_gaia`](#gaiacatalogattach_gaia) | Load Gaia once for a session and store it as ``session.gaia``. |
+| [`select_seeds`](#gaiacatalogselect_seeds) | Select the Gaia stars that seed a cutout. |
 
-### gaiaSeeds.visit_epoch
+### gaiaCatalog.visit_epoch
 
 `visit_epoch(exposure)`
 
@@ -1287,7 +1287,7 @@ Return the observation epoch of an exposure.
 | --- | --- | --- |
 | `epoch` | `astropy.time.Time` or `None` | The visit date, or None if it is missing or implausible. |
 
-### gaiaSeeds.gaia_catalog
+### gaiaCatalog.gaia_catalog
 
 `gaia_catalog(wcs, bbox, epoch=None, source='auto', butler=None, repo='dp2_prep', refcat='gaia_dr3_20230707', refcat_collections='refcats', tap_url='https://gea.esac.esa.int/tap-server/tap', cache_path=None, pad=0, verbose=True)`
 
@@ -1314,7 +1314,7 @@ Load the Gaia DR3 stars overlapping a box, with positions at the observation epo
 
 Raises: `RuntimeError` (Raised if Gaia could not be loaded from any source.)
 
-### gaiaSeeds.attach_gaia
+### gaiaCatalog.attach_gaia
 
 `attach_gaia(session, visit_image=None, pad=64, cache_dir='gaia_cache', **kw)`
 
@@ -1334,7 +1334,7 @@ Covers the whole visit image or, without one, the union of the session's cutouts
 | --- | --- | --- |
 | `gaia` | `astropy.table.Table` | The Gaia catalogue (see `gaia_catalog`). |
 
-### gaiaSeeds.select_seeds
+### gaiaCatalog.select_seeds
 
 `select_seeds(gaia_tbl, bbox, fwhm, pad_fwhm=1.5, gmag_max=None, min_sep_px=0.5)`
 

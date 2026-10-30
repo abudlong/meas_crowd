@@ -26,7 +26,7 @@ Modules
 =======
 
 ``pipeline``      the driver: ``run_session_gaia``, ``run_cutout_gaia``, inner / outer loops
-``gaiaSeeds``     Gaia catalogue (Butler refcat or ESA TAP) and seed selection
+``gaiaCatalog``   Gaia catalogue (Butler refcat or ESA TAP) and seed selection
 ``photometry``    PSF and aperture magnitudes with errors (``measure_photometry``)
 ``plotting``      run-level plots and residual diagnostics
 ``sourcePlots``   per-source cutouts, cross-sections and magnitudes (``plot_source_cutouts``)

@@ -30,18 +30,19 @@ its interior is kept:
    task) and writes one ``tile_<name>.fits`` per tile -- data, model, variance, bad-pixel mask
    and the photometry table.  Tiles already on disk are skipped, so a job can be restarted.
 2. `stitchTiles` assembles the interiors into full-detector images (``detector_mosaic.fits``:
-   DATA, MODEL, RESIDUAL, VARIANCE, BAD, TILE extensions -- opens in DS9) and merges the
+   DATA, MODEL, RESIDUAL, RESIDUAL_SIGMA, VARIANCE, BAD, TILE extensions -- opens in DS9) and
+   merges the
    catalogues (``detector_catalog.fits``), keeping every source once: in the tile whose interior
    contains it.
 3. `plotDetector` shows data | model | residual | residual/sigma for the whole detector or a
    zoom, with optional tile boundaries.
 
 The image called DATA is the image the fit used (after the pipeline's background subtraction), so
-RESIDUAL = DATA - MODEL.
+RESIDUAL = DATA - MODEL and RESIDUAL_SIGMA = RESIDUAL / sqrt(VARIANCE) (NaN on bad pixels).
 """
 
-__all__ = ["tileSpecs", "tileName", "saveTileProducts", "fitTiles", "stitchTiles",
-           "loadMosaic", "loadTile", "plotTile", "plotDetector"]
+__all__ = ["tileSpecs", "tileName", "saveTileProducts", "addTileResiduals", "fitTiles",
+           "stitchTiles", "loadMosaic", "loadTile", "plotTile", "plotDetector"]
 
 import glob
 import os
@@ -108,10 +109,63 @@ def tileName(spec):
 
 
 # ---------------------------------------------------------------- per-tile products
+def _residuals(data, model, var, bad):
+    """Return RESIDUAL = data - model and RESIDUAL_SIGMA = residual / sqrt(var) as float32.
+
+    RESIDUAL_SIGMA is NaN on bad pixels and where the variance is not positive.
+    """
+    resid = (np.asarray(data, np.float32) - np.asarray(model, np.float32))
+    var = np.asarray(var, np.float32)
+    ok = (np.asarray(bad) == 0) & np.isfinite(resid) & (var > 0)
+    residSigma = np.full(resid.shape, np.nan, np.float32)
+    residSigma[ok] = resid[ok] / np.sqrt(var[ok])
+    return resid, residSigma
+
+
+def addTileResiduals(outDir="detector_run"):
+    """Add the RESIDUAL and RESIDUAL_SIGMA images to tile files written without them.
+
+    Tiles fitted by older versions have only DATA, MODEL, VARIANCE and BAD; this adds the two
+    residual images (nothing is refitted).  Files that already have them are left alone.
+
+    Parameters
+    ----------
+    outDir : `str`, optional
+        Directory with the tile files.
+
+    Returns
+    -------
+    updated : `list` [`str`]
+        The files that were rewritten.
+    """
+    from astropy.io import fits
+    updated = []
+    for path in sorted(glob.glob(os.path.join(outDir, f"{TILE_PREFIX}*.fits"))):
+        with fits.open(path) as hl:
+            if "RESIDUAL" in hl and "RESIDUAL_SIGMA" in hl:
+                continue
+            hdus = [h.copy() for h in hl]
+        names = [h.name for h in hdus]
+        hdr = hdus[names.index("DATA")].header
+        get = {h.name: h.data for h in hdus}
+        resid, residSigma = _residuals(get["DATA"], get["MODEL"], get["VARIANCE"], get["BAD"])
+        at = names.index("MODEL") + 1
+        new = [fits.ImageHDU(resid, header=hdr, name="RESIDUAL"),
+               fits.ImageHDU(residSigma, header=hdr, name="RESIDUAL_SIGMA")]
+        hdus = [h for h in hdus if h.name not in ("RESIDUAL", "RESIDUAL_SIGMA")]
+        hdus[at:at] = new
+        tmp = path + ".tmp"
+        fits.HDUList(hdus).writeto(tmp, overwrite=True)
+        os.replace(tmp, path)
+        updated.append(path)
+    return updated
+
+
 def saveTileProducts(run, path, phot=None, meta=None):
     """Write one tile's results to a FITS file.
 
-    DATA, MODEL, VARIANCE and BAD images over the tile's fit box (header keys X0/Y0 = fit-box
+    DATA, MODEL, RESIDUAL, RESIDUAL_SIGMA, VARIANCE and BAD images over the tile's fit box
+    (RESIDUAL = DATA - MODEL, RESIDUAL_SIGMA = RESIDUAL / sqrt(VARIANCE); header keys X0/Y0 = fit-box
     origin, IX0/IY0/IX1/IY1 = interior, inclusive) and a CATALOG table (the photometry, with an
     ``owned`` column: source inside this tile's interior, half-open so boundary sources belong to
     exactly one tile).  The file is written atomically.
@@ -160,8 +214,10 @@ def saveTileProducts(run, path, phot=None, meta=None):
     cat["tile"] = run.name
     from .photometry import fitsMeta
     cat.meta = fitsMeta(cat.meta)                         # FITS keywords <= 8 characters
+    resid, residSigma = _residuals(data, model, var, bad)
     hdus = [fits.PrimaryHDU(header=hdr)]
-    for nm, arr in (("DATA", data), ("MODEL", model), ("VARIANCE", var), ("BAD", bad)):
+    for nm, arr in (("DATA", data), ("MODEL", model), ("RESIDUAL", resid),
+                    ("RESIDUAL_SIGMA", residSigma), ("VARIANCE", var), ("BAD", bad)):
         hdus.append(fits.ImageHDU(arr, header=hdr, name=nm))
     hdus.append(fits.table_to_hdu(cat))
     hdus[-1].name = "CATALOG"
@@ -291,8 +347,10 @@ def stitchTiles(outDir="detector_run", mosaicName="detector_mosaic.fits",
                 catalogName="detector_catalog.fits", verbose=True):
     """Assemble the tile files into full-detector images and one catalogue.
 
-    Writes the mosaic (DATA, MODEL, RESIDUAL, VARIANCE, BAD and TILE extensions) and the
-    catalogue (every source once, from the tile whose interior contains it) into ``outDir``.
+    Writes the mosaic (DATA, MODEL, RESIDUAL, RESIDUAL_SIGMA, VARIANCE, BAD and TILE extensions)
+    and the catalogue (every source once, from the tile whose interior contains it) into
+    ``outDir``.  Tile files from older versions without the residual images get them added
+    (`addTileResiduals`).
 
     Parameters
     ----------
@@ -308,7 +366,7 @@ def stitchTiles(outDir="detector_run", mosaicName="detector_mosaic.fits",
     Returns
     -------
     mosaic : `dict`
-        ``data``, ``model``, ``resid``, ``var``, ``bad``, ``tile`` (tile index map, -1 = not
+        ``data``, ``model``, ``resid``, ``residSigma``, ``var``, ``bad``, ``tile`` (tile index map, -1 = not
         fitted), ``x0``, ``y0``, ``tiles`` (names), ``interiors`` and ``catalog``.
 
     Raises
@@ -321,6 +379,9 @@ def stitchTiles(outDir="detector_run", mosaicName="detector_mosaic.fits",
     files = sorted(glob.glob(os.path.join(outDir, f"{TILE_PREFIX}*.fits")))
     if not files:
         raise FileNotFoundError(f"no {TILE_PREFIX}*.fits in {outDir}")
+    added = addTileResiduals(outDir)
+    if added and verbose:
+        print(f"added RESIDUAL / RESIDUAL_SIGMA to {len(added)} tile file(s) from an older version")
     heads = [fits.getheader(f, "DATA") for f in files]
     gx0 = min(h["IX0"] for h in heads)
     gy0 = min(h["IY0"] for h in heads)
@@ -346,7 +407,8 @@ def stitchTiles(outDir="detector_run", mosaicName="detector_mosaic.fits",
         names.append(h.get("TILE", os.path.basename(f)))
         interiors.append((ix0, iy0, ix1, iy1))
         cats.append(cat[np.asarray(cat["owned"], bool)])
-    out["resid"] = out["data"] - out["model"]
+    out["resid"], out["residSigma"] = _residuals(out["data"], out["model"], out["var"],
+                                                 out["bad"] | (out["tile"] < 0))
     catalog = vstack(cats, metadata_conflicts="silent") if cats else Table()
     if len(catalog):
         catalog["id"] = np.arange(len(catalog))
@@ -356,7 +418,8 @@ def stitchTiles(outDir="detector_run", mosaicName="detector_mosaic.fits",
     hdr["NTILES"] = len(files)
     hdus = [fits.PrimaryHDU(header=hdr)]
     for nm, key in (("DATA", "data"), ("MODEL", "model"), ("RESIDUAL", "resid"),
-                    ("VARIANCE", "var"), ("BAD", "bad"), ("TILE", "tile")):
+                    ("RESIDUAL_SIGMA", "residSigma"), ("VARIANCE", "var"), ("BAD", "bad"),
+                    ("TILE", "tile")):
         hdus.append(fits.ImageHDU(out[key], header=hdr, name=nm))
     fits.HDUList(hdus).writeto(os.path.join(outDir, mosaicName), overwrite=True)
     catalog.write(os.path.join(outDir, catalogName), overwrite=True)
@@ -393,6 +456,11 @@ def loadMosaic(outDir="detector_run", mosaicName="detector_mosaic.fits",
         out = dict(data=hl["DATA"].data, model=hl["MODEL"].data, resid=hl["RESIDUAL"].data,
                    var=hl["VARIANCE"].data, bad=hl["BAD"].data, tile=hl["TILE"].data,
                    x0=hl[0].header["X0"], y0=hl[0].header["Y0"])
+        if "RESIDUAL_SIGMA" in hl:
+            out["residSigma"] = hl["RESIDUAL_SIGMA"].data
+        else:                                               # mosaics from older versions
+            out["residSigma"] = _residuals(out["data"], out["model"], out["var"],
+                                           out["bad"] | (out["tile"] < 0))[1]
     p = os.path.join(outDir, catalogName)
     out["catalog"] = Table.read(p) if os.path.exists(p) else None
     return out
@@ -410,7 +478,7 @@ def loadTile(path):
     -------
     tile : `dict`
         In the form of `loadMosaic`'s result over the tile's fit box (``data``, ``model``,
-        ``resid``, ``var``, ``bad``, ``tile``, ``x0``, ``y0``, ``catalog``), plus ``name`` and
+        ``resid``, ``residSigma``, ``var``, ``bad``, ``tile``, ``x0``, ``y0``, ``catalog``), plus ``name`` and
         ``interiors`` (the tile's interior as one (x0, y0, x1, y1) tuple, inclusive).
     """
     from astropy.io import fits
@@ -419,7 +487,9 @@ def loadTile(path):
         h = hl[0].header
         data = hl["DATA"].data.astype(float)
         model = hl["MODEL"].data.astype(float)
-        out = dict(data=data, model=model, resid=data - model, var=hl["VARIANCE"].data.astype(float),
+        var = hl["VARIANCE"].data.astype(float)
+        out = dict(data=data, model=model, resid=data - model, var=var,
+                   residSigma=_residuals(data, model, var, hl["BAD"].data)[1].astype(float),
                    bad=hl["BAD"].data, tile=np.zeros(data.shape, np.int32), x0=h["X0"], y0=h["Y0"],
                    name=h.get("TILE", os.path.basename(path)),
                    interiors=[(h["IX0"], h["IY0"], h["IX1"], h["IY1"])])

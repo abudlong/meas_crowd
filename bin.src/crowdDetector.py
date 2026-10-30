@@ -22,11 +22,13 @@
 
 """Whole-detector meas_crowd runs from the command line.
 
-    crowdDetector.py fit    VISIT DETECTOR --out DIR [--tile 400 --pad 30]
+    crowdDetector.py fit    VISIT DETECTOR [--out DIR] [--tile 400 --pad 30]
                             [--task-index K --n-tasks N]   (default: from SLURM_ARRAY_TASK_*)
                             [--region XMIN XMAX YMIN YMAX]  (test on part of the detector)
-    crowdDetector.py stitch --out DIR                       (mosaic + merged catalogue)
-    crowdDetector.py plot   --out DIR [--view XMIN XMAX YMIN YMAX] [--png FILE]
+    crowdDetector.py stitch [--out DIR]                     (mosaic + merged catalogue)
+    crowdDetector.py plot   [--out DIR] [--view XMIN XMAX YMIN YMAX] [--png FILE]
+
+DIR defaults to $MEAS_CROWD_OUT if set, else DEFAULT_OUT below.
 
 `fit` can be rerun: tiles already written are skipped.  Run `stitch` after all tasks finished
 (or any time, to look at the tiles done so far).
@@ -36,6 +38,10 @@ import argparse
 import os
 import sys
 
+# where results go when neither --out nor $MEAS_CROWD_OUT is given
+DEFAULT_OUT = ("/sdf/home/a/abudlong/project/repo-main-logs/crowdedFields/october2026/"
+               "crowded_fields/6-testScript/10.30.26_test2")
+
 
 def _envInt(name, default):
     v = os.environ.get(name)
@@ -43,13 +49,15 @@ def _envInt(name, default):
 
 
 def main(argv=None):
+    out = os.environ.get("MEAS_CROWD_OUT") or DEFAULT_OUT
+    outHelp = f"output directory (default: {out})"
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     f = sub.add_parser("fit", help="fit tiles (one share of them per Slurm array task)")
     f.add_argument("visit", type=int)
     f.add_argument("detector", type=int)
-    f.add_argument("--out", required=True)
+    f.add_argument("--out", default=out, help=outHelp)
     f.add_argument("--tile", type=int, default=400)
     f.add_argument("--pad", type=int, default=30)
     arrayMin = _envInt("SLURM_ARRAY_TASK_MIN", 0)
@@ -64,16 +72,17 @@ def main(argv=None):
     f.add_argument("--overwrite", action="store_true")
 
     s = sub.add_parser("stitch", help="assemble the tiles into a mosaic + catalogue")
-    s.add_argument("--out", required=True)
+    s.add_argument("--out", default=out, help=outHelp)
 
     p = sub.add_parser("plot", help="data | model | residual | residual/sigma of the mosaic")
-    p.add_argument("--out", required=True)
+    p.add_argument("--out", default=out, help=outHelp)
     p.add_argument("--view", type=int, nargs=4, metavar=("XMIN", "XMAX", "YMIN", "YMAX"))
     p.add_argument("--png", default=None, help="output file (default <out>/detector_view.png)")
     p.add_argument("--no-tiles", action="store_true")
     p.add_argument("--sources", action="store_true", help="circle the sources (zooms)")
 
     args = ap.parse_args(argv)
+    print(f"output directory: {args.out}")
     import matplotlib
     matplotlib.use("Agg")
     from lsst.meas.crowd import detector

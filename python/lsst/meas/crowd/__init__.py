@@ -67,7 +67,7 @@ _API = {
                    "apertureFlux", "psfFluxErrors"],
     "sourcePlots": ["plotSourceCutouts", "sourceCutoutData"],
     "detector": ["tileSpecs", "fitTiles", "stitchTiles", "loadMosaic", "loadTile",
-                 "plotTile", "plotDetector", "saveTileProducts"],
+                 "plotTile", "plotDetector", "saveTileProducts", "addTileResiduals"],
     "stagePlots": ["psfStarPositions", "showPsfStars", "showBackgrounds", "showRounds",
                    "showLinkedSourcePages", "comparePasses"],
     "session": ["makeConfig", "prepareSession", "CROWDED_FIELD_CONFIG", "V5_TESTING_CONFIG",

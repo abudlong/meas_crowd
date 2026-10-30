@@ -193,6 +193,8 @@ real code.
 | `FitStitchTestCase.testFailingTileDoesNotStopTask` | One failing tile | one tile raises an error | the other 8 written; the gap marked in the TILE map |
 | `FitStitchTestCase.testPlot` | `plotDetector` | stitched mosaic; a zoom, greyscale, sources circled | PNG written; residual/σ spread ≈ 1; binning 1 for the zoom |
 | `FitStitchTestCase.testTile` | `loadTile`, `plotTile` | the corner tile | interior at (0, 0), width = interior + 20 px pad; `owned` count right; PNG written; residual/σ ≈ 1 |
+| `FitStitchTestCase.testResidualImages` | Tile files and the mosaic carry the residual images | the corner tile; its stitched mosaic | tiles have DATA, MODEL, RESIDUAL, RESIDUAL_SIGMA, VARIANCE, BAD; RESIDUAL = DATA − MODEL and RESIDUAL_SIGMA = RESIDUAL / √VARIANCE; the mosaic has RESIDUAL_SIGMA with scatter ≈ 1; `loadMosaic` / `loadTile` return `residSigma` |
+| `FitStitchTestCase.testOldTilesGetResiduals` | Tiles written by older versions (no residual images) are upgraded without refitting | the corner tile with RESIDUAL / RESIDUAL_SIGMA removed | `addTileResiduals` rewrites it once (a second call changes nothing), the extensions are in order, and stitching still works |
 | `FitStitchTestCase.testCli` | `crowdDetector.py stitch` and `plot` | fitted tiles | both return 0; `detector_view.png` written |
 
 ## test_compat.py

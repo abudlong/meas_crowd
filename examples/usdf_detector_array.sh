@@ -25,11 +25,11 @@ set -euo pipefail
 VISIT=${VISIT:-2025062100433}
 DETECTOR=${DETECTOR:-144}
 NTASKS=${NTASKS:-25}                  # ~100 tiles of 400 px per LSSTCam detector -> ~4 per task
-OUT=${OUT:-$HOME/meas_crowd_results/v${VISIT}_d${DETECTOR}}
+OUT=${OUT:-/sdf/home/a/abudlong/project/repo-main-logs/crowdedFields/october2026/crowded_fields/6-testScript/10.30.26_test2}
 PKG=${PKG:-$HOME/meas_crowd}
 mkdir -p "$OUT/logs"
 
-SETUP="source /sdf/group/rubin/sw/w_latest/loadLSST.bash && setup lsst_distrib && setup -k -r $PKG && export OMP_NUM_THREADS=1"
+SETUP="source /sdf/group/rubin/sw/w_latest/loadLSST.bash && setup lsst_distrib && setup -k -r $PKG && export OMP_NUM_THREADS=1 PYTHONUNBUFFERED=1"
 
 # partition / account: see sacctmgr show assoc user=$USER
 FIT=$(sbatch --parsable --job-name=crowd_fit --partition=milano --account=rubin:developers \

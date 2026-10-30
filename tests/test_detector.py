@@ -211,6 +211,42 @@ class FitStitchTestCase(unittest.TestCase):
         self.assertTrue(os.path.getsize(png) > 1000)
         self.assertLess(abs(st["residualSigma"] - 1), 0.1)
 
+    def testResidualImages(self):
+        from astropy.io import fits
+        files = self._fit(region=(0, 150, 0, 150))                  # the corner tile
+        with fits.open(files[0]) as hl:
+            names = [h.name for h in hl]
+            d, m, v = (hl[k].data.astype(float) for k in ("DATA", "MODEL", "VARIANCE"))
+            r, z = hl["RESIDUAL"].data, hl["RESIDUAL_SIGMA"].data
+        self.assertEqual(names[1:7], ["DATA", "MODEL", "RESIDUAL", "RESIDUAL_SIGMA", "VARIANCE",
+                                      "BAD"])
+        np.testing.assert_allclose(r, d - m, rtol=1e-5, atol=1e-3)
+        ok = np.isfinite(z)
+        np.testing.assert_allclose(z[ok], ((d - m) / np.sqrt(v))[ok], rtol=1e-4, atol=1e-4)
+        det.stitchTiles(self.out, verbose=False)
+        with fits.open(os.path.join(self.out, "detector_mosaic.fits")) as hl:
+            self.assertEqual([h.name for h in hl][1:], ["DATA", "MODEL", "RESIDUAL",
+                                                        "RESIDUAL_SIGMA", "VARIANCE", "BAD",
+                                                        "TILE"])
+            self.assertLess(abs(np.nanstd(hl["RESIDUAL_SIGMA"].data) - 1), 0.1)
+        self.assertIn("residSigma", det.loadMosaic(self.out))
+        self.assertIn("residSigma", det.loadTile(files[0]))
+
+    def testOldTilesGetResiduals(self):
+        from astropy.io import fits
+        files = self._fit(region=(0, 150, 0, 150))
+        with fits.open(files[0]) as hl:                             # a tile from an older version
+            old = fits.HDUList([h.copy() for h in hl if h.name not in ("RESIDUAL", "RESIDUAL_SIGMA")])
+        old.writeto(files[0], overwrite=True)
+        self.assertEqual(det.addTileResiduals(self.out), files)
+        self.assertEqual(det.addTileResiduals(self.out), [])         # already there: untouched
+        with fits.open(files[0]) as hl:
+            self.assertEqual([h.name for h in hl][1:8], ["DATA", "MODEL", "RESIDUAL",
+                                                         "RESIDUAL_SIGMA", "VARIANCE", "BAD",
+                                                         "CATALOG"])
+        self.assertEqual(len(det.stitchTiles(self.out, verbose=False)["catalog"]),
+                         int(np.sum((self.syn.xy[:, 0] < 199.5) & (self.syn.xy[:, 1] < 166.5))))
+
     def testCli(self):
         import importlib.util
         path = os.path.join(os.path.dirname(__file__), "..", "bin.src", "crowdDetector.py")

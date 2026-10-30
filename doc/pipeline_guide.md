@@ -78,9 +78,9 @@ step:
    (`run.outerHistory`), the photometry catalogue with the Gaia comparison (`run.photometry`), a
    summary, and with `outDir` files on disk (`saveRun`: `photometry.fits`, images, PSF kernels).
 8. **Whole detector** (`fitTiles` → `stitchTiles` → `plotDetector`): 400 px tiles, each fitted
-   with 30 px padding and written to `tile_<name>.fits`. These are stitched into
-   `detector_mosaic.fits` (DATA, MODEL, RESIDUAL, VARIANCE, BAD, TILE) and one catalogue in which
-   each source appears once.
+   with 30 px padding and written to `tile_<name>.fits` (DATA, MODEL, RESIDUAL, RESIDUAL_SIGMA,
+   VARIANCE, BAD and the catalogue). These are stitched into `detector_mosaic.fits` (the same
+   images plus TILE) and one catalogue in which each source appears once.
 
 Why each step is there and the exact rules behind its decisions (thresholds, what is kept or
 removed, and when) are in [algorithm.md](algorithm.md).
@@ -190,7 +190,7 @@ phot = run.photometry                                     # PSF + aperture magni
 crowd.plotGaiaComparison(phot)                          # (saved as results/.../photometry.fits)
 ```
 
-The whole detector as a Slurm array (25 tasks share about 100 tiles, then one stitch job):
+The whole detector as a Slurm array (25 tasks share the 110 tiles, then one stitch job):
 
 ```bash
 VISIT=2025062100433 DETECTOR=144 bash examples/usdf_detector_array.sh
@@ -204,6 +204,10 @@ python bin.src/crowdDetector.py fit 2025062100433 144 --out $OUT --region 1000 1
 python bin.src/crowdDetector.py stitch --out $OUT
 python bin.src/crowdDetector.py plot --out $OUT
 ```
+
+`--out` is optional: without it the results go to `$MEAS_CROWD_OUT` if that is set, else to
+`DEFAULT_OUT` at the top of `bin.src/crowdDetector.py` (edit it to change the default).
+[command_line.md](command_line.md) walks through a whole-detector run at USDF step by step.
 
 ### 2. PSF candidate stars and the model PSF
 
@@ -296,7 +300,7 @@ use `crowd.plotSourceCutouts(run, how="worst", n=8, phot=phot)`.
 import glob
 for path in sorted(glob.glob(f"{OUT}/tile_*.fits"))[:4]:
     crowd.plotTile(path)                  # data | model | residual | residual/sigma
-t = crowd.loadTile(f"{OUT}/tile_x0400_y0400_400x400.fits")   # arrays + catalogue
+t = crowd.loadTile(f"{OUT}/tile_x0740_y0800_371x400.fits")   # arrays + catalogue
 ```
 
 Each plot covers the tile's whole fitted area; the outlined box is the interior that goes into
@@ -310,8 +314,8 @@ crowd.plotDetector(m, out=f"{OUT}/detector.png")    # whole detector, binned for
 crowd.plotDetector(m, view=(1000, 1400, 1000, 1400), binning=1, sources=True)   # zoom
 ```
 
-`detector_mosaic.fits` also opens in DS9 (DATA, MODEL, RESIDUAL, VARIANCE, BAD and TILE
-extensions).
+`detector_mosaic.fits` also opens in DS9 (DATA, MODEL, RESIDUAL, RESIDUAL_SIGMA, VARIANCE, BAD
+and TILE extensions; RESIDUAL_SIGMA = residual / √variance).
 
 ## Unit tests: running them and checking the results
 

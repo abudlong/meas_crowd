@@ -2,7 +2,7 @@
 
 Every public function and class of `lsst.meas.crowd`: what it does, its parameters (with types and defaults) and what it returns.  Generated from the docstrings by `doc/make_function_reference.py`; do not edit by hand (run `python doc/make_function_reference.py` after changing a docstring).  How the pipeline fits together is in [pipeline_guide.md](pipeline_guide.md); the output catalogue in [catalog_columns.md](catalog_columns.md).
 
-175 functions and 4 classes in 11 modules.  Everything listed here can be used as `crowd.<name>` after `import lsst.meas.crowd as crowd`, or from its module (`from lsst.meas.crowd import photometry`).  Names starting with `_` are internal helpers and are not listed.
+176 functions and 4 classes in 11 modules.  Everything listed here can be used as `crowd.<name>` after `import lsst.meas.crowd as crowd`, or from its module (`from lsst.meas.crowd import photometry`).  Names starting with `_` are internal helpers and are not listed.
 
 ## Start here
 
@@ -34,7 +34,7 @@ Every public function and class of `lsst.meas.crowd`: what it does, its paramete
 | [`plotting`](#plotting) | final data / model / residual plots and residual diagnostics | 9 |
 | [`stagePlots`](#stageplots) | plots of the intermediate stages and pass-to-pass comparison | 6 |
 | [`sourcePlots`](#sourceplots) | per-source cutouts, cross-sections and magnitudes | 3 |
-| [`detector`](#detector) | whole-detector runs: tiles, stitching, mosaic and tile plots | 9 |
+| [`detector`](#detector) | whole-detector runs: tiles, stitching, mosaic and tile plots | 10 |
 | [`fastKernels`](#fastkernels) | fast PSF stamps (C++ with a NumPy fallback) | 6 |
 | [`fitLib`](#fitlib) | the core library: joint fit, detection, PSF and background tools, plots | 68 |
 | [`adaptive`](#adaptive) | the residual check deciding whether sources are still missing | 7 |
@@ -1986,6 +1986,7 @@ Whole-detector runs: tile, fit, stitch.
 | --- | --- |
 | [`tileSpecs`](#detectortilespecs) | Return the interiors of a tile grid that partitions an area exactly. |
 | [`tileName`](#detectortilename) | Return the name of a tile, e.g. 'x0400_y0000_400x400'. |
+| [`addTileResiduals`](#detectoraddtileresiduals) | Add the RESIDUAL and RESIDUAL_SIGMA images to tile files written without them. |
 | [`saveTileProducts`](#detectorsavetileproducts) | Write one tile's results to a FITS file. |
 | [`fitTiles`](#detectorfittiles) | Fit this task's share of a detector's tiles and write one file per tile. |
 | [`stitchTiles`](#detectorstitchtiles) | Assemble the tile files into full-detector images and one catalogue. |
@@ -2027,13 +2028,29 @@ Return the name of a tile, e.g. 'x0400_y0000_400x400'.
 | --- | --- | --- |
 | `name` | `str` | The tile name. |
 
+### detector.addTileResiduals
+
+`addTileResiduals(outDir='detector_run')`
+
+Add the RESIDUAL and RESIDUAL_SIGMA images to tile files written without them.
+
+Tiles fitted by older versions have only DATA, MODEL, VARIANCE and BAD; this adds the two residual images (nothing is refitted).  Files that already have them are left alone.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `outDir` | `str`, optional | Directory with the tile files. |
+
+| Returns | Type | Description |
+| --- | --- | --- |
+| `updated` | `list` [`str`] | The files that were rewritten. |
+
 ### detector.saveTileProducts
 
 `saveTileProducts(run, path, phot=None, meta=None)`
 
 Write one tile's results to a FITS file.
 
-DATA, MODEL, VARIANCE and BAD images over the tile's fit box (header keys X0/Y0 = fit-box origin, IX0/IY0/IX1/IY1 = interior, inclusive) and a CATALOG table (the photometry, with an ``owned`` column: source inside this tile's interior, half-open so boundary sources belong to exactly one tile).  The file is written atomically.
+DATA, MODEL, RESIDUAL, RESIDUAL_SIGMA, VARIANCE and BAD images over the tile's fit box (RESIDUAL = DATA - MODEL, RESIDUAL_SIGMA = RESIDUAL / sqrt(VARIANCE); header keys X0/Y0 = fit-box origin, IX0/IY0/IX1/IY1 = interior, inclusive) and a CATALOG table (the photometry, with an ``owned`` column: source inside this tile's interior, half-open so boundary sources belong to exactly one tile).  The file is written atomically.
 
 | Parameter | Type | Description |
 | --- | --- | --- |
@@ -2081,7 +2098,7 @@ Tiles already on disk are skipped, so the job can be restarted; a failing tile i
 
 Assemble the tile files into full-detector images and one catalogue.
 
-Writes the mosaic (DATA, MODEL, RESIDUAL, VARIANCE, BAD and TILE extensions) and the catalogue (every source once, from the tile whose interior contains it) into ``outDir``.
+Writes the mosaic (DATA, MODEL, RESIDUAL, RESIDUAL_SIGMA, VARIANCE, BAD and TILE extensions) and the catalogue (every source once, from the tile whose interior contains it) into ``outDir``.  Tile files from older versions without the residual images get them added (`addTileResiduals`).
 
 | Parameter | Type | Description |
 | --- | --- | --- |
@@ -2092,7 +2109,7 @@ Writes the mosaic (DATA, MODEL, RESIDUAL, VARIANCE, BAD and TILE extensions) and
 
 | Returns | Type | Description |
 | --- | --- | --- |
-| `mosaic` | `dict` | ``data``, ``model``, ``resid``, ``var``, ``bad``, ``tile`` (tile index map, -1 = not fitted), ``x0``, ``y0``, ``tiles`` (names), ``interiors`` and ``catalog``. |
+| `mosaic` | `dict` | ``data``, ``model``, ``resid``, ``residSigma``, ``var``, ``bad``, ``tile`` (tile index map, -1 = not fitted), ``x0``, ``y0``, ``tiles`` (names), ``interiors`` and ``catalog``. |
 
 Raises: `FileNotFoundError` (Raised if ``outDir`` has no tile files.)
 
@@ -2124,7 +2141,7 @@ Read one tile file written by `saveTileProducts`.
 
 | Returns | Type | Description |
 | --- | --- | --- |
-| `tile` | `dict` | In the form of `loadMosaic`'s result over the tile's fit box (``data``, ``model``, ``resid``, ``var``, ``bad``, ``tile``, ``x0``, ``y0``, ``catalog``), plus ``name`` and ``interiors`` (the tile's interior as one (x0, y0, x1, y1) tuple, inclusive). |
+| `tile` | `dict` | In the form of `loadMosaic`'s result over the tile's fit box (``data``, ``model``, ``resid``, ``residSigma``, ``var``, ``bad``, ``tile``, ``x0``, ``y0``, ``catalog``), plus ``name`` and ``interiors`` (the tile's interior as one (x0, y0, x1, y1) tuple, inclusive). |
 
 ### detector.plotTile
 

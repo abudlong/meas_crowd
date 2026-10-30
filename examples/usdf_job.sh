@@ -36,8 +36,9 @@ source /sdf/group/rubin/sw/w_latest/loadLSST.bash
 setup lsst_distrib
 setup -k -r "$HOME/meas_crowd"          # where you unpacked and built the package
 export OMP_NUM_THREADS=1
+export PYTHONUNBUFFERED=1             # log lines appear as they are printed
 
 python "$HOME/meas_crowd/examples/run_visit_batch.py" \
     --visit 2025062100433 --detector 144 \
     --cutouts 1000,1000,300 2500,2000,300 \
-    --n-jobs 2 --out "$HOME/meas_crowd_results/v2025062100433_d144"
+    --n-jobs 2 --out "/sdf/home/a/abudlong/project/repo-main-logs/crowdedFields/october2026/crowded_fields/6-testScript/10.30.26_test2"

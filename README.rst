@@ -25,7 +25,9 @@ into one mosaic and one catalogue.
   parameters and what it returns (generated from the docstrings by
   ``doc/make_function_reference.py``);
 * `doc/unit_tests.md <doc/unit_tests.md>`_: every unit test, what it checks, its input and what it
-  must return to pass.
+  must return to pass;
+* `doc/command_line.md <doc/command_line.md>`_: a whole-detector run from the command line at
+  USDF (test, Slurm array, following the jobs, outputs, troubleshooting).
 
 Pipeline at a glance
 ====================
@@ -80,7 +82,8 @@ The package follows the Rubin DM layout (``sconsUtils`` + ``eups``)::
     tests/                        unit tests (run with or without the stack)
     examples/                     run_visit.py (notebook cells), run_visit_batch.py (terminal),
                                   usdf_job.sh, usdf_detector_array.sh (Slurm), benchmark_stamps.py
-    doc/                          user guide, algorithm, function reference, catalogue, unit tests
+    doc/                          user guide, algorithm, function reference, catalogue, unit tests,
+                                  command-line runs
 
 Building
 ========
@@ -154,9 +157,11 @@ Whole detector
 --------------
 
 The detector is covered by 400 px tiles whose interiors partition it exactly; each tile is
-fitted with 30 px padding and written to ``tile_<name>.fits``.  Tasks skip tiles already on disk,
-so a job can be restarted.  ``stitchTiles`` writes ``detector_mosaic.fits`` (DATA, MODEL,
-RESIDUAL, VARIANCE, BAD, TILE; opens in DS9) and ``detector_catalog.fits`` (every source once)::
+fitted with 30 px padding and written to ``tile_<name>.fits`` (DATA, MODEL, RESIDUAL,
+RESIDUAL_SIGMA, VARIANCE, BAD and the catalogue).  Tasks skip tiles already on disk, so a job can
+be restarted.  ``stitchTiles`` writes ``detector_mosaic.fits`` (the same images plus TILE; opens
+in DS9) and ``detector_catalog.fits`` (every source once).  ``doc/command_line.md`` walks through
+a run at USDF step by step::
 
     VISIT=2025062100433 DETECTOR=144 bash examples/usdf_detector_array.sh   # Slurm array + stitch
 
@@ -164,6 +169,9 @@ RESIDUAL, VARIANCE, BAD, TILE; opens in DS9) and ``detector_catalog.fits`` (ever
     python bin.src/crowdDetector.py fit 2025062100433 144 --out $OUT --region 1000 1800 1000 1800
     python bin.src/crowdDetector.py stitch --out $OUT
     python bin.src/crowdDetector.py plot --out $OUT
+
+``--out`` is optional: without it the results go to ``$MEAS_CROWD_OUT`` if that is set, else to
+``DEFAULT_OUT`` at the top of ``bin.src/crowdDetector.py``.
 
 Plots
 =====

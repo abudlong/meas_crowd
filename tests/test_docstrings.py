@@ -96,7 +96,8 @@ class LicenceHeaderTestCase(unittest.TestCase):
         """Every Python, C++ and shell file starts with the LSST GPLv3 header."""
         root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
         skip = {os.path.join("python", "lsst", "__init__.py"),
-                os.path.join("python", "lsst", "meas", "__init__.py")}     # namespace stubs
+                os.path.join("python", "lsst", "meas", "__init__.py"),      # namespace stubs
+                os.path.join("python", "lsst", "meas", "crowd", "version.py")}  # written by scons
         missing = []
         for sub in ("python", "tests", "examples", "bin.src", "doc", "src", "include", "."):
             pattern = "*" if sub == "." else os.path.join("**", "*")

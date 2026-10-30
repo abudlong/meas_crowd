@@ -42,40 +42,40 @@ from lsst.meas.crowd import stagePlots as sp  # noqa: E402
 plt.show = lambda *a, **k: None
 
 
-def _two_pass_run():
+def _twoPassRun():
     """A fake run with two outer passes, background images and three inner snapshots."""
-    run = fakeRun.make_run(seed=3)
-    final = run.outer_history[0]
+    run = fakeRun.makeRun(seed=3)
+    final = run.outerHistory[0]
     exp, res = final["exposure"], final["result"]
-    data, model = exp.image.array, res["model_full"]
+    data, model = exp.image.array, res["modelFull"]
     n = len(res["S"]["xy"])
     fit = res["snaps"][0]["fit"]
-    fit.update(group_labels=np.zeros(n, int), group_chi2={0: 1.0}, n_groups=1, n_at_zero=0)
+    fit.update(groupLabels=np.zeros(n, int), groupChi2={0: 1.0}, nGroups=1, nAtZero=0)
     x0, y0 = exp.getBBox().getMinX(), exp.getBBox().getMinY()
     for c, a in zip(fit["comps"], fit["amps"]):      # the fields the real joint fit adds
         c.update(amp=a, sig=c["stamp"] > 1e-3,
-                 bbox_parent=(x0 + c["xs"].start, x0 + c["xs"].stop - 1,
-                              y0 + c["ys"].start, y0 + c["ys"].stop - 1))
+                 bboxParent=(x0 + c["xs"].start, x0 + c["xs"].stop - 1,
+                             y0 + c["ys"].start, y0 + c["ys"].stop - 1))
     # inner snapshots: the source list growing (first half, then all, then all again)
     half = fit["amps"].copy()
     half[n // 2:] = 0.0
     comps = fit["comps"]
-    m_half = sum(lsstStubs.place(data.shape, c, a) for c, a in zip(comps, half))
-    snaps = [dict(it=0, threshold=8.0, residual=data - m_half, merged_arr=res["S"]["xy"][:n // 2],
+    mHalf = sum(lsstStubs.place(data.shape, c, a) for c, a in zip(comps, half))
+    snaps = [dict(it=0, threshold=8.0, residual=data - mHalf, mergedArr=res["S"]["xy"][:n // 2],
                   fit=dict(amps=half[:n // 2])),
-             dict(it=1, threshold=6.5, residual=data - model, merged_arr=res["S"]["xy"],
+             dict(it=1, threshold=6.5, residual=data - model, mergedArr=res["S"]["xy"],
                   fit=dict(amps=fit["amps"])),
-             dict(it=2, threshold=5.0, residual=data - model, merged_arr=res["S"]["xy"],
-                  fit=fit, prev_amp=fit["amps"].copy(), is_new=np.zeros(n, bool),
-                  bad_mask=np.zeros(data.shape, bool))]
+             dict(it=2, threshold=5.0, residual=data - model, mergedArr=res["S"]["xy"],
+                  fit=fit, prevAmp=fit["amps"].copy(), isNew=np.zeros(n, bool),
+                  badMask=np.zeros(data.shape, bool))]
     res["snaps"] = snaps
     bb = exp.getBBox()
     ny, nx = data.shape
     bg2 = np.full((ny, nx), 3.0) + np.linspace(0, 1, nx)[None, :]
-    first = dict(final, bg_image=None)
-    second = dict(final, bg_image=types.SimpleNamespace(array=bg2))
-    run.outer_history = [first, second]
-    run.config = dict(sat_zone_fwhm=0)
+    first = dict(final, bgImage=None)
+    second = dict(final, bgImage=types.SimpleNamespace(array=bg2))
+    run.outerHistory = [first, second]
+    run.config = dict(satZoneFwhm=0)
     return run, bb, bg2
 
 
@@ -87,36 +87,36 @@ class PsfStarsTestCase(unittest.TestCase):
         cat = Table(dict(slot_Centroid_x=[1., 2., 3., 4.], slot_Centroid_y=[5., 6., 7., 8.],
                          calib_psf_candidate=[True, True, True, False],
                          calib_psf_used=[True, False, True, False]))
-        st = sp.psf_star_positions(catalog=cat)
+        st = sp.psfStarPositions(catalog=cat)
         self.assertEqual(len(st["candidates"]), 3)
         np.testing.assert_array_equal(st["used"], [[1., 5.], [3., 7.]])
 
     def testSession(self):
         sess = types.SimpleNamespace(starCat=Table(dict(x=[10., 20.], y=[30., 40.])),
-                                     psf_used_xy=np.array([[10., 30.]]))
-        st = sp.psf_star_positions(session=sess)
+                                     psfUsedXy=np.array([[10., 30.]]))
+        st = sp.psfStarPositions(session=sess)
         self.assertEqual(len(st["candidates"]), 2)
         self.assertEqual(len(st["used"]), 1)
-        with self.assertRaises(ValueError):           # psf_source='visit': no star catalogue
-            sp.psf_star_positions(session=types.SimpleNamespace(starCat=None))
+        with self.assertRaises(ValueError):           # psfSource='visit': no star catalogue
+            sp.psfStarPositions(session=types.SimpleNamespace(starCat=None))
         with self.assertRaises(ValueError):
-            sp.psf_star_positions()
+            sp.psfStarPositions()
 
     def testRunStarsAreBrightSources(self):
-        run, _, _ = _two_pass_run()
-        st = sp.psf_star_positions(run=run)
-        xy = run.outer_history[-1]["result"]["S"]["xy"]
+        run, _, _ = _twoPassRun()
+        st = sp.psfStarPositions(run=run)
+        xy = run.outerHistory[-1]["result"]["S"]["xy"]
         self.assertGreater(len(st["used"]), 0)
         self.assertLessEqual(len(st["used"]), len(st["candidates"]))
         for p in st["used"]:                          # every used star is one of the sources
             self.assertLess(np.min(np.hypot(*(xy - p).T)), 1e-9)
 
     def testPlotKernel(self):
-        run, _, _ = _two_pass_run()
-        exp = run.outer_history[-1]["exposure"]
+        run, _, _ = _twoPassRun()
+        exp = run.outerHistory[-1]["exposure"]
         with tempfile.TemporaryDirectory() as d:
             png = os.path.join(d, "psf.png")
-            info = sp.show_psf_stars(exp, sp.psf_star_positions(run=run), out=png)
+            info = sp.showPsfStars(exp, sp.psfStarPositions(run=run), out=png)
             self.assertGreater(os.path.getsize(png), 1000)
         self.assertAlmostEqual(info["fwhm"], 2.355 * 2.0, delta=0.15)   # fake PSF: sigma 2 px
         self.assertAlmostEqual(info["kernel"].sum(), 1.0, places=6)
@@ -127,29 +127,29 @@ class BackgroundAndRoundsTestCase(unittest.TestCase):
         plt.close("all")
 
     def testBackgrounds(self):
-        run, bb, bg2 = _two_pass_run()
+        run, bb, bg2 = _twoPassRun()
         ny, nx = bg2.shape
         initial = types.SimpleNamespace(array=np.full((ny, nx), 2.0))
-        bgs = sp.show_backgrounds(run, initial=initial)
+        bgs = sp.showBackgrounds(run, initial=initial)
         self.assertEqual(len(bgs), 2)
         np.testing.assert_array_equal(bgs[1], bg2)
-        bgs = sp.show_backgrounds(run)                  # visit image: nothing subtracted first
+        bgs = sp.showBackgrounds(run)                  # visit image: nothing subtracted first
         self.assertIsNone(bgs[0])
 
     def testOuterRounds(self):
-        run, _, _ = _two_pass_run()
-        rows = sp.show_rounds(run, level="outer")
+        run, _, _ = _twoPassRun()
+        rows = sp.showRounds(run, level="outer")
         self.assertEqual(len(rows), 2)
-        self.assertAlmostEqual(rows[-1]["chi_std"], 1.0, delta=0.1)      # perfect model: noise
+        self.assertAlmostEqual(rows[-1]["chiStd"], 1.0, delta=0.1)      # perfect model: noise
 
     def testInnerRounds(self):
-        run, _, _ = _two_pass_run()
-        rows = sp.show_rounds(run, level="inner", view=(1010, 1100, 2010, 2100))
-        self.assertEqual([r["n_sources"] for r in rows], [8, 16, 16])
-        self.assertGreater(rows[0]["chi_std"], rows[-1]["chi_std"])      # missing sources show
-        self.assertEqual(len(sp.show_rounds(run, level="inner", max_rows=2)), 2)
+        run, _, _ = _twoPassRun()
+        rows = sp.showRounds(run, level="inner", view=(1010, 1100, 2010, 2100))
+        self.assertEqual([r["nSources"] for r in rows], [8, 16, 16])
+        self.assertGreater(rows[0]["chiStd"], rows[-1]["chiStd"])      # missing sources show
+        self.assertEqual(len(sp.showRounds(run, level="inner", maxRows=2)), 2)
         with self.assertRaises(ValueError):
-            sp.show_rounds(run, level="tiles")
+            sp.showRounds(run, level="tiles")
 
 
 class LinkedPagesTestCase(unittest.TestCase):
@@ -157,9 +157,9 @@ class LinkedPagesTestCase(unittest.TestCase):
         plt.close("all")
 
     def testColoursMatch(self):
-        run, _, _ = _two_pass_run()
-        xy = run.outer_history[-1]["result"]["S"]["xy"]
-        out = sp.show_linked_source_pages(run, sources=[0, tuple(xy[5] + 0.3)], view_half=12)
+        run, _, _ = _twoPassRun()
+        xy = run.outerHistory[-1]["result"]["S"]["xy"]
+        out = sp.showLinkedSourcePages(run, sources=[0, tuple(xy[5] + 0.3)], viewHalf=12)
         self.assertEqual(out["pages"], [[0, 5]])
         self.assertEqual(set(out["colors"]), {0, 5})
         # the overview boxes use exactly the page colours
@@ -169,18 +169,18 @@ class LinkedPagesTestCase(unittest.TestCase):
         self.assertEqual(edge, {matplotlib.colors.to_hex(c) for c in out["colors"].values()})
 
     def testDefaultSelectionAndSlimSnapshot(self):
-        run, _, _ = _two_pass_run()
-        out = sp.show_linked_source_pages(run, sources_per_page=4, show_pages=False)
+        run, _, _ = _twoPassRun()
+        out = sp.showLinkedSourcePages(run, sourcesPerPage=4, showPages=False)
         self.assertEqual(len(out["pages"]), 1)
-        amps = run.outer_history[-1]["result"]["snaps"][-1]["fit"]["amps"]
+        amps = run.outerHistory[-1]["result"]["snaps"][-1]["fit"]["amps"]
         self.assertEqual(out["pages"][0], list(np.argsort(-amps)[:4]))    # brightest first
         with self.assertRaises(ValueError):              # older snapshot: stamps dropped
-            sp.show_linked_source_pages(run, snap=0)
+            sp.showLinkedSourcePages(run, snap=0)
 
     def testOutDirWritesEveryPageAndClosesFigures(self):
-        run, _, _ = _two_pass_run()
+        run, _, _ = _twoPassRun()
         with tempfile.TemporaryDirectory() as d:
-            out = sp.show_linked_source_pages(run, sources_per_page=4, max_pages=None, out_dir=d)
+            out = sp.showLinkedSourcePages(run, sourcesPerPage=4, maxPages=None, outDir=d)
             self.assertEqual(len(out["pages"]), 4)                     # 16 sources / 4
             self.assertEqual(len(out["files"]), 8)                     # overview + page each
             self.assertTrue(all(os.path.getsize(f) > 1000 for f in out["files"]))
@@ -194,33 +194,33 @@ class ComparePassesTestCase(unittest.TestCase):
 
     def setUp(self):
         from lsst.meas.crowd import pipeline
-        base = fakeRun.make_run(seed=4)
-        h = base.outer_history[0]
+        base = fakeRun.makeRun(seed=4)
+        h = base.outerHistory[0]
         exp, fit = h["exposure"], h["result"]["snaps"][0]["fit"]
         xy, amps, comps = h["result"]["S"]["xy"], fit["amps"], fit["comps"]
         shape = exp.image.array.shape
         self.xy = xy
         self.fake = (xy[0] + xy[1]) / 2 + (7.0, 0.0)         # an empty spot between stars
-        fake_comp = lsstStubs.gaussian_comp(shape, *self.fake, 2.0, 15, 1000, 2000)
+        fakeComp = lsstStubs.gaussianComp(shape, *self.fake, 2.0, 15, 1000, 2000)
 
-        def one_pass(idx, extra=(), rejects=()):
+        def onePass(idx, extra=(), rejects=()):
             pxy = np.vstack([xy[idx]] + [np.atleast_2d(p) for p, _, _ in extra])
             pamp = np.concatenate([amps[idx], [a for _, a, _ in extra]])
             model = sum(lsstStubs.place(shape, comps[j], amps[j]) for j in idx)
             for _, a, c in extra:
                 model = model + lsstStubs.place(shape, c, a)
-            S = pipeline._state(pxy, from_gaia=False)
-            res = dict(S=S, snaps=[dict(fit=dict(amps=pamp))], model_full=model)
+            S = pipeline._state(pxy, fromGaia=False)
+            res = dict(S=S, snaps=[dict(fit=dict(amps=pamp))], modelFull=model)
             return dict(exposure=exp, psf=h["psf"], result=res,
                         rejects=np.asarray(rejects, float).reshape(-1, 2))
 
         n = len(xy)
-        a_idx = [j for j in range(n) if j != 7]                 # pass a misses star 7 ...
-        b_idx = [j for j in range(n) if j not in (3, 9)]        # pass b drops stars 3 and 9
+        aIdx = [j for j in range(n) if j != 7]                 # pass a misses star 7 ...
+        bIdx = [j for j in range(n) if j not in (3, 9)]        # pass b drops stars 3 and 9
         self.run = types.SimpleNamespace(
-            outer_history=[one_pass(a_idx, extra=[(self.fake, 3000.0, fake_comp)]),   # ... has a fake
-                           one_pass(b_idx, rejects=[xy[9]])],   # star 9: removed by the halo check
-            bad_bitmask=4)
+            outerHistory=[onePass(aIdx, extra=[(self.fake, 3000.0, fakeComp)]),   # ... has a fake
+                          onePass(bIdx, rejects=[xy[9]])],   # star 9: removed by the halo check
+            badBitmask=4)
 
     def tearDown(self):
         plt.close("all")
@@ -232,25 +232,25 @@ class ComparePassesTestCase(unittest.TestCase):
         return t[sel][0]
 
     def testVerdicts(self):
-        t = sp.compare_passes(self.run, plot=False)
+        t = sp.comparePasses(self.run, plot=False)
         self.assertEqual(int(np.sum(t["kind"] == "lost")), 3)         # stars 3, 9 and the fake
         self.assertEqual(int(np.sum(t["kind"] == "gained")), 1)       # star 7
         r = self._row(t, "lost", self.xy[3])
         self.assertTrue(r["verdict"].startswith("LOST"))
-        self.assertAlmostEqual(r["left_frac"], 1.0, delta=0.15)       # all its flux is in the residual
+        self.assertAlmostEqual(r["leftFrac"], 1.0, delta=0.15)       # all its flux is in the residual
         self.assertIn("blocked", self._row(t, "lost", self.xy[9])["verdict"])
         r = self._row(t, "lost", self.fake)
         self.assertIn("spurious", r["verdict"])
-        self.assertLess(abs(r["left_frac"]), 0.2)
+        self.assertLess(abs(r["leftFrac"]), 0.2)
         self.assertIn("missing from the residual", self._row(t, "gained", self.xy[7])["verdict"])
 
     def testPlotAndErrors(self):
         with tempfile.TemporaryDirectory() as d:
             png = os.path.join(d, "cmp.png")
-            sp.compare_passes(self.run, out=png)
+            sp.comparePasses(self.run, out=png)
             self.assertGreater(os.path.getsize(png), 1000)
         with self.assertRaises(ValueError):
-            sp.compare_passes(types.SimpleNamespace(outer_history=self.run.outer_history[:1]))
+            sp.comparePasses(types.SimpleNamespace(outerHistory=self.run.outerHistory[:1]))
 
 
 if __name__ == "__main__":

@@ -20,9 +20,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-# Slurm batch job for USDF.  Submit from a rubin-devl node:   sbatch examples/usdf_job.sh
-# Check the partition / account names that apply to you (`sacctmgr show assoc user=$USER`).
+# Fit cutouts of one visit as a Slurm job at USDF:  sbatch examples/usdf_job.sh
 #SBATCH --job-name=meas_crowd
+# partition / account: see sacctmgr show assoc user=$USER
 #SBATCH --partition=milano
 #SBATCH --account=rubin:developers
 #SBATCH --nodes=1

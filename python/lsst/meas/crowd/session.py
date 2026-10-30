@@ -21,12 +21,12 @@
 
 """Sessions, configuration and saving of runs.
 
-`prepare_session` loads a visit image, cuts out the requested regions and sets up the PSF;
-`make_config` builds a configuration (``CROWDED_FIELD_CONFIG`` is the recommended starting
-point); `CutoutRun` holds a finished run and `save_run` writes it to disk.
+`prepareSession` loads a visit image, cuts out the requested regions and sets up the PSF;
+`makeConfig` builds a configuration (``CROWDED_FIELD_CONFIG`` is the recommended starting
+point); `CutoutRun` holds a finished run and `saveRun` writes it to disk.
 
-``make_config`` starts from ``DEFAULT_CONFIG``.  A nested dict you pass (e.g. ``shape_kwargs``,
-``stack_kwargs``, ``inner_kwargs``) replaces the whole default dict; pass ``deep=True`` to merge
+``makeConfig`` starts from ``DEFAULT_CONFIG``.  A nested dict you pass (e.g. ``shapeKwargs``,
+``stackKwargs``, ``innerKwargs``) replaces the whole default dict; pass ``deep=True`` to merge
 nested dicts key by key instead (unspecified keys keep their defaults).
 """
 import copy
@@ -42,63 +42,63 @@ import matplotlib.patches as patches
 from astropy.table import Table
 from astropy.visualization import simple_norm
 
+from ._compat import camelKeys
 from . import fitLib as L
 
 # =====================================================================
 # Config
 # =====================================================================
 DEFAULT_CONFIG = dict(
-    n_outer_iterations=4,
-    n_inner_iterations=10,
-    plot_every=3,
-    source_view="changed",
-    max_pages_per_iter=2,
-    sources_per_page=4,
-    refine_centroids=True,
-    centroid_min_amp=50.0,
-    n_centroid_rounds=3,
-    refit_psf="stack",
-    stack_kwargs=dict(n_use=12, step=0.8, window=(0.85, 1.0), max_radius=20),
-    psf_polish_cycles=3,
-    psf_kernel_sizes=(41, 27, 21, 15, 11),
-    merge_separation_sigma=1.5,
-    sys_frac=0.03,
-    poisson_k=0.0,
-    min_snr=5.0,
-    prune_sep_sigma=1.5,
-    reject_fwhm=0.75,
-    bright_peak_sigma=100.0,
-    freeze_fwhm=1.0,
-    near_bright_fwhm=2.0,
-    near_bright_snr=10.0,
-    edge_margin_fwhm=0.5,
-    use_eliminate_weak=True,
-    use_shape_cut=True,
-    shape_kwargs=dict(min_snr_local=5.0, chi2_max=2.0, width_range=(0.75, 1.35),
-                      dchi2_width=9.0, trust_snr=15.0, min_contrast=20.0,
-                      weak_snr=10.0, dchi2_width_weak=6.5),
-    shape_in_first_pass=False,
-    psf_wing_size=81,
-    inner_kwargs=dict(n_iterations=10, threshold_start=8.0, threshold_step=-1.5,
-                      threshold_min=4.5, convergence_frac=0.0),
+    nOuterIterations=4,
+    nInnerIterations=10,
+    plotEvery=3,
+    sourceView="changed",
+    maxPagesPerIter=2,
+    sourcesPerPage=4,
+    refineCentroids=True,
+    centroidMinAmp=50.0,
+    nCentroidRounds=3,
+    refitPsf="stack",
+    stackKwargs=dict(nUse=12, step=0.8, window=(0.85, 1.0), maxRadius=20),
+    psfPolishCycles=3,
+    psfKernelSizes=(41, 27, 21, 15, 11),
+    mergeSeparationSigma=1.5,
+    sysFrac=0.03,
+    poissonK=0.0,
+    minSnr=5.0,
+    pruneSepSigma=1.5,
+    rejectFwhm=0.75,
+    brightPeakSigma=100.0,
+    freezeFwhm=1.0,
+    nearBrightFwhm=2.0,
+    nearBrightSnr=10.0,
+    edgeMarginFwhm=0.5,
+    useEliminateWeak=True,
+    useShapeCut=True,
+    shapeKwargs=dict(minSnrLocal=5.0, chi2Max=2.0, widthRange=(0.75, 1.35),
+                      dchi2Width=9.0, trustSnr=15.0, minContrast=20.0,
+                      weakSnr=10.0, dchi2WidthWeak=6.5),
+    shapeInFirstPass=False,
+    psfWingSize=81,
+    innerKwargs=dict(nIterations=10, thresholdStart=8.0, thresholdStep=-1.5,
+                      thresholdMin=4.5, convergenceFrac=0.0),
 )
 
 
 # The recommended settings for crowded fields (deeper detection, looser shape test, closer
-# merging than DEFAULT_CONFIG); originally crowded_cfg_v5_testing.json, built in so no file is
-# needed:
-#   cn.make_config(CROWDED_FIELD_CONFIG, min_snr=4.0, save_to="my_run.json")
-# With the default deep=False, stack_kwargs below REPLACES the default one (n_use, step,
+# merging than DEFAULT_CONFIG):
+#   makeConfig(CROWDED_FIELD_CONFIG, minSnr=4.0, saveTo="my_run.json")
+# With the default deep=False, stackKwargs below REPLACES the default one (nUse, step,
 # window fall back to the library defaults), exactly as the JSON did via the CLI.
 CROWDED_FIELD_CONFIG = dict(
-    min_snr=3.0, near_bright_snr=15.0, reject_fwhm=0.5, near_bright_fwhm=2.0,
-    prune_sep_sigma=1.0, merge_separation_sigma=1.0, outer_convergence_frac=0,
-    stack_kwargs=dict(max_radius=20),
-    shape_kwargs=dict(min_snr_local=3.0, chi2_max=3.0, width_range=(0.7, 1.5),
-                      dchi2_width=12.0, trust_snr=20.0, min_contrast=1.0,
-                      weak_snr=8.0, dchi2_width_weak=12.0),
-    inner_kwargs=dict(n_iterations=8, threshold_start=8.0, threshold_step=-1.0,
-                      threshold_min=3.0, convergence_frac=0.0),
+    minSnr=3.0, nearBrightSnr=15.0, rejectFwhm=0.5, nearBrightFwhm=2.0,
+    pruneSepSigma=1.0, mergeSeparationSigma=1.0, outerConvergenceFrac=0,
+    stackKwargs=dict(maxRadius=20),
+    shapeKwargs=dict(minSnrLocal=3.0, chi2Max=3.0, widthRange=(0.7, 1.5),
+                      dchi2Width=12.0, trustSnr=20.0, minContrast=1.0,
+                      weakSnr=8.0, dchi2WidthWeak=12.0),
+    innerKwargs=dict(nIterations=8, thresholdStart=8.0, thresholdStep=-1.0,
+                      thresholdMin=3.0, convergenceFrac=0.0),
 )
 
 # the old name, kept so existing notebooks keep working
@@ -107,7 +107,7 @@ V5_TESTING_CONFIG = CROWDED_FIELD_CONFIG
 
 def _merge(dst, src, deep):
     """Merge ``src`` into ``dst`` (key by key for nested dicts when ``deep``) and return ``dst``."""
-    for k, v in src.items():
+    for k, v in camelKeys(src).items():           # old snake_case option names still work
         if deep and isinstance(v, dict) and isinstance(dst.get(k), dict):
             _merge(dst[k], v, True)
         else:
@@ -117,19 +117,19 @@ def _merge(dst, src, deep):
 
 def _normalize(cfg):
     """Turn the lists JSON gives back into the tuples the pipeline expects."""
-    if isinstance(cfg.get("stack_kwargs"), dict) and "window" in cfg["stack_kwargs"]:
-        cfg["stack_kwargs"]["window"] = tuple(cfg["stack_kwargs"]["window"])
-    if isinstance(cfg.get("shape_kwargs"), dict) and "width_range" in cfg["shape_kwargs"]:
-        cfg["shape_kwargs"]["width_range"] = tuple(cfg["shape_kwargs"]["width_range"])
-    if "psf_kernel_sizes" in cfg and cfg["psf_kernel_sizes"] is not None:
-        cfg["psf_kernel_sizes"] = tuple(cfg["psf_kernel_sizes"])
+    if isinstance(cfg.get("stackKwargs"), dict) and "window" in cfg["stackKwargs"]:
+        cfg["stackKwargs"]["window"] = tuple(cfg["stackKwargs"]["window"])
+    if isinstance(cfg.get("shapeKwargs"), dict) and "widthRange" in cfg["shapeKwargs"]:
+        cfg["shapeKwargs"]["widthRange"] = tuple(cfg["shapeKwargs"]["widthRange"])
+    if "psfKernelSizes" in cfg and cfg["psfKernelSizes"] is not None:
+        cfg["psfKernelSizes"] = tuple(cfg["psfKernelSizes"])
     return cfg
 
 
-def save_config(cfg, path):
+def saveConfig(cfg, path):
     """Write a config dict to a JSON file.
 
-    Tuples become lists; `make_config` turns them back into tuples when the file is loaded.
+    Tuples become lists; `makeConfig` turns them back into tuples when the file is loaded.
 
     Parameters
     ----------
@@ -153,9 +153,9 @@ def save_config(cfg, path):
     return path
 
 
-def make_config(base=None, deep=False, n_outer=None, n_inner=None, save_to=None,
+def makeConfig(base=None, deep=False, nOuter=None, nInner=None, saveTo=None,
                 **overrides):
-    """Build a pipeline configuration (keyword arguments of `fitLib.run_cutout_pipeline`).
+    """Build a pipeline configuration (keyword arguments of `fitLib.runCutoutPipeline`).
 
     Parameters
     ----------
@@ -163,14 +163,14 @@ def make_config(base=None, deep=False, n_outer=None, n_inner=None, save_to=None,
         A JSON file or a dict, applied on top of ``DEFAULT_CONFIG``.
     deep : `bool`, optional
         Merge nested dicts key by key (default: replace them).
-    n_outer : `int`, optional
-        Shortcut for ``n_outer_iterations``.
-    n_inner : `int`, optional
-        Shortcut for ``n_inner_iterations`` and ``inner_kwargs['n_iterations']``.
-    save_to : `str`, optional
+    nOuter : `int`, optional
+        Shortcut for ``nOuterIterations``.
+    nInner : `int`, optional
+        Shortcut for ``nInnerIterations`` and ``innerKwargs['nIterations']``.
+    saveTo : `str`, optional
         Also write the configuration to this JSON file.
     **overrides
-        Any `fitLib.run_cutout_pipeline` keyword, applied last.
+        Any `fitLib.runCutoutPipeline` keyword, applied last.
 
     Returns
     -------
@@ -178,32 +178,32 @@ def make_config(base=None, deep=False, n_outer=None, n_inner=None, save_to=None,
         The configuration.
     """
     cfg = copy.deepcopy(DEFAULT_CONFIG)
-    base_path = base if isinstance(base, (str, os.PathLike)) else None
+    basePath = base if isinstance(base, (str, os.PathLike)) else None
     if base is not None:
         if isinstance(base, (str, os.PathLike)):
             with open(base) as fh:
                 base = json.load(fh)
         _merge(cfg, base, deep)
     _merge(cfg, overrides, deep)
-    if n_outer:
-        cfg["n_outer_iterations"] = n_outer
-    if n_inner:
-        cfg["n_inner_iterations"] = n_inner
-        cfg["inner_kwargs"]["n_iterations"] = n_inner
-    for k in ("x_range", "y_range", "viz", "save_to"):   # not pipeline kwargs
+    if nOuter:
+        cfg["nOuterIterations"] = nOuter
+    if nInner:
+        cfg["nInnerIterations"] = nInner
+        cfg["innerKwargs"]["nIterations"] = nInner
+    for k in ("xRange", "yRange", "viz", "saveTo"):   # not pipeline kwargs
         cfg.pop(k, None)
     cfg = _normalize(cfg)
-    if save_to:
-        save_to = os.fspath(save_to)
+    if saveTo:
+        saveTo = os.fspath(saveTo)
         # a bare filename goes next to the base JSON (else the current working directory)
-        if (not os.path.dirname(save_to) and base_path is not None):
-            save_to = os.path.join(os.path.dirname(os.path.abspath(base_path)), save_to)
-        save_config(cfg, os.path.abspath(save_to))
+        if (not os.path.dirname(saveTo) and basePath is not None):
+            saveTo = os.path.join(os.path.dirname(os.path.abspath(basePath)), saveTo)
+        saveConfig(cfg, os.path.abspath(saveTo))
     return cfg
 
 
-def check_config(cfg):
-    """Check that every key of a configuration is a `fitLib.run_cutout_pipeline` option.
+def checkConfig(cfg):
+    """Check that every key of a configuration is a `fitLib.runCutoutPipeline` option.
 
     Parameters
     ----------
@@ -216,34 +216,34 @@ def check_config(cfg):
         Raised if ``cfg`` has keys the pipeline does not accept.
     """
     import inspect
-    ok = set(inspect.signature(L.run_cutout_pipeline).parameters)
-    ok -= {"exposure_crop", "psf", "bad_bitmask", "starCat", "bgImage",
-           "x_range", "y_range", "viz"}
+    ok = set(inspect.signature(L.runCutoutPipeline).parameters)
+    ok -= {"exposureCrop", "psf", "badBitmask", "starCat", "bgImage",
+           "xRange", "yRange", "viz"}
     bad = sorted(set(cfg) - ok)
     if bad:
-        raise ValueError(f"unknown run_cutout_pipeline option(s) in config: {bad}. "
+        raise ValueError(f"unknown runCutoutPipeline option(s) in config: {bad}. "
                          f"Valid: {sorted(ok)}")
 
 
-def show_config(cfg, diff_only=False):
+def showConfig(cfg, diffOnly=False):
     """Print a configuration.
 
     Parameters
     ----------
     cfg : `dict`
         Pipeline configuration.
-    diff_only : `bool`, optional
+    diffOnly : `bool`, optional
         Only print keys that differ from ``DEFAULT_CONFIG``.
     """
     out = {k: v for k, v in cfg.items()
-           if not diff_only or _normalize(copy.deepcopy(DEFAULT_CONFIG)).get(k) != v}
+           if not diffOnly or _normalize(copy.deepcopy(DEFAULT_CONFIG)).get(k) != v}
     print(json.dumps(out, indent=2, default=list))
 
 
 # =====================================================================
 # Cutout specs / session
 # =====================================================================
-def parse_cutout(spec):
+def parseCutout(spec):
     """Parse a cutout specification.
 
     Parameters
@@ -296,7 +296,7 @@ class Session:
         Visit id.
     detector : `int`
         Detector id.
-    bad_bitmask : `int`
+    badBitmask : `int`
         Mask bits of pixels the fit ignores.
     psf : `lsst.afw.detection.Psf`
         Detector-level PSF.
@@ -309,36 +309,36 @@ class Session:
         cutout before background subtraction).
     wcs : `lsst.afw.geom.SkyWcs`, optional
         The visit image's WCS.
-    psf_used_xy : `numpy.ndarray`, optional
+    psfUsedXy : `numpy.ndarray`, optional
         Positions (detector px, shape (N, 2)) of the stars the detector-level PSF was built from
-        (``psf_source='refit'`` only).
+        (``psfSource='refit'`` only).
     """
 
     visit: int
     detector: int
-    bad_bitmask: int
+    badBitmask: int
     psf: object
     starCat: object
     bgImage: object
     jobs: dict = field(default_factory=dict)     # name -> dict(interior=Box2I, raw=Exposure)
     wcs: object = None
-    psf_used_xy: object = None
+    psfUsedXy: object = None
 
 
-def build_detector_psf(visit_image, psf_source="refit", return_used=False):
+def buildDetectorPsf(visitImage, psfSource="refit", returnUsed=False):
     """Set up the detector-level PSF.
 
-    With ``psf_source='visit'`` the visit image's own PSF is used.  With 'refit' the background
+    With ``psfSource='visit'`` the visit image's own PSF is used.  With 'refit' the background
     is subtracted, sources are detected and measured, stars selected and a PCA PSF determined
     (the visit image is modified in place).
 
     Parameters
     ----------
-    visit_image : `lsst.afw.image.Exposure`
+    visitImage : `lsst.afw.image.Exposure`
         The detector's visit image.
-    psf_source : `str`, optional
+    psfSource : `str`, optional
         'refit' or 'visit'.
-    return_used : `bool`, optional
+    returnUsed : `bool`, optional
         Also return the positions of the stars the PCA PSF was built from.
 
     Returns
@@ -349,43 +349,43 @@ def build_detector_psf(visit_image, psf_source="refit", return_used=False):
         Selected PSF stars (None for 'visit').
     bgImage : `lsst.afw.image.Image` or `None`
         Subtracted background (None for 'visit').
-    used_xy : `numpy.ndarray` or `None`
-        Positions of the stars used, shape (N, 2) (only with ``return_used``; None for 'visit').
+    usedXy : `numpy.ndarray` or `None`
+        Positions of the stars used, shape (N, 2) (only with ``returnUsed``; None for 'visit').
     """
-    if psf_source == "visit":
+    if psfSource == "visit":
         print("PSF source: the visit_image's own PSF (no detector-level refit)")
-        return (visit_image.getPsf(), None, None) + ((None,) if return_used else ())
+        return (visitImage.getPsf(), None, None) + ((None,) if returnUsed else ())
 
     print("Detector-level setup: background subtraction -> detection -> PSF determination")
     t0 = time.perf_counter()
-    bg_task = L.SubtractBackgroundTask()
-    bg_task.config.algorithm = "AKIMA_SPLINE"
-    bg_task.config.useApprox = False
-    bgImage = bg_task.run(visit_image).background.getImage()
+    bgTask = L.SubtractBackgroundTask()
+    bgTask.config.algorithm = "AKIMA_SPLINE"
+    bgTask.config.useApprox = False
+    bgImage = bgTask.run(visitImage).background.getImage()
 
-    L.InstallGaussianPsfTask().run(visit_image)
+    L.InstallGaussianPsfTask().run(visitImage)
     schema = L.afwTable.SourceTable.makeMinimalSchema()
-    det_cfg = L.SourceDetectionTask.ConfigClass()
-    det_cfg.thresholdValue = 3.0
-    det_cfg.thresholdType = "stdev"
-    det_cfg.minPixels = 2
-    det_cfg.doTempLocalBackground = True
-    det_cfg.tempLocalBackground.binSize = 16
-    det_cfg.background.binSize = 32
-    detection = L.SourceDetectionTask(schema=schema, config=det_cfg)
+    detCfg = L.SourceDetectionTask.ConfigClass()
+    detCfg.thresholdValue = 3.0
+    detCfg.thresholdType = "stdev"
+    detCfg.minPixels = 2
+    detCfg.doTempLocalBackground = True
+    detCfg.tempLocalBackground.binSize = 16
+    detCfg.background.binSize = 32
+    detection = L.SourceDetectionTask(schema=schema, config=detCfg)
     deblend = L.SourceDeblendTask(schema=schema)
     measure = L.SingleFrameMeasurementTask(schema=schema)
     table = L.afwTable.SourceTable.make(schema)
-    sources = detection.run(table, visit_image).sources
-    deblend.run(visit_image, sources)
-    measure.run(measCat=sources, exposure=visit_image)
+    sources = detection.run(table, visitImage).sources
+    deblend.run(visitImage, sources)
+    measure.run(measCat=sources, exposure=visitImage)
     sources = sources.copy(deep=True)
     print(f"  {len(sources)} detections at 3 sigma")
 
     starCat = L.ObjectSizeStarSelectorTask().run(sourceCat=sources,
-                                                 exposure=visit_image).sourceCat
+                                                 exposure=visitImage).sourceCat
     print(f"  {len(starCat)} PSF-star candidates")
-    cands = L.MakePsfCandidatesTask().run(starCat, exposure=visit_image).psfCandidates
+    cands = L.MakePsfCandidatesTask().run(starCat, exposure=visitImage).psfCandidates
     cfg = L.PcaPsfDeterminerTask.ConfigClass()
     cfg.spatialOrder = 1
     cfg.sizeCellX = cfg.sizeCellY = 512
@@ -393,22 +393,21 @@ def build_detector_psf(visit_image, psf_source="refit", return_used=False):
     cfg.doRejectBlends = True
     cfg.nStarPerCell = 10
     psf, cellSet = L.PcaPsfDeterminerTask(config=cfg).determinePsf(
-        exposure=visit_image, psfCandidateList=cands)
-    visit_image.setPsf(psf)
+        exposure=visitImage, psfCandidateList=cands)
+    visitImage.setPsf(psf)
     used = [c for cell in cellSet.getCellList() for c in cell if c.getStatus() == L.GOOD_STATUS]
-    used_xy = np.array([(c.getXCenter(), c.getYCenter()) for c in used], float).reshape(-1, 2)
+    usedXy = np.array([(c.getXCenter(), c.getYCenter()) for c in used], float).reshape(-1, 2)
     print(f"  PSF determined from {len(used)} stars  ({time.perf_counter() - t0:.1f}s)")
-    return (psf, starCat, bgImage) + ((used_xy,) if return_used else ())
+    return (psf, starCat, bgImage) + ((usedXy,) if returnUsed else ())
 
 
-def prepare_session(visit, detector, cutouts, pad=0, psf_source="refit",
+def prepareSession(visit, detector, cutouts, pad=0, psfSource="refit",
                     instrument="LSSTCam", repo="dp2_prep",
                     collection="LSSTCam/runs/DRP/DP2",
-                    visit_image_collections="LSSTCam/runs/*", visit_image=None):
+                    visitImageCollections="LSSTCam/runs/*", visitImage=None):
     """Load a visit image, cut out the regions and set up the detector-level PSF.
 
-    The cutouts are taken before the detector-wide background subtraction, as in the original
-    notebook.
+    The cutouts are taken before the detector-wide background subtraction.
 
     Parameters
     ----------
@@ -417,20 +416,20 @@ def prepare_session(visit, detector, cutouts, pad=0, psf_source="refit",
     detector : `int`
         Detector id.
     cutouts : `list`
-        Cutout specifications (see `parse_cutout`); absolute detector pixels.
+        Cutout specifications (see `parseCutout`); absolute detector pixels.
     pad : `int`, optional
         Fit a region grown by this many px; the interior keeps the requested box.
-    psf_source : `str`, optional
-        'refit' or 'visit' (see `build_detector_psf`).
+    psfSource : `str`, optional
+        'refit' or 'visit' (see `buildDetectorPsf`).
     instrument : `str`, optional
         Instrument name.
     repo : `str`, optional
         Butler repository path or alias.
     collection : `str`, optional
         Default Butler collection.
-    visit_image_collections : `str`, optional
+    visitImageCollections : `str`, optional
         Collections searched for the visit image.
-    visit_image : `lsst.afw.image.Exposure`, optional
+    visitImage : `lsst.afw.image.Exposure`, optional
         An already-loaded visit image (skips the Butler).
 
     Returns
@@ -443,48 +442,48 @@ def prepare_session(visit, detector, cutouts, pad=0, psf_source="refit",
     RuntimeError
         Raised if no visit image is found.
     """
-    if visit_image is None:
+    if visitImage is None:
         from lsst.daf.butler import Butler
         butler = Butler(repo, collections=collection)
         refs = butler.query_datasets(
-            "visit_image", collections=visit_image_collections,
+            "visit_image", collections=visitImageCollections,
             where=f"instrument='{instrument}' AND visit={visit} AND detector={detector}",
             find_first=False)
         if not refs:
             raise RuntimeError("no visit_image found for that visit/detector")
-        visit_image = butler.get("visit_image", collections=visit_image_collections,
+        visitImage = butler.get("visit_image", collections=visitImageCollections,
                                  dataId=refs[0].dataId)
-    det_bbox = visit_image.getBBox()
-    print(f"Loaded visit_image: bbox {det_bbox}")
-    mk = visit_image.mask
-    bad_bitmask = (mk.getPlaneBitMask("SAT") | mk.getPlaneBitMask("CR") |
+    detBbox = visitImage.getBBox()
+    print(f"Loaded visit_image: bbox {detBbox}")
+    mk = visitImage.mask
+    badBitmask = (mk.getPlaneBitMask("SAT") | mk.getPlaneBitMask("CR") |
                    mk.getPlaneBitMask("BAD") | mk.getPlaneBitMask("INTRP") |
                    mk.getPlaneBitMask("EDGE"))
 
     G = L.geom
     jobs = {}
     for spec in cutouts:
-        x0, y0, w, h, nm = parse_cutout(spec)
+        x0, y0, w, h, nm = parseCutout(spec)
         req = G.Box2I(G.Point2I(x0, y0), G.Extent2I(w, h))
-        req.clip(det_bbox)
+        req.clip(detBbox)
         if req.isEmpty():
             print(f"!! cutout {x0},{y0},{w}x{h} lies outside the detector -- skipped")
             continue
-        fit_bbox = G.Box2I(req)
-        fit_bbox.grow(pad)
-        fit_bbox.clip(det_bbox)
+        fitBbox = G.Box2I(req)
+        fitBbox.grow(pad)
+        fitBbox.clip(detBbox)
         name = nm or f"cutout_x{req.getMinX()}_y{req.getMinY()}_{req.getWidth()}x{req.getHeight()}"
-        jobs[name] = dict(interior=req, raw=visit_image[fit_bbox].clone())
+        jobs[name] = dict(interior=req, raw=visitImage[fitBbox].clone())
 
-    psf, starCat, bgImage, used_xy = build_detector_psf(visit_image, psf_source, return_used=True)
-    return Session(visit, detector, bad_bitmask, psf, starCat, bgImage, jobs,
-                   wcs=visit_image.getWcs(), psf_used_xy=used_xy)
+    psf, starCat, bgImage, usedXy = buildDetectorPsf(visitImage, psfSource, returnUsed=True)
+    return Session(visit, detector, badBitmask, psf, starCat, bgImage, jobs,
+                   wcs=visitImage.getWcs(), psfUsedXy=usedXy)
 
 
 # =====================================================================
 # Gaia (optional)
 # =====================================================================
-def query_gaia(wcs, bbox, tap_url="https://gea.esac.esa.int/tap-server/tap"):
+def queryGaia(wcs, bbox, tapUrl="https://gea.esac.esa.int/tap-server/tap"):
     """Query Gaia DR3 at the ESA archive for the sources on a box.
 
     Parameters
@@ -493,7 +492,7 @@ def query_gaia(wcs, bbox, tap_url="https://gea.esac.esa.int/tap-server/tap"):
         WCS of the image.
     bbox : `lsst.geom.Box2I`
         Pixel box.
-    tap_url : `str`, optional
+    tapUrl : `str`, optional
         TAP service URL.
 
     Returns
@@ -512,7 +511,7 @@ def query_gaia(wcs, bbox, tap_url="https://gea.esac.esa.int/tap-server/tap"):
                    phot_g_mean_mag, phot_bp_mean_mag, phot_rp_mean_mag
             FROM gaiadr3.gaia_source
             WHERE 1 = CONTAINS(POINT('ICRS', ra, dec), CIRCLE('ICRS', {ra}, {dec}, {radius}))"""
-    gaia = pyvo.dal.TAPService(tap_url).search(q).to_table()
+    gaia = pyvo.dal.TAPService(tapUrl).search(q).to_table()
     x, y = wcs.skyToPixelArray(np.asarray(gaia["ra"], float), np.asarray(gaia["dec"], float),
                                degrees=True)
     inside = ((x >= bbox.getMinX()) & (x <= bbox.getMaxX()) &
@@ -533,60 +532,60 @@ class CutoutRun:
     ----------
     name : `str`
         Cutout name.
-    outer_history : `list` [`dict`]
+    outerHistory : `list` [`dict`]
         One dict per outer pass (``psf``, ``exposure``, ``result``, ...).
     catalog : `astropy.table.Table`
-        Source catalogue (see `build_catalog`).
+        Source catalogue (see `buildCatalog`).
     summary : `dict`
         Run summary (timings, counts, residual statistics).
-    raw_crop : `lsst.afw.image.Exposure`
+    rawCrop : `lsst.afw.image.Exposure`
         The input cutout before background subtraction.
-    interior_bbox : `lsst.geom.Box2I`
+    interiorBbox : `lsst.geom.Box2I`
         The requested box (without padding).
-    bad_bitmask : `int`
+    badBitmask : `int`
         Mask bits of pixels the fit ignored.
     config : `dict`
         Configuration used.
     gaia : `astropy.table.Table`, optional
         The Gaia catalogue whose positions started the run (used for the Gaia comparison columns).
     photometry : `astropy.table.Table`, optional
-        The photometry catalogue (see `lsst.meas.crowd.photometry.measure_photometry`), made at
-        the end of the run and written by `save_run` as ``photometry.fits``.
+        The photometry catalogue (see `lsst.meas.crowd.photometry.measurePhotometry`), made at
+        the end of the run and written by `saveRun` as ``photometry.fits``.
     """
 
     name: str
-    outer_history: list
+    outerHistory: list
     catalog: Table
     summary: dict
-    raw_crop: object
-    interior_bbox: object
-    bad_bitmask: int
+    rawCrop: object
+    interiorBbox: object
+    badBitmask: int
     config: dict
     gaia: object = None
     photometry: object = None
 
 
-def build_catalog(outer_history, interior_bbox, gaia_tbl=None, match_radius=2.0):
+def buildCatalog(outerHistory, interiorBbox, gaiaTbl=None, matchRadius=2.0):
     """Build the source catalogue of a finished run.
 
     Parameters
     ----------
-    outer_history : `list` [`dict`]
+    outerHistory : `list` [`dict`]
         Outer-loop history.
-    interior_bbox : `lsst.geom.Box2I`
-        The requested box (``in_interior`` column).
-    gaia_tbl : `astropy.table.Table`, optional
+    interiorBbox : `lsst.geom.Box2I`
+        The requested box (``inInterior`` column).
+    gaiaTbl : `astropy.table.Table`, optional
         Gaia sources (with ``x``, ``y``) to match.
-    match_radius : `float`, optional
+    matchRadius : `float`, optional
         Gaia match radius [px].
 
     Returns
     -------
     cat : `astropy.table.Table`
         Positions (pixel and sky), PSF flux, AB magnitude (assuming nJy), source metrics,
-        ``in_interior`` and, with ``gaia_tbl``, the nearest Gaia source.
+        ``inInterior`` and, with ``gaiaTbl``, the nearest Gaia source.
     """
-    final = outer_history[-1]
+    final = outerHistory[-1]
     exp, res = final["exposure"], final["result"]
     peaks = np.asarray(res["peaks"], float).reshape(-1, 2)
     n = len(peaks)
@@ -594,11 +593,11 @@ def build_catalog(outer_history, interior_bbox, gaia_tbl=None, match_radius=2.0)
     cat["id"] = np.arange(n)
     cat["x"], cat["y"] = peaks[:, 0], peaks[:, 1]
     xy0 = exp.getXY0()
-    cat["x_cutout"], cat["y_cutout"] = peaks[:, 0] - xy0.getX(), peaks[:, 1] - xy0.getY()
+    cat["xCutout"], cat["yCutout"] = peaks[:, 0] - xy0.getX(), peaks[:, 1] - xy0.getY()
     flux = np.asarray(res["amps"], float) if n else np.zeros(0)
     cat["psfFlux_nJy"] = flux
     with np.errstate(divide="ignore", invalid="ignore"):
-        cat["mag_AB"] = np.where(flux > 0, -2.5 * np.log10(flux) + 31.4, np.nan)
+        cat["magAB"] = np.where(flux > 0, -2.5 * np.log10(flux) + 31.4, np.nan)
     try:
         ra, dec = exp.getWcs().pixelToSkyArray(peaks[:, 0], peaks[:, 1], degrees=True)
         cat["ra"], cat["dec"] = np.asarray(ra), np.asarray(dec)
@@ -606,40 +605,40 @@ def build_catalog(outer_history, interior_bbox, gaia_tbl=None, match_radius=2.0)
         print(f"  (no sky coords in catalog: {e})")
     if n and res.get("snaps"):
         try:
-            m = L.source_metrics(outer_history)
-            cat["snr"], cat["chi2_core"] = m["snr"], m["chi2"]
-            cat["nn_pix"], cat["edge_pix"], cat["group_size"] = m["nn"], m["edge"], m["group"]
+            m = L.sourceMetrics(outerHistory)
+            cat["snr"], cat["chi2Core"] = m["snr"], m["chi2"]
+            cat["nnPix"], cat["edgePix"], cat["groupSize"] = m["nn"], m["edge"], m["group"]
         except Exception as e:
-            print(f"  (source_metrics failed: {e})")
-    ib = interior_bbox
-    cat["in_interior"] = ((peaks[:, 0] >= ib.getMinX() - .5) & (peaks[:, 0] <= ib.getMaxX() + .5) &
+            print(f"  (sourceMetrics failed: {e})")
+    ib = interiorBbox
+    cat["inInterior"] = ((peaks[:, 0] >= ib.getMinX() - .5) & (peaks[:, 0] <= ib.getMaxX() + .5) &
                           (peaks[:, 1] >= ib.getMinY() - .5) & (peaks[:, 1] <= ib.getMaxY() + .5))
-    if gaia_tbl is not None and n:
+    if gaiaTbl is not None and n:
         from scipy.spatial import cKDTree
-        d, i = cKDTree(np.column_stack([gaia_tbl["x"], gaia_tbl["y"]])).query(peaks)
-        cat["gaia_source_id"] = np.asarray(gaia_tbl["source_id"])[i]
-        cat["gaia_G"] = np.asarray(gaia_tbl["phot_g_mean_mag"], float)[i]
-        cat["gaia_sep_pix"] = d
-        cat["gaia_match"] = d <= match_radius
+        d, i = cKDTree(np.column_stack([gaiaTbl["x"], gaiaTbl["y"]])).query(peaks)
+        cat["gaiaSourceId"] = np.asarray(gaiaTbl["source_id"])[i]
+        cat["gaiaG"] = np.asarray(gaiaTbl["phot_g_mean_mag"], float)[i]
+        cat["gaiaSepPix"] = d
+        cat["gaiaMatch"] = d <= matchRadius
     return cat
 
 
-def run_cutout(raw_crop, psf, bad_bitmask, config=None, interior_bbox=None, starCat=None,
-               bgImage=None, viz=False, diagnostics=True, gaia_tbl=None, match_radius=2.0,
+def runCutout(rawCrop, psf, badBitmask, config=None, interiorBbox=None, starCat=None,
+               bgImage=None, viz=False, diagnostics=True, gaiaTbl=None, matchRadius=2.0,
                name="cutout", **overrides):
     """Run the pipeline on one cropped exposure.
 
     Parameters
     ----------
-    raw_crop : `lsst.afw.image.Exposure`
+    rawCrop : `lsst.afw.image.Exposure`
         The cutout (before background subtraction).
     psf : `lsst.afw.detection.Psf`
         Initial PSF.
-    bad_bitmask : `int`
+    badBitmask : `int`
         Mask bits of pixels to ignore.
     config : `dict`, optional
         Pipeline configuration (default ``DEFAULT_CONFIG``).
-    interior_bbox : `lsst.geom.Box2I`, optional
+    interiorBbox : `lsst.geom.Box2I`, optional
         The requested box (default: the whole cutout).
     starCat : `lsst.afw.table.SourceCatalog`, optional
         PSF stars forced into every PSF determination.
@@ -649,9 +648,9 @@ def run_cutout(raw_crop, psf, bad_bitmask, config=None, interior_bbox=None, star
         Draw the per-iteration diagnostics.
     diagnostics : `bool`, optional
         Run the end-of-run diagnostics.
-    gaia_tbl : `astropy.table.Table`, optional
+    gaiaTbl : `astropy.table.Table`, optional
         Gaia sources to match in the catalogue.
-    match_radius : `float`, optional
+    matchRadius : `float`, optional
         Gaia match radius [px].
     name : `str`, optional
         Cutout name.
@@ -663,45 +662,45 @@ def run_cutout(raw_crop, psf, bad_bitmask, config=None, interior_bbox=None, star
     run : `CutoutRun`
         The result.
     """
-    cfg = make_config(config, **overrides)   # idempotent for an already-complete config
-    check_config(cfg)
-    cb = raw_crop.getBBox()
-    interior_bbox = interior_bbox or cb
+    cfg = makeConfig(config, **overrides)   # idempotent for an already-complete config
+    checkConfig(cfg)
+    cb = rawCrop.getBBox()
+    interiorBbox = interiorBbox or cb
     t0 = time.perf_counter()
-    hist = L.run_cutout_pipeline(raw_crop, psf, bad_bitmask, starCat=starCat, bgImage=bgImage,
-                                 x_range=(0, cb.getWidth()), y_range=(0, cb.getHeight()),
+    hist = L.runCutoutPipeline(rawCrop, psf, badBitmask, starCat=starCat, bgImage=bgImage,
+                                 xRange=(0, cb.getWidth()), yRange=(0, cb.getHeight()),
                                  viz=viz, **cfg)
     res = hist[-1]["result"]
     summary = dict(name=name, status="ok",
-                   bbox_fitted=[cb.getMinX(), cb.getMaxX(), cb.getMinY(), cb.getMaxY()],
-                   interior_bbox=[interior_bbox.getMinX(), interior_bbox.getMaxX(),
-                                  interior_bbox.getMinY(), interior_bbox.getMaxY()],
-                   n_sources=len(res["peaks"]),
-                   resid_std_per_outer=[h["resid_std"] for h in hist],
-                   n_peaks_per_outer=[h["n_peaks"] for h in hist],
-                   psf_fwhm_px_per_outer=[L._fwhm(h["psf"], h["exposure"].getBBox().getCenter())
+                   bboxFitted=[cb.getMinX(), cb.getMaxX(), cb.getMinY(), cb.getMaxY()],
+                   interiorBbox=[interiorBbox.getMinX(), interiorBbox.getMaxX(),
+                                  interiorBbox.getMinY(), interiorBbox.getMaxY()],
+                   nSources=len(res["peaks"]),
+                   residStdPerOuter=[h["residStd"] for h in hist],
+                   nPeaksPerOuter=[h["nPeaks"] for h in hist],
+                   psfFwhmPxPerOuter=[L._fwhm(h["psf"], h["exposure"].getBBox().getCenter())
                                           for h in hist],
-                   pipeline_kwargs=cfg)
+                   pipelineKwargs=cfg)
     if diagnostics and len(res["peaks"]) and res.get("snaps"):
         try:
-            summary["highfreq_noise_k"] = L.highfreq_noise_check(hist)["k"]
+            summary["highfreqNoiseK"] = L.highfreqNoiseCheck(hist)["k"]
         except Exception as e:
-            print(f"  highfreq_noise_check failed: {e}")
+            print(f"  highfreqNoiseCheck failed: {e}")
         try:
-            snr_map = L.negative_source_check(hist, plot=viz)
-            summary["negative_check"] = {str(t): dict(pos=int((snr_map >= t).sum()),
-                                                      neg=int((snr_map <= -t).sum()))
+            snrMap = L.negativeSourceCheck(hist, plot=viz)
+            summary["negativeCheck"] = {str(t): dict(pos=int((snrMap >= t).sum()),
+                                                      neg=int((snrMap <= -t).sum()))
                                          for t in (3, 4, 5)}
         except Exception as e:
-            print(f"  negative_source_check failed: {e}")
-    cat = build_catalog(hist, interior_bbox, gaia_tbl, match_radius)
-    summary["n_in_interior"] = int(np.sum(cat["in_interior"]))
-    summary["wall_seconds"] = time.perf_counter() - t0
-    return CutoutRun(name, hist, cat, summary, raw_crop, interior_bbox, bad_bitmask, cfg)
+            print(f"  negativeSourceCheck failed: {e}")
+    cat = buildCatalog(hist, interiorBbox, gaiaTbl, matchRadius)
+    summary["nInInterior"] = int(np.sum(cat["inInterior"]))
+    summary["wallSeconds"] = time.perf_counter() - t0
+    return CutoutRun(name, hist, cat, summary, rawCrop, interiorBbox, badBitmask, cfg)
 
 
-def run_session(session, config=None, names=None, out_dir=None, viz=False, gaia=False,
-                match_radius=2.0, plot_final=True, **overrides):
+def runSession(session, config=None, names=None, outDir=None, viz=False, gaia=False,
+                matchRadius=2.0, plotFinal=True, **overrides):
     """Run the pipeline on every (or the named) cutout of a session.
 
     A failure in one cutout is printed and skipped.
@@ -714,15 +713,15 @@ def run_session(session, config=None, names=None, out_dir=None, viz=False, gaia=
         Pipeline configuration.
     names : `list` [`str`], optional
         Cutouts to run (default: all).
-    out_dir : `str`, optional
-        Save each run under ``<out_dir>/visit<V>_det<D>/<name>/`` (see `save_run`).
+    outDir : `str`, optional
+        Save each run under ``<outDir>/visit<V>_det<D>/<name>/`` (see `saveRun`).
     viz : `bool`, optional
         Draw the per-iteration diagnostics.
     gaia : `bool`, optional
         Match the catalogues to Gaia (queried at the ESA archive).
-    match_radius : `float`, optional
+    matchRadius : `float`, optional
         Gaia match radius [px].
-    plot_final : `bool`, optional
+    plotFinal : `bool`, optional
         Plot the final comparison of each cutout.
     **overrides
         Configuration overrides.
@@ -732,32 +731,32 @@ def run_session(session, config=None, names=None, out_dir=None, viz=False, gaia=
     runs : `dict` [`str`, `CutoutRun`]
         The results by cutout name.
     """
-    cfg = make_config(config, **overrides)
+    cfg = makeConfig(config, **overrides)
     runs = {}
     todo = names or list(session.jobs)
     for k, name in enumerate(todo, 1):
         job = session.jobs[name]
         print(f"{'#' * 78}\n[{k}/{len(todo)}] {name}  interior={job['interior']}")
         try:
-            gaia_tbl = None
+            gaiaTbl = None
             if gaia:
                 try:
-                    gaia_tbl = query_gaia(session.wcs, job["raw"].getBBox())
+                    gaiaTbl = queryGaia(session.wcs, job["raw"].getBBox())
                 except Exception as e:
                     print(f"Gaia query failed ({type(e).__name__}: {e}) -- continuing without")
-            run = run_cutout(job["raw"], session.psf, session.bad_bitmask, cfg,
-                             interior_bbox=job["interior"], starCat=session.starCat,
-                             bgImage=session.bgImage, viz=viz, gaia_tbl=gaia_tbl,
-                             match_radius=match_radius, name=name)
+            run = runCutout(job["raw"], session.psf, session.badBitmask, cfg,
+                             interiorBbox=job["interior"], starCat=session.starCat,
+                             bgImage=session.bgImage, viz=viz, gaiaTbl=gaiaTbl,
+                             matchRadius=matchRadius, name=name)
             runs[name] = run
-            print(f"{name}: {run.summary['n_sources']} sources "
-                  f"({run.summary['n_in_interior']} in interior), "
-                  f"{run.summary['wall_seconds']:.0f}s")
-            if out_dir:
-                save_run(run, os.path.join(out_dir,
+            print(f"{name}: {run.summary['nSources']} sources "
+                  f"({run.summary['nInInterior']} in interior), "
+                  f"{run.summary['wallSeconds']:.0f}s")
+            if outDir:
+                saveRun(run, os.path.join(outDir,
                                            f"visit{session.visit}_det{session.detector}", name))
-            if plot_final:
-                plot_final_comparison_robust(run)
+            if plotFinal:
+                plotFinalComparisonRobust(run)
                 plt.show()
         except Exception:
             traceback.print_exc()
@@ -780,7 +779,7 @@ def _jsonable(o):
     return str(o)
 
 
-def _wcs_header(exposure):
+def _wcsHeader(exposure):
     """Return the exposure's WCS as FITS header cards (empty if it has none)."""
     hdr = {}
     try:
@@ -796,7 +795,7 @@ def _wcs_header(exposure):
     return hdr
 
 
-def write_photometry(run, outdir, verbose=True):
+def writePhotometry(run, outdir, verbose=True):
     """Write a run's photometry catalogue as photometry.fits and photometry.csv.
 
     The catalogue is computed (with the Gaia comparison when the run has its Gaia table) if the
@@ -817,15 +816,15 @@ def write_photometry(run, outdir, verbose=True):
     path : `str` or `None`
         The FITS file written (None if the photometry failed).
     """
-    from .photometry import fits_meta, measure_photometry
+    from .photometry import fitsMeta, measurePhotometry
     os.makedirs(outdir, exist_ok=True)
     try:
         phot = getattr(run, "photometry", None)
         if phot is None:
-            phot = measure_photometry(run, verbose=False)
+            phot = measurePhotometry(run, verbose=False)
             run.photometry = phot
         out = phot.copy(copy_data=False)
-        out.meta = fits_meta(phot.meta)
+        out.meta = fitsMeta(phot.meta)
         path = os.path.join(outdir, "photometry.fits")
         out.write(path, overwrite=True)
         out.write(os.path.join(outdir, "photometry.csv"), format="ascii.csv", overwrite=True)
@@ -837,12 +836,12 @@ def write_photometry(run, outdir, verbose=True):
         return None
 
 
-def save_run(run, outdir):
+def saveRun(run, outdir):
     """Write a run's catalogues, images, PSF kernels and summary to a directory.
 
     Writes photometry.fits / photometry.csv (the photometry catalogue with the Gaia comparison,
     computed here if the run has none), catalog.csv / catalog.fits, images.fits,
-    psf_kernels.fits and summary.json, the layout `plot_final_comparison_from_fits` reads.
+    psf_kernels.fits and summary.json, the layout `plotFinalComparisonFromFits` reads.
 
     Parameters
     ----------
@@ -853,38 +852,38 @@ def save_run(run, outdir):
     """
     from astropy.io import fits
     os.makedirs(outdir, exist_ok=True)
-    final = run.outer_history[-1]
+    final = run.outerHistory[-1]
     exp, res = final["exposure"], final["result"]
     xy0 = exp.getXY0()
     hdr = fits.Header()
-    for k, v in _wcs_header(exp).items():
+    for k, v in _wcsHeader(exp).items():
         try:
             hdr[k] = v
         except Exception:
             pass
     hdr["X0"], hdr["Y0"] = xy0.getX(), xy0.getY()
-    model, data = res["model_full"], exp.image.array
+    model, data = res["modelFull"], exp.image.array
     hdus = [fits.PrimaryHDU(header=hdr)]
     for nm, arr in (("DATA_USED", data), ("MODEL", model), ("RESIDUAL", data - model),
-                    ("VARIANCE", exp.variance.array), ("RAW_CUTOUT", run.raw_crop.image.array)):
+                    ("VARIANCE", exp.variance.array), ("RAW_CUTOUT", run.rawCrop.image.array)):
         hdus.append(fits.ImageHDU(np.asarray(arr, dtype=np.float32), header=hdr, name=nm))
     hdus.append(fits.ImageHDU(np.asarray(exp.mask.array, dtype=np.int32), header=hdr, name="MASK"))
-    hdus.append(fits.ImageHDU(((exp.mask.array & run.bad_bitmask) != 0).astype(np.uint8),
+    hdus.append(fits.ImageHDU(((exp.mask.array & run.badBitmask) != 0).astype(np.uint8),
                               header=hdr, name="BAD_PIXELS"))
     fits.HDUList(hdus).writeto(os.path.join(outdir, "images.fits"), overwrite=True)
 
-    k_hdus = [fits.PrimaryHDU()]
-    for i, h in enumerate(run.outer_history):
+    kHdus = [fits.PrimaryHDU()]
+    for i, h in enumerate(run.outerHistory):
         k = h["psf"].computeKernelImage(h["exposure"].getBBox().getCenter()).array
-        k_hdus.append(fits.ImageHDU(np.asarray(k, dtype=np.float32), name=f"PSF_OUTER{i + 1}"))
-    fits.HDUList(k_hdus).writeto(os.path.join(outdir, "psf_kernels.fits"), overwrite=True)
+        kHdus.append(fits.ImageHDU(np.asarray(k, dtype=np.float32), name=f"PSF_OUTER{i + 1}"))
+    fits.HDUList(kHdus).writeto(os.path.join(outdir, "psf_kernels.fits"), overwrite=True)
 
-    write_photometry(run, outdir)
+    writePhotometry(run, outdir)
     run.catalog.write(os.path.join(outdir, "catalog.csv"), format="ascii.csv", overwrite=True)
     run.catalog.write(os.path.join(outdir, "catalog.fits"), overwrite=True)
     with open(os.path.join(outdir, "summary.json"), "w") as fh:
         json.dump(run.summary, fh, indent=2, default=_jsonable)
-    with open(os.path.join(outdir, "config.json"), "w") as fh:     # reload with make_config()
+    with open(os.path.join(outdir, "config.json"), "w") as fh:     # reload with makeConfig()
         json.dump(run.config, fh, indent=2, default=_jsonable)
     print(f"saved run to {outdir}")
 
@@ -896,7 +895,7 @@ EDGE_COLOR = "#ff00ff"
 IQR_TO_SIGMA = 1.349          # sigma_robust = (Q75 - Q25) / 1.349 for a Gaussian
 
 
-def robust_stats(values, valid=None):
+def robustStats(values, valid=None):
     """Return the median and IQR-based robust sigma of finite (and valid) values.
 
     Parameters
@@ -909,36 +908,36 @@ def robust_stats(values, valid=None):
     Returns
     -------
     stats : `dict`
-        ``median``, ``sigma_iqr`` ((Q75 - Q25) / 1.349), ``q25``, ``q75`` and ``n``.
+        ``median``, ``sigmaIqr`` ((Q75 - Q25) / 1.349), ``q25``, ``q75`` and ``n``.
     """
     v = np.asarray(values, float)
     m = np.isfinite(v) if valid is None else (np.asarray(valid, bool) & np.isfinite(v))
     x = v[m]
     if x.size == 0:
-        return dict(median=np.nan, sigma_iqr=np.nan, q25=np.nan, q75=np.nan, n=0)
+        return dict(median=np.nan, sigmaIqr=np.nan, q25=np.nan, q75=np.nan, n=0)
     q25, med, q75 = np.percentile(x, [25, 50, 75])
-    return dict(median=float(med), sigma_iqr=float((q75 - q25) / IQR_TO_SIGMA),
+    return dict(median=float(med), sigmaIqr=float((q75 - q25) / IQR_TO_SIGMA),
                 q25=float(q25), q75=float(q75), n=int(x.size))
 
 
-def _draw_edge_margin(ax, ext, margin_px, shade=True):
-    """Outline and shade the band within ``margin_px`` of the image edge."""
-    if not margin_px or margin_px <= 0:
+def _drawEdgeMargin(ax, ext, marginPx, shade=True):
+    """Outline and shade the band within ``marginPx`` of the image edge."""
+    if not marginPx or marginPx <= 0:
         return
     xa, xb, ya, yb = ext
     if shade:
-        for (a, b, c, d) in ((xa, xb, ya, ya + margin_px), (xa, xb, yb - margin_px, yb),
-                             (xa, xa + margin_px, ya, yb), (xb - margin_px, xb, ya, yb)):
+        for (a, b, c, d) in ((xa, xb, ya, ya + marginPx), (xa, xb, yb - marginPx, yb),
+                             (xa, xa + marginPx, ya, yb), (xb - marginPx, xb, ya, yb)):
             ax.add_patch(patches.Rectangle((a, c), b - a, d - c, fc=EDGE_COLOR, ec="none",
                                            alpha=0.18, zorder=3))
-    ax.add_patch(patches.Rectangle((xa + margin_px, ya + margin_px),
-                                   (xb - xa) - 2 * margin_px, (yb - ya) - 2 * margin_px,
+    ax.add_patch(patches.Rectangle((xa + marginPx, ya + marginPx),
+                                   (xb - xa) - 2 * marginPx, (yb - ya) - 2 * marginPx,
                                    fill=False, ec=EDGE_COLOR, lw=1.6, ls="--", zorder=4))
 
 
-def _draw_final_comparison(raw, data, model, var, bad, x0, y0, peaks, radius, margin_px,
-                           view=None, stats_in_view=True, show_peaks=True,
-                           figsize=(26, 7), resid_clip_pct=99.0, z_clip=5.0):
+def _drawFinalComparison(raw, data, model, var, bad, x0, y0, peaks, radius, marginPx,
+                           view=None, statsInView=True, showPeaks=True,
+                           figsize=(26, 7), residClipPct=99.0, zClip=5.0):
     """Draw original | model | residual | residual/sigma from plain arrays; return (fig, stats).
 
     ``bad`` marks pixels that must not be used: they are drawn black in the residual panels and
@@ -952,34 +951,34 @@ def _draw_final_comparison(raw, data, model, var, bad, x0, y0, peaks, radius, ma
     z = resid / sigma
 
     use = ~bad & np.isfinite(resid)                     # pixels allowed in the residual
-    use_z = use & varok & np.isfinite(z)
+    useZ = use & varok & np.isfinite(z)
     region = np.ones(data.shape, bool)
-    if view is not None and stats_in_view:
+    if view is not None and statsInView:
         X = x0 + np.arange(nx)[None, :]
         Y = y0 + np.arange(ny)[:, None]
         region = (X >= view[0]) & (X <= view[1]) & (Y >= view[2]) & (Y <= view[3])
-    st_r = robust_stats(resid, use & region)
-    st_z = robust_stats(z, use_z & region)
+    stR = robustStats(resid, use & region)
+    stZ = robustStats(z, useZ & region)
 
-    cm_res = plt.get_cmap("RdBu_r").copy()
-    cm_res.set_bad("black")
-    res_m = np.ma.masked_where(~use, resid)
-    z_m = np.ma.masked_where(~use_z, z)
+    cmRes = plt.get_cmap("RdBu_r").copy()
+    cmRes.set_bad("black")
+    resM = np.ma.masked_where(~use, resid)
+    zM = np.ma.masked_where(~useZ, z)
     sel = resid[use & region]
-    rs = np.nanpercentile(np.abs(sel), resid_clip_pct) if sel.size else 1.0
+    rs = np.nanpercentile(np.abs(sel), residClipPct) if sel.size else 1.0
 
     norm = simple_norm(raw, vmin=np.nanmin(raw), vmax=np.nanpercentile(raw, 99),
                        stretch="log", log_a=1000)
-    cm_img = L.CMAP
+    cmImg = L.CMAP
 
     def sub(st, unit=""):
-        return f"median {st['median']:+.2f}{unit},  robust σ {st['sigma_iqr']:.2f}{unit}  (N={st['n']})"
+        return f"median {st['median']:+.2f}{unit},  robust σ {st['sigmaIqr']:.2f}{unit}  (N={st['n']})"
 
     panels = [
-        ("Original visit image (cutout)", raw, dict(cmap=cm_img, norm=norm)),
-        (f"Final model ({len(peaks)} sources)", model, dict(cmap=cm_img, norm=norm)),
-        ("Residual = data − model\n" + sub(st_r), res_m, dict(cmap=cm_res, vmin=-rs, vmax=rs)),
-        ("Residual / σ\n" + sub(st_z), z_m, dict(cmap=cm_res, vmin=-z_clip, vmax=z_clip)),
+        ("Original visit image (cutout)", raw, dict(cmap=cmImg, norm=norm)),
+        (f"Final model ({len(peaks)} sources)", model, dict(cmap=cmImg, norm=norm)),
+        ("Residual = data − model\n" + sub(stR), resM, dict(cmap=cmRes, vmin=-rs, vmax=rs)),
+        ("Residual / σ\n" + sub(stZ), zM, dict(cmap=cmRes, vmin=-zClip, vmax=zClip)),
     ]
     fig, axes = plt.subplots(1, 4, figsize=figsize, sharex=True, sharey=True)
     for i, (ax, (title, img, kw)) in enumerate(zip(axes, panels)):
@@ -987,10 +986,10 @@ def _draw_final_comparison(raw, data, model, var, bad, x0, y0, peaks, radius, ma
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
         if i < 2 and bad.any():                              # red overlay on data / model
             ax.imshow(np.ma.masked_where(~bad, np.ones(bad.shape)), extent=ext,
-                      origin="lower", cmap=matplotlib_listed("red"), alpha=0.35,
+                      origin="lower", cmap=matplotlibListed("red"), alpha=0.35,
                       interpolation="nearest")
-        _draw_edge_margin(ax, ext, margin_px)
-        if show_peaks and len(peaks):
+        _drawEdgeMargin(ax, ext, marginPx)
+        if showPeaks and len(peaks):
             for px, py in peaks:
                 ax.add_patch(patches.Circle((px, py), radius, fill=False, ec="w",
                                             lw=0.5, alpha=0.6))
@@ -998,8 +997,8 @@ def _draw_final_comparison(raw, data, model, var, bad, x0, y0, peaks, radius, ma
         ax.set_xlabel("x [px]")
         ax.grid(False)
         if i >= 2:                                           # stats box on the residual panels
-            st = st_r if i == 2 else st_z
-            ax.text(0.02, 0.98, f"median = {st['median']:+.3f}\nσ_IQR = {st['sigma_iqr']:.3f}",
+            st = stR if i == 2 else stZ
+            ax.text(0.02, 0.98, f"median = {st['median']:+.3f}\nσ_IQR = {st['sigmaIqr']:.3f}",
                     transform=ax.transAxes, va="top", ha="left", fontsize=10,
                     bbox=dict(fc="white", ec="k", alpha=0.85, pad=3), zorder=10)
     axes[0].set_ylabel("y [px]")
@@ -1009,22 +1008,22 @@ def _draw_final_comparison(raw, data, model, var, bad, x0, y0, peaks, radius, ma
     else:
         axes[0].set_xlim(ext[0], ext[1])
         axes[0].set_ylim(ext[2], ext[3])
-    handles = [patches.Patch(fc="red", alpha=0.35, label="masked (bad_bitmask)")]
-    if margin_px:
+    handles = [patches.Patch(fc="red", alpha=0.35, label="masked (badBitmask)")]
+    if marginPx:
         handles.insert(0, patches.Patch(fc=EDGE_COLOR, alpha=0.3, ec=EDGE_COLOR, ls="--",
-                                        label=f"edge drop zone ({margin_px:.1f}px)"))
+                                        label=f"edge drop zone ({marginPx:.1f}px)"))
     axes[0].legend(handles=handles, loc="upper left", fontsize=8)
     fig.text(0.5, -0.01,
              "Residual stats: bad/non-finite pixels excluded (black in residual panels); "
              "median and robust σ = (Q75−Q25)/1.349"
-             + (" over the plotted view" if (view is not None and stats_in_view) else
+             + (" over the plotted view" if (view is not None and statsInView) else
                 " over the full array"),
              ha="center", fontsize=9)
     plt.tight_layout()
-    return fig, dict(residual=st_r, residual_over_sigma=st_z)
+    return fig, dict(residual=stR, residualOverSigma=stZ)
 
 
-def matplotlib_listed(color):
+def matplotlibListed(color):
     """Return a one-colour matplotlib colour map.
 
     Parameters
@@ -1041,16 +1040,16 @@ def matplotlib_listed(color):
     return ListedColormap([color])
 
 
-def _print_stats(stats):
+def _printStats(stats):
     """Print residual statistics."""
     for key, st in stats.items():
-        print(f"{key:20s} median={st['median']:+9.3f}  robust σ(IQR/1.349)={st['sigma_iqr']:8.3f}  "
+        print(f"{key:20s} median={st['median']:+9.3f}  robust σ(IQR/1.349)={st['sigmaIqr']:8.3f}  "
               f"Q25={st['q25']:+.3f}  Q75={st['q75']:+.3f}  N={st['n']}")
 
 
-def plot_final_comparison_robust(run_or_history, exposure_crop=None, bad_bitmask=None,
-                                 edge_margin_fwhm=None, view="interior", stats_in_view=True,
-                                 show_peaks=True, figsize=(26, 7), verbose=True):
+def plotFinalComparisonRobust(runOrHistory, exposureCrop=None, badBitmask=None,
+                                 edgeMarginFwhm=None, view="interior", statsInView=True,
+                                 showPeaks=True, figsize=(26, 7), verbose=True):
     """Plot original | final model | residual | residual/sigma with robust statistics.
 
     Bad pixels are black in the residual panels; median and IQR-robust sigma (good pixels only)
@@ -1058,20 +1057,20 @@ def plot_final_comparison_robust(run_or_history, exposure_crop=None, bad_bitmask
 
     Parameters
     ----------
-    run_or_history : `CutoutRun` or `list` [`dict`]
+    runOrHistory : `CutoutRun` or `list` [`dict`]
         A run (preferred) or its outer-loop history.
-    exposure_crop : `lsst.afw.image.Exposure`, optional
+    exposureCrop : `lsst.afw.image.Exposure`, optional
         Raw crop (only needed with a bare history).
-    bad_bitmask : `int`, optional
+    badBitmask : `int`, optional
         Mask bits of bad pixels (needed with a bare history).
-    edge_margin_fwhm : `float`, optional
+    edgeMarginFwhm : `float`, optional
         Draw the edge drop-zone of this width [FWHM].
     view : `str` or `tuple`, optional
         'interior' (the run's interior box), None (the whole fitted array) or
         (xmin, xmax, ymin, ymax) in detector pixels.
-    stats_in_view : `bool`, optional
+    statsInView : `bool`, optional
         Restrict the statistics to the displayed view.
-    show_peaks : `bool`, optional
+    showPeaks : `bool`, optional
         Mark the sources.
     figsize : `tuple` [`float`, `float`], optional
         Figure size [inches].
@@ -1081,66 +1080,66 @@ def plot_final_comparison_robust(run_or_history, exposure_crop=None, bad_bitmask
     Returns
     -------
     stats : `dict`
-        ``residual`` and ``residual_over_sigma``: median, sigma_iqr, q25, q75, n.
+        ``residual`` and ``residualOverSigma``: median, sigmaIqr, q25, q75, n.
 
     Raises
     ------
     ValueError
-        Raised if a bare history is passed without ``bad_bitmask``.
+        Raised if a bare history is passed without ``badBitmask``.
     """
-    if isinstance(run_or_history, CutoutRun):
-        run = run_or_history
-        hist, raw_exp = run.outer_history, run.raw_crop
-        bad_bitmask = run.bad_bitmask if bad_bitmask is None else bad_bitmask
-        if edge_margin_fwhm is None:
-            edge_margin_fwhm = run.config.get("edge_margin_fwhm", 0.5)
+    if isinstance(runOrHistory, CutoutRun):
+        run = runOrHistory
+        hist, rawExp = run.outerHistory, run.rawCrop
+        badBitmask = run.badBitmask if badBitmask is None else badBitmask
+        if edgeMarginFwhm is None:
+            edgeMarginFwhm = run.config.get("edgeMarginFwhm", 0.5)
         if isinstance(view, str) and view == "interior":
-            b = run.interior_bbox
+            b = run.interiorBbox
             view = (b.getMinX() - .5, b.getMaxX() + .5, b.getMinY() - .5, b.getMaxY() + .5)
     else:
-        hist, raw_exp = run_or_history, exposure_crop
-        if bad_bitmask is None:
-            raise ValueError("bad_bitmask is required when passing a bare outer_history")
-        if edge_margin_fwhm is None:
-            edge_margin_fwhm = 0.5
+        hist, rawExp = runOrHistory, exposureCrop
+        if badBitmask is None:
+            raise ValueError("badBitmask is required when passing a bare outerHistory")
+        if edgeMarginFwhm is None:
+            edgeMarginFwhm = 0.5
         if isinstance(view, str):
             view = None
     final = hist[-1]
     exp, res = final["exposure"], final["result"]
     bbox = exp.getBBox()
-    model = res["model_full"]
+    model = res["modelFull"]
     data = exp.image.array
-    raw = raw_exp[bbox].image.array if raw_exp is not None else data
-    bad = (exp.mask.array & bad_bitmask) != 0
+    raw = rawExp[bbox].image.array if rawExp is not None else data
+    bad = (exp.mask.array & badBitmask) != 0
     peaks = np.asarray(res["peaks"], float).reshape(-1, 2)
     fwhm = L._fwhm(exp.getPsf(), bbox.getCenter())
-    fig, stats = _draw_final_comparison(
+    fig, stats = _drawFinalComparison(
         raw, data, model, exp.variance.array, bad, bbox.getMinX(), bbox.getMinY(), peaks,
-        0.75 * fwhm, edge_margin_fwhm * fwhm if edge_margin_fwhm else 0.0,
-        view=view, stats_in_view=stats_in_view, show_peaks=show_peaks, figsize=figsize)
+        0.75 * fwhm, edgeMarginFwhm * fwhm if edgeMarginFwhm else 0.0,
+        view=view, statsInView=statsInView, showPeaks=showPeaks, figsize=figsize)
     if verbose:
-        _print_stats(stats)
+        _printStats(stats)
     return stats
 
 
-def plot_final_comparison_from_fits(d, view=None, out=None, stats_in_view=True,
-                                    show_sources=True, show=True, dpi=110, verbose=True):
-    """Rebuild the final-comparison figure from files written by `save_run`.
+def plotFinalComparisonFromFits(d, view=None, out=None, statsInView=True,
+                                    showSources=True, show=True, dpi=110, verbose=True):
+    """Rebuild the final-comparison figure from files written by `saveRun`.
 
     No LSST stack and no re-fit needed.
 
     Parameters
     ----------
     d : `str`
-        Directory written by `save_run`.
+        Directory written by `saveRun`.
     view : `tuple` [`float`, `float`, `float`, `float`], optional
         (xmin, xmax, ymin, ymax) in detector pixels (default: the interior box from
         summary.json, else the whole array).
     out : `str`, optional
         Also save the figure to this PNG.
-    stats_in_view : `bool`, optional
+    statsInView : `bool`, optional
         Restrict the statistics to the view.
-    show_sources : `bool`, optional
+    showSources : `bool`, optional
         Mark the catalogue's sources.
     show : `bool`, optional
         Display the figure.
@@ -1152,7 +1151,7 @@ def plot_final_comparison_from_fits(d, view=None, out=None, stats_in_view=True,
     Returns
     -------
     stats : `dict`
-        See `plot_final_comparison_robust`.
+        See `plotFinalComparisonRobust`.
     """
     from astropy.io import fits
     with fits.open(os.path.join(d, "images.fits")) as hl:
@@ -1171,29 +1170,34 @@ def plot_final_comparison_from_fits(d, view=None, out=None, stats_in_view=True,
     if os.path.exists(sp):
         with open(sp) as fh:
             summ = json.load(fh)
-    fwhm = (summ.get("psf_fwhm_px_per_outer") or [3.5])[-1]
-    edge_margin = (summ.get("pipeline_kwargs") or {}).get("edge_margin_fwhm", 0.5)
-    if view is None and "interior_bbox" in summ:
-        b = summ["interior_bbox"]
+    fwhm = (summ.get("psfFwhmPxPerOuter") or [3.5])[-1]
+    edgeMargin = (summ.get("pipelineKwargs") or {}).get("edgeMarginFwhm", 0.5)
+    if view is None and "interiorBbox" in summ:
+        b = summ["interiorBbox"]
         view = (b[0] - .5, b[1] + .5, b[2] - .5, b[3] + .5)
     peaks = np.zeros((0, 2))
-    if show_sources:
+    if showSources:
         for f in ("catalog.fits", "catalog.csv"):
             if os.path.exists(os.path.join(d, f)):
                 t = Table.read(os.path.join(d, f))
                 peaks = np.column_stack([t["x"], t["y"]])
                 break
-    fig, stats = _draw_final_comparison(
-        raw, data, model, var, bad, x0, y0, peaks, 0.75 * fwhm, edge_margin * fwhm,
-        view=view, stats_in_view=stats_in_view, show_peaks=show_sources)
+    fig, stats = _drawFinalComparison(
+        raw, data, model, var, bad, x0, y0, peaks, 0.75 * fwhm, edgeMargin * fwhm,
+        view=view, statsInView=statsInView, showPeaks=showSources)
     out = out or os.path.join(d, "final_comparison_from_fits.png")
     fig.savefig(out, dpi=dpi, bbox_inches="tight")
     if verbose:
         print("wrote", out)
-        _print_stats(stats)
+        _printStats(stats)
     if show:
         plt.show()
     else:
         plt.close(fig)
     return stats
 
+
+
+# old snake_case names still work (with a FutureWarning)
+from ._compat import moduleGetattr  # noqa: E402
+__getattr__ = moduleGetattr(globals())

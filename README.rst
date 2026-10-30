@@ -30,9 +30,9 @@ into one mosaic and one catalogue.
 Pipeline at a glance
 ====================
 
-1. **Setup** (``prepare_session``): load the ``visit_image``, cut out each box grown by ``pad`` px,
-   build the bad-pixel mask and the detector-level PSF (``psf_source="visit"`` or ``"refit"``).
-2. **Gaia catalogue** (``attach_gaia``): Gaia DR3 at the visit epoch, cached on disk; its stars give
+1. **Setup** (``prepareSession``): load the ``visit_image``, cut out each box grown by ``pad`` px,
+   build the bad-pixel mask and the detector-level PSF (``psfSource="visit"`` or ``"refit"``).
+2. **Gaia catalogue** (``attachGaia``): Gaia DR3 at the visit epoch, cached on disk; its stars give
    the fit its starting positions.
 3. **Preparation**: grow the saturated mask, extend the PSF wings to 81 px, remove a global
    Gaia-vs-image offset.
@@ -47,12 +47,12 @@ Pipeline at a glance
 PSF source
 ----------
 
-``psf_source="visit"`` (default for detector runs) uses the PSF stored with the visit image; the
-image is already background-subtracted.  ``psf_source="refit"`` subtracts a background, detects
+``psfSource="visit"`` (default for detector runs) uses the PSF stored with the visit image; the
+image is already background-subtracted.  ``psfSource="refit"`` subtracts a background, detects
 stars, selects them by size and fits a PCA PSF; the background (``session.bgImage``) is then
 subtracted in pass 1, and the candidate and used stars are kept (``session.starCat``,
-``session.psf_used_xy``).  Either way the PSF is refined inside each cutout between passes
-(``refit_psf="stack"``).
+``session.psfUsedXy``).  Either way the PSF is refined inside each cutout between passes
+(``refitPsf="stack"``).
 
 Layout
 ======
@@ -64,7 +64,7 @@ The package follows the Rubin DM layout (``sconsUtils`` + ``eups``)::
     src/                          C++ sources (lib/libmeas_crowd)
     python/lsst/meas/crowd/
         __init__.py               public API (submodules load on first use)
-        pipeline.py               driver: run_session_gaia, inner / outer loops, PSF refinement
+        pipeline.py               driver: runSessionGaia, inner / outer loops, PSF refinement
         gaiaCatalog.py            Gaia catalogue (Butler refcat or ESA TAP), starting positions
         photometry.py             PSF and aperture magnitudes with errors
         plotting.py               data | model | residual, residual diagnostics, star zooms
@@ -113,22 +113,33 @@ Cutouts (notebook or Python)
 
     import lsst.meas.crowd as crowd
 
-    cfg = crowd.make_config(crowd.CROWDED_FIELD_CONFIG)
-    sess = crowd.prepare_session(visit=2025062100433, detector=144,
+    cfg = crowd.makeConfig(crowd.CROWDED_FIELD_CONFIG)
+    sess = crowd.prepareSession(visit=2025062100433, detector=144,
                                  cutouts=["1000,1000,300", "2500,2000,300"], pad=20,
-                                 psf_source="visit")
-    crowd.attach_gaia(sess)
-    runs = crowd.run_session_gaia(sess, cfg, out_dir="results", max_outer=3, max_inner=15)
+                                 psfSource="visit")
+    crowd.attachGaia(sess)
+    runs = crowd.runSessionGaia(sess, cfg, outDir="results", maxOuter=3, maxInner=15)
 
     run = runs["cutout_x1000_y1000_300x300"]
     crowd.report(run)                                 # what each pass did
-    crowd.plot_final_comparison(run)                  # data | model | residual | residual/sigma
-    phot = crowd.measure_photometry(run)              # astropy Table, PSF + aperture magnitudes
+    crowd.plotFinalComparison(run)                  # data | model | residual | residual/sigma
+    phot = crowd.measurePhotometry(run)              # astropy Table, PSF + aperture magnitudes
 
-Options go to ``make_config`` or as keyword overrides to ``run_session_gaia``;
+Options go to ``makeConfig`` or as keyword overrides to ``runSessionGaia``;
 ``crowd.PIPELINE_DEFAULTS`` lists them all with comments, and an unknown name raises an error.
-All function names of the old ``cutout_gaia.py`` are unchanged, so ``import lsst.meas.crowd as cg``
-works with existing notebooks.
+Every public function of ``pipeline``, ``plotting`` and ``gaiaCatalog`` is also available as
+``crowd.<name>``.
+
+Names
+-----
+
+The code follows the Rubin DM naming conventions: functions, arguments, configuration options
+and catalogue columns are camelCase (``runSessionGaia``, ``maxOuter``, ``psfMag``), classes are
+CapWords and constants UPPER_CASE.  Older snake_case names (``run_session_gaia``,
+``max_outer``, ``stack_kwargs=dict(n_use=...)``, configuration JSON files saved by older
+versions) still work and raise a ``FutureWarning`` naming the new spelling.  Output file names
+(``photometry.fits``, ``detector_catalog.fits``, ...) are unchanged; catalogues written before
+the switch have snake_case column names.
 
 Cutouts from a terminal (USDF)
 ------------------------------
@@ -144,7 +155,7 @@ Whole detector
 
 The detector is covered by 400 px tiles whose interiors partition it exactly; each tile is
 fitted with 30 px padding and written to ``tile_<name>.fits``.  Tasks skip tiles already on disk,
-so a job can be restarted.  ``stitch_tiles`` writes ``detector_mosaic.fits`` (DATA, MODEL,
+so a job can be restarted.  ``stitchTiles`` writes ``detector_mosaic.fits`` (DATA, MODEL,
 RESIDUAL, VARIANCE, BAD, TILE; opens in DS9) and ``detector_catalog.fits`` (every source once)::
 
     VISIT=2025062100433 DETECTOR=144 bash examples/usdf_detector_array.sh   # Slurm array + stitch
@@ -160,36 +171,36 @@ Plots
 Final results:
 
 ============================  ==================================================================
-``plot_final_comparison``     data | model | residual | residual/sigma (``grayscale=True``,
+``plotFinalComparison``       data | model | residual | residual/sigma (``grayscale=True``,
                               ``panels="residuals"``, ``circles="none"``)
-``plot_residual_gray``        the two residual panels, large, greyscale
-``plot_source_cutouts``       per source: data | model | residual | residual/sigma | x-cut |
+``plotResidualGray``          the two residual panels, large, greyscale
+``plotSourceCutouts``         per source: data | model | residual | residual/sigma | x-cut |
                               y-cut | radial profile, labelled with PSF and aperture magnitudes,
                               S/N, Gaia G and local chi2; optional PDF
-``show_star_zooms``           zooms of the worst (or chosen) stars with their neighbours
-``show_cross_sections``       x, y and radial cuts with residual and +-1 sigma band
-``diagnose_residual``,        what the leftover residual is made of, star by star
-``star_residual_table``,
-``core_excess_diagnostic``,
-``show_bright_star_stack``
-``compare_runs``              side-by-side numbers for several runs of the same cutouts
-``plot_gaia_comparison``      magnitude difference with Gaia against G and BP - RP, and the
+``showStarZooms``             zooms of the worst (or chosen) stars with their neighbours
+``showCrossSections``         x, y and radial cuts with residual and +-1 sigma band
+``diagnoseResidual``,         what the leftover residual is made of, star by star
+``starResidualTable``,
+``coreExcessDiagnostic``,
+``showBrightStarStack``
+``compareRuns``               side-by-side numbers for several runs of the same cutouts
+``plotGaiaComparison``        magnitude difference with Gaia against G and BP - RP, and the
                               position offsets (scatter and across the image)
 ============================  ==================================================================
 
 Intermediate stages (``stagePlots``):
 
 ============================  ==================================================================
-``psf_star_positions``,       candidate and used PSF stars (visit catalogue flags, the
-``show_psf_stars``            detector-level refit, or the in-cutout stack) over the image, with
+``psfStarPositions``,         candidate and used PSF stars (visit catalogue flags, the
+``showPsfStars``              detector-level refit, or the in-cutout stack) over the image, with
                               the PSF kernel and its radial profile
-``show_backgrounds``          background entering each outer pass and the change between passes
-``show_rounds``               data | model | residual | residual/sigma per outer pass
+``showBackgrounds``           background entering each outer pass and the change between passes
+``showRounds``                data | model | residual | residual/sigma per outer pass
                               (``level="outer"``) or per inner iteration (``level="inner"``)
-``show_linked_source_pages``  per-source pages (data | model | residual | x / y cuts) framed in
+``showLinkedSourcePages``     per-source pages (data | model | residual | x / y cuts) framed in
                               the colour of their box on the full data, model and residual;
-                              ``out_dir=`` writes one PNG per page (memory stays flat)
-``compare_passes``            which sources one outer pass lost or gained relative to another,
+                              ``outDir=`` writes one PNG per page (memory stays flat)
+``comparePasses``             which sources one outer pass lost or gained relative to another,
                               and why (flux left in the residual, merged, halo / ring check,
                               moved, spurious)
 ============================  ==================================================================
@@ -197,26 +208,26 @@ Intermediate stages (``stagePlots``):
 Whole detector (``detector``):
 
 ============================  ==================================================================
-``plot_tile``, ``load_tile``  one tile over its fit box, interior outlined
-``plot_detector``             the stitched mosaic, binned for display, or a zoom (``view=``)
+``plotTile``, ``loadTile``    one tile over its fit box, interior outlined
+``plotDetector``              the stitched mosaic, binned for display, or a zoom (``view=``)
 ============================  ==================================================================
 
 Photometry
 ==========
 
-``measure_photometry(run)`` returns one row per source: position (pixel and sky), Gaia flag and G,
+``measurePhotometry(run)`` returns one row per source: position (pixel and sky), Gaia flag and G,
 extended flag, PSF flux with its Fisher error (overlapping sources inverted together, so blends
 get honest errors), PSF magnitude, aperture flux on the neighbour-subtracted image corrected to
 total with the PSF's curve of growth, aperture magnitude, and ap - PSF.  Magnitudes use the
 exposure's PhotoCalib when present, else the nJy AB zero point (31.4).
 
 Every cutout fit makes this catalogue at the end (``run.photometry``), and
-``run_session_gaia(..., out_dir=...)`` saves it as ``photometry.fits`` / ``photometry.csv`` next
+``runSessionGaia(..., outDir=...)`` saves it as ``photometry.fits`` / ``photometry.csv`` next
 to the images; whole-detector runs put it in each tile file and ``detector_catalog.fits``.
 
 The same table carries the comparison with Gaia (the run keeps the Gaia catalogue it started
-from as ``run.gaia``; ``compare_with_gaia(phot, gaia)`` adds the columns to any table): a match flag (the Gaia star the source started from, or the nearest unclaimed one within
-1 px), the Gaia source id, G and BP - RP, position offsets in px and mas, ``psf_mag - G`` with and
+from as ``run.gaia``; ``compareWithGaia(phot, gaia)`` adds the columns to any table): a match flag (the Gaia star the source started from, or the nearest unclaimed one within
+1 px), the Gaia source id, G and BP - RP, position offsets in px and mas, ``psfMag - G`` with and
 without the median offset, and the flux ratio to Gaia.  ``doc/catalog_columns.md`` lists every
 column with its unit.
 
@@ -229,17 +240,17 @@ cutout once the pipeline has extended its wings, so ``fastKernels`` takes the ke
 does the Lanczos-5 sub-pixel shifts itself, in C++:
 
 =====================================  ==========  =========
-400 stamps of 81 x 81 px                NumPy       C++
+400 stamps of 81 x 81 px               NumPy       C++
 =====================================  ==========  =========
-stamps (with wing taper)                300 ms      51 ms
-position derivatives (4 shifts each)    548 ms      109 ms
+stamps (with wing taper)               300 ms      51 ms
+position derivatives (4 shifts each)   548 ms      109 ms
 =====================================  ==========  =========
 
 Run ``python examples/benchmark_stamps.py`` with the stack for the comparison with
-``psf.computeImage`` on your machine.  The fast path is on by default (``fast_stamps=True``) but is
+``psf.computeImage`` on your machine.  The fast path is on by default (``fastStamps=True``) but is
 only used after checking, for each PSF, that it reproduces ``psf.computeImage`` to 2e-3 of the
-peak; otherwise the pipeline falls back and says so in the log.  ``n_jobs=`` in
-``run_session_gaia`` fits several cutouts in parallel, and a detector run spreads its tiles over a
+peak; otherwise the pipeline falls back and says so in the log.  ``nJobs=`` in
+``runSessionGaia`` fits several cutouts in parallel, and a detector run spreads its tiles over a
 Slurm array.
 
 Tests

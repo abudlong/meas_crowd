@@ -29,11 +29,11 @@ overhead dominates.  Here the kernel is taken ONCE and every shift is done in C+
 implementation (separable Lanczos weight matrices).
 
 `FastPsf.validate` compares against ``psf.computeImage`` and the pipeline only uses the fast
-path when they agree (``fast_stamps`` option), so results do not change.
+path when they agree (``fastStamps`` option), so results do not change.
 """
 
-__all__ = ["HAVE_CXX", "lanczos_weights", "shift_image", "taper_stamp", "render_stamps",
-           "render_derivatives", "FastPsf"]
+__all__ = ["HAVE_CXX", "lanczosWeights", "shiftImage", "taperStamp", "renderStamps",
+           "renderDerivatives", "FastPsf"]
 
 import numpy as np
 
@@ -45,7 +45,7 @@ except ImportError:                     # extension not built: NumPy fallback
     HAVE_CXX = False
 
 
-def lanczos_weights(frac, order=5):
+def lanczosWeights(frac, order=5):
     """Return normalised Lanczos weights for a sub-pixel shift.
 
     Parameters
@@ -70,9 +70,9 @@ def lanczos_weights(frac, order=5):
     return first, w / w.sum()
 
 
-def _shift_matrix(n, frac, order):
+def _shiftMatrix(n, frac, order):
     """Return the (n, n) matrix that shifts a vector by ``frac`` (zeros outside)."""
-    first, w = lanczos_weights(frac, order)
+    first, w = lanczosWeights(frac, order)
     M = np.zeros((n, n))
     i = np.arange(n)
     for j, wj in enumerate(w):
@@ -82,7 +82,7 @@ def _shift_matrix(n, frac, order):
     return M
 
 
-def shift_image(image, dx, dy, order=5, use_cxx=None):
+def shiftImage(image, dx, dy, order=5, useCxx=None):
     """Shift an image by a sub-pixel offset with a separable Lanczos kernel.
 
     Same convention as ``lsst.afw.math.offsetImage``: ``out(x, y) = in(x - dx, y - dy)``; pixels
@@ -96,7 +96,7 @@ def shift_image(image, dx, dy, order=5, use_cxx=None):
         Shift [px].
     order : `int`, optional
         Lanczos order.
-    use_cxx : `bool`, optional
+    useCxx : `bool`, optional
         Use the C++ kernels (default: if built).
 
     Returns
@@ -105,14 +105,14 @@ def shift_image(image, dx, dy, order=5, use_cxx=None):
         The shifted image.
     """
     image = np.ascontiguousarray(image, dtype=float)
-    if (HAVE_CXX if use_cxx is None else use_cxx):
+    if (HAVE_CXX if useCxx is None else useCxx):
         return _lib.shiftImage(image, float(dx), float(dy), int(order))
     ny, nx = image.shape
-    return _shift_matrix(ny, dy, order) @ image @ _shift_matrix(nx, dx, order).T
+    return _shiftMatrix(ny, dy, order) @ image @ _shiftMatrix(nx, dx, order).T
 
 
-def taper_stamp(stamp, cx, cy, taper, use_cxx=None):
-    """Tame the wings of a PSF stamp like ``fitLib.psf_stamp(taper=...)``.
+def taperStamp(stamp, cx, cy, taper, useCxx=None):
+    """Tame the wings of a PSF stamp like ``fitLib.psfStamp(taper=...)``.
 
     Subtract the median of the outer pixel ring, then apply a raised cosine from ``taper[0] * h``
     to ``taper[1] * h`` around (cx, cy), h being half the stamp size.
@@ -125,7 +125,7 @@ def taper_stamp(stamp, cx, cy, taper, use_cxx=None):
         Centre in stamp pixel coordinates.
     taper : `tuple` [`float`, `float`]
         Inner and outer taper radii as fractions of h.
-    use_cxx : `bool`, optional
+    useCxx : `bool`, optional
         Use the C++ kernels (default: if built).
 
     Returns
@@ -134,7 +134,7 @@ def taper_stamp(stamp, cx, cy, taper, use_cxx=None):
         The tapered stamp.
     """
     stamp = np.ascontiguousarray(stamp, dtype=float)
-    if (HAVE_CXX if use_cxx is None else use_cxx):
+    if (HAVE_CXX if useCxx is None else useCxx):
         return _lib.taperStamp(stamp, float(cx), float(cy), float(taper[0]), float(taper[1]))
     ring = np.concatenate([stamp[0, :], stamp[-1, :], stamp[:, 0], stamp[:, -1]])
     arr = stamp - np.median(ring)
@@ -152,7 +152,7 @@ def _split(v):
     return i.astype(np.int64), np.asarray(v, float) - i
 
 
-def render_stamps(kernel, xs, ys, order=5, taper=None, use_cxx=None):
+def renderStamps(kernel, xs, ys, order=5, taper=None, useCxx=None):
     """Render stamps of a constant PSF at many positions.
 
     Stamp i has origin (round(x) - nx//2, round(y) - ny//2) and is the kernel shifted by the
@@ -167,8 +167,8 @@ def render_stamps(kernel, xs, ys, order=5, taper=None, use_cxx=None):
     order : `int`, optional
         Lanczos order.
     taper : `tuple` [`float`, `float`], optional
-        Wing taper (see `taper_stamp`); None = no taper.
-    use_cxx : `bool`, optional
+        Wing taper (see `taperStamp`); None = no taper.
+    useCxx : `bool`, optional
         Use the C++ kernels (default: if built).
 
     Returns
@@ -181,7 +181,7 @@ def render_stamps(kernel, xs, ys, order=5, taper=None, use_cxx=None):
     kernel = np.ascontiguousarray(kernel, dtype=float)
     xs = np.ascontiguousarray(np.atleast_1d(xs), dtype=float)
     ys = np.ascontiguousarray(np.atleast_1d(ys), dtype=float)
-    if (HAVE_CXX if use_cxx is None else use_cxx):
+    if (HAVE_CXX if useCxx is None else useCxx):
         t0, t1 = taper if taper is not None else (0.0, 1.0)
         return _lib.renderStamps(kernel, xs, ys, int(order), taper is not None, float(t0), float(t1))
     ny, nx = kernel.shape
@@ -189,13 +189,13 @@ def render_stamps(kernel, xs, ys, order=5, taper=None, use_cxx=None):
     iy, fy = _split(ys)
     out = np.empty((len(xs), ny, nx))
     for k in range(len(xs)):
-        out[k] = shift_image(kernel, fx[k], fy[k], order, use_cxx=False)
+        out[k] = shiftImage(kernel, fx[k], fy[k], order, useCxx=False)
         if taper is not None:
-            out[k] = taper_stamp(out[k], nx // 2 + fx[k], ny // 2 + fy[k], taper, use_cxx=False)
+            out[k] = taperStamp(out[k], nx // 2 + fx[k], ny // 2 + fy[k], taper, useCxx=False)
     return out, ix - nx // 2, iy - ny // 2
 
 
-def render_derivatives(kernel, xs, ys, eps=0.25, order=5, use_cxx=None):
+def renderDerivatives(kernel, xs, ys, eps=0.25, order=5, useCxx=None):
     """Render central-difference derivative stamps dP/dx, dP/dy of a constant PSF.
 
     Parameters
@@ -208,7 +208,7 @@ def render_derivatives(kernel, xs, ys, eps=0.25, order=5, use_cxx=None):
         Finite-difference step [px].
     order : `int`, optional
         Lanczos order.
-    use_cxx : `bool`, optional
+    useCxx : `bool`, optional
         Use the C++ kernels (default: if built).
 
     Returns
@@ -221,7 +221,7 @@ def render_derivatives(kernel, xs, ys, eps=0.25, order=5, use_cxx=None):
     kernel = np.ascontiguousarray(kernel, dtype=float)
     xs = np.ascontiguousarray(np.atleast_1d(xs), dtype=float)
     ys = np.ascontiguousarray(np.atleast_1d(ys), dtype=float)
-    if (HAVE_CXX if use_cxx is None else use_cxx):
+    if (HAVE_CXX if useCxx is None else useCxx):
         return _lib.renderDerivatives(kernel, xs, ys, int(order), float(eps))
     ny, nx = kernel.shape
     ix, fx = _split(xs)
@@ -229,17 +229,17 @@ def render_derivatives(kernel, xs, ys, eps=0.25, order=5, use_cxx=None):
     dx = np.empty((len(xs), ny, nx))
     dy = np.empty_like(dx)
     for k in range(len(xs)):
-        dx[k] = (shift_image(kernel, fx[k] + eps, fy[k], order, False)
-                 - shift_image(kernel, fx[k] - eps, fy[k], order, False)) / (2 * eps)
-        dy[k] = (shift_image(kernel, fx[k], fy[k] + eps, order, False)
-                 - shift_image(kernel, fx[k], fy[k] - eps, order, False)) / (2 * eps)
+        dx[k] = (shiftImage(kernel, fx[k] + eps, fy[k], order, False)
+                 - shiftImage(kernel, fx[k] - eps, fy[k], order, False)) / (2 * eps)
+        dy[k] = (shiftImage(kernel, fx[k], fy[k] + eps, order, False)
+                 - shiftImage(kernel, fx[k], fy[k] - eps, order, False)) / (2 * eps)
     return dx, dy, ix - nx // 2, iy - ny // 2
 
 
 class FastPsf:
     """Stamps and derivatives of a spatially constant PSF.
 
-    Return conventions match ``fitLib.psf_stamp`` and ``fitLib.compute_psf_derivatives``, with
+    Return conventions match ``fitLib.psfStamp`` and ``fitLib.computePsfDerivatives``, with
     boxes given as (xmin, ymin, xmax, ymax) tuples.
 
     Parameters
@@ -274,7 +274,7 @@ class FastPsf:
         clip : `tuple` [`int`, `int`, `int`, `int`]
             Clip box (xmin, ymin, xmax, ymax), inclusive.
         taper : `tuple` [`float`, `float`], optional
-            Wing taper (see `taper_stamp`).
+            Wing taper (see `taperStamp`).
 
         Returns
         -------
@@ -283,7 +283,7 @@ class FastPsf:
         box : `tuple` [`int`, `int`, `int`, `int`] or `None`
             Its box (xmin, ymin, xmax, ymax).
         """
-        st, x0, y0 = render_stamps(self.kernel, [x], [y], self.order, taper)
+        st, x0, y0 = renderStamps(self.kernel, [x], [y], self.order, taper)
         ny, nx = self.kernel.shape
         c = self._clip(int(x0[0]), int(y0[0]), ny, nx, clip)
         if c is None:
@@ -309,7 +309,7 @@ class FastPsf:
         box : `tuple` [`int`, `int`, `int`, `int`] or `None`
             Their box (xmin, ymin, xmax, ymax).
         """
-        dx, dy, x0, y0 = render_derivatives(self.kernel, [x], [y], eps, self.order)
+        dx, dy, x0, y0 = renderDerivatives(self.kernel, [x], [y], eps, self.order)
         ny, nx = self.kernel.shape
         c = self._clip(int(x0[0]), int(y0[0]), ny, nx, clip)
         if c is None:
@@ -340,8 +340,13 @@ class FastPsf:
         ny, nx = self.kernel.shape
         for x, y in positions:
             ref, (rx0, ry0) = reference(x, y)
-            st, x0, y0 = render_stamps(self.kernel, [x], [y], self.order)
+            st, x0, y0 = renderStamps(self.kernel, [x], [y], self.order)
             if (int(x0[0]), int(y0[0])) != (rx0, ry0) or ref.shape != (ny, nx):
                 return False, np.inf
             worst = max(worst, float(np.max(np.abs(st[0] - ref)) / max(np.max(np.abs(ref)), 1e-30)))
         return worst <= rtol, worst
+
+
+# old snake_case names still work (with a FutureWarning)
+from ._compat import moduleGetattr  # noqa: E402
+__getattr__ = moduleGetattr(globals())

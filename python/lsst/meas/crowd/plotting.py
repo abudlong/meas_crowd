@@ -34,16 +34,16 @@ from .pipeline import (
     EXCLUDED_COLOR_GRAY,
     NEARSAT_COLOR,
     _params,
-    _residual_stack,
+    _residualStack,
     _satlike,
-    sat_zones,
-    saturation_level,
-    select_psf_stars,
-    unmodeled_near_mask,
+    satZones,
+    saturationLevel,
+    selectPsfStars,
+    unmodeledNearMask,
 )
 
 
-def show_bright_star_stack(run, min_snr=200.0, half=20, plot=True):
+def showBrightStarStack(run, minSnr=200.0, half=20, plot=True):
     """Stack the bright stars' residuals to show the pattern they all share.
 
     The median of the bright, clean, unsaturated stars' residuals, each divided by the star's
@@ -57,7 +57,7 @@ def show_bright_star_stack(run, min_snr=200.0, half=20, plot=True):
     ----------
     run : `lsst.meas.crowd.session.CutoutRun`
         A finished run.
-    min_snr : `float`, optional
+    minSnr : `float`, optional
         Minimum peak S/N of the stacked stars.
     half : `int`, optional
         Half-size of the stack [px].
@@ -67,11 +67,11 @@ def show_bright_star_stack(run, min_snr=200.0, half=20, plot=True):
     Returns
     -------
     stack : `dict`
-        ``psf_only`` and ``final`` (stacked residual / flux images), ``n`` (number of stars) and,
-        with at least six stars, ``by_brightness`` (core and ring residual of the brighter and
+        ``psfOnly`` and ``final`` (stacked residual / flux images), ``n`` (number of stars) and,
+        with at least six stars, ``byBrightness`` (core and ring residual of the brighter and
         fainter half).
     """
-    final = run.outer_history[-1]
+    final = run.outerHistory[-1]
     exp, res = final["exposure"], final["result"]
     S, fit = res["S"], res["snaps"][-1]["fit"]
     bb = exp.getBBox()
@@ -83,13 +83,13 @@ def show_bright_star_stack(run, min_snr=200.0, half=20, plot=True):
     fwhm = L._fwhm(psf, c)
     noise = float(np.sqrt(np.nanmedian(var)))
     P = dict(_params(run.config))
-    P["psf_stack_min_snr"] = min_snr
-    P["psf_stack_n"] = 60
-    idx = select_psf_stars(exp, res, fwhm, kern.max(), noise, P, verbose=False)
+    P["psfStackMinSnr"] = minSnr
+    P["psfStackN"] = 60
+    idx = selectPsfStars(exp, res, fwhm, kern.max(), noise, P, verbose=False)
     out = {}
-    for name, model in (("psf_only", fit["model_full"]), ("final", res["model_full"])):
-        out[name] = _residual_stack(data - model, fit["good"], S["xy"], fit["amps"], idx,
-                                    X0, Y0, half)
+    for name, model in (("psfOnly", fit["modelFull"]), ("final", res["modelFull"])):
+        out[name] = _residualStack(data - model, fit["good"], S["xy"], fit["amps"], idx,
+                                   X0, Y0, half)
     out["n"] = len(idx)
     if len(idx) >= 6:
         # brighter-fatter test: is the shape error the same for the brighter and fainter half?
@@ -102,30 +102,30 @@ def show_bright_star_stack(run, min_snr=200.0, half=20, plot=True):
         print(f"    {'':14s} {'median flux':>12s} {'r < 1 FWHM':>11s} {'1-2.5 FWHM':>11s}")
         rows = []
         for lab, sel in halves:
-            st = _residual_stack(data - fit["model_full"], fit["good"], S["xy"], fit["amps"], sel,
-                                 X0, Y0, half)
+            st = _residualStack(data - fit["modelFull"], fit["good"], S["xy"], fit["amps"], sel,
+                                X0, Y0, half)
             cin = 100 * np.nansum(st[R < fwhm])
             cout = 100 * np.nansum(st[(R >= fwhm) & (R < 2.5 * fwhm)])
             rows.append((cin, cout))
             print(f"    {lab:14s} {np.median(fit['amps'][sel]):12.3g} {cin:+10.2f}% {cout:+10.2f}%")
-        out["by_brightness"] = rows
+        out["byBrightness"] = rows
         if np.sign(rows[0][0]) != np.sign(rows[1][0]) and min(abs(rows[0][0]), abs(rows[1][0])) > 0.2:
             print("    -> opposite signs: the PSF shape DEPENDS ON BRIGHTNESS (brighter-fatter);"
                   " one PSF cannot fit both")
-    print(f"stacked {len(idx)} bright clean star(s) (peak S/N >= {min_snr:g})")
-    _print_run_version(final)
+    print(f"stacked {len(idx)} bright clean star(s) (peak S/N >= {minSnr:g})")
+    _printRunVersion(final)
     if plot and len(idx):
         import matplotlib.pyplot as plt
         from matplotlib.colors import LogNorm
         h = kern.shape[0] // 2
         ks = kern[max(h - half, 0):h + half + 1, max(h - half, 0):h + half + 1]
-        lim = np.nanpercentile(np.abs(out["psf_only"]), 99) or 1e-6
+        lim = np.nanpercentile(np.abs(out["psfOnly"]), 99) or 1e-6
         fig, ax = plt.subplots(1, 3, figsize=(17, 5.5))
         im = ax[0].imshow(np.clip(ks, ks.max() * 1e-5, None), origin="lower", cmap="magma",
                           norm=LogNorm(), extent=(-half - .5, half + .5, -half - .5, half + .5))
         plt.colorbar(im, ax=ax[0], fraction=0.046)
         ax[0].set_title("PSF model kernel (log)")
-        for a, key, ttl in ((ax[1], "psf_only", "median residual / flux: PSF-only model"),
+        for a, key, ttl in ((ax[1], "psfOnly", "median residual / flux: PSF-only model"),
                             (ax[2], "final", "median residual / flux: final model")):
             im = a.imshow(out[key], origin="lower", cmap="RdBu_r", vmin=-lim, vmax=lim,
                           extent=(-half - .5, half + .5, -half - .5, half + .5))
@@ -141,8 +141,8 @@ def show_bright_star_stack(run, min_snr=200.0, half=20, plot=True):
     return out
 
 
-def show_star_zooms(run, stars=None, n=8, half=12, sigma="model", grayscale=False,
-                    min_snr=30.0, cuts=False):
+def showStarZooms(run, stars=None, n=8, half=12, sigma="model", grayscale=False,
+                  minSnr=30.0, cuts=False):
     """Show zooms of individual stars: data | model | residual | residual/sigma.
 
     Every source in the window is marked (o = started from Gaia, x = found in the residual), with a line
@@ -154,19 +154,19 @@ def show_star_zooms(run, stars=None, n=8, half=12, sigma="model", grayscale=Fals
     run : `lsst.meas.crowd.session.CutoutRun`
         A finished run.
     stars : `list` [`tuple` [`float`, `float`]], optional
-        Detector positions; None = the ``n`` worst stars of `star_residual_table`.
+        Detector positions; None = the ``n`` worst stars of `starResidualTable`.
     n : `int`, optional
         Number of worst stars shown.
     half : `int`, optional
         Half-size of each zoom [px].
     sigma : `str`, optional
-        'model', 'effective' or 'pixel' (see `plot_final_comparison`).
+        'model', 'effective' or 'pixel' (see `plotFinalComparison`).
     grayscale : `bool`, optional
         Residual panels in greyscale.
-    min_snr : `float`, optional
+    minSnr : `float`, optional
         Minimum peak S/N when choosing the worst stars.
     cuts : `bool`, optional
-        Also draw `show_cross_sections` for the same stars.
+        Also draw `showCrossSections` for the same stars.
 
     Returns
     -------
@@ -175,19 +175,19 @@ def show_star_zooms(run, stars=None, n=8, half=12, sigma="model", grayscale=Fals
     """
     import matplotlib.pyplot as plt
     from matplotlib.colors import ListedColormap
-    final = run.outer_history[-1]
+    final = run.outerHistory[-1]
     exp, res = final["exposure"], final["result"]
     S, fit = res["S"], res["snaps"][-1]["fit"]
     bb = exp.getBBox()
     X0, Y0 = bb.getMinX(), bb.getMinY()
-    data, model = exp.image.array, res["model_full"]
+    data, model = exp.image.array, res["modelFull"]
     m = np.clip(model, 0, None)
     var = exp.variance.array.copy()
     if sigma in ("effective", "model"):
-        var = var + float(final.get("poisson_k", 0.0) or 0.0) * m
+        var = var + float(final.get("poissonK", 0.0) or 0.0) * m
     if sigma == "model":
-        var = var + (float(final.get("model_err", 0.0) or 0.0) * m) ** 2
-    bad = ((exp.mask.array & run.bad_bitmask) != 0) | ~np.isfinite(data - model) | ~(var > 0)
+        var = var + (float(final.get("modelErr", 0.0) or 0.0) * m) ** 2
+    bad = ((exp.mask.array & run.badBitmask) != 0) | ~np.isfinite(data - model) | ~(var > 0)
     try:
         nearsat = (exp.mask.array & exp.mask.getPlaneBitMask("NEARSAT")) != 0
     except Exception:
@@ -196,12 +196,12 @@ def show_star_zooms(run, stars=None, n=8, half=12, sigma="model", grayscale=Fals
     z = resid / np.sqrt(np.where(var > 0, var, np.nan))
     amps = fit["amps"]
     xy = S["xy"]
-    targets = _pick_stars(run, stars, n, min_snr)
+    targets = _pickStars(run, stars, n, minSnr)
     if not targets:
         print("no stars to show")
         return None
     tree = cKDTree(xy)
-    cm_res = plt.get_cmap("gray" if grayscale else "RdBu_r").copy()
+    cmRes = plt.get_cmap("gray" if grayscale else "RdBu_r").copy()
     fig, axes = plt.subplots(len(targets), 4, figsize=(15, 3.6 * len(targets)), squeeze=False)
     for row, (j, chi) in zip(axes, targets):
         x, y = xy[j]
@@ -217,9 +217,9 @@ def show_star_zooms(run, stars=None, n=8, half=12, sigma="model", grayscale=Fals
         rs = np.nanpercentile(np.abs(resid[sl][~bad[sl]]), 99) if (~bad[sl]).any() else 1.0
         imgs = [(d, dict(cmap=L.CMAP, norm=nrm), "data"),
                 (model[sl], dict(cmap=L.CMAP, norm=nrm), "model"),
-                (np.ma.masked_where(bad[sl], resid[sl]), dict(cmap=cm_res, vmin=-rs, vmax=rs),
+                (np.ma.masked_where(bad[sl], resid[sl]), dict(cmap=cmRes, vmin=-rs, vmax=rs),
                  "data − model"),
-                (np.ma.masked_where(bad[sl], z[sl]), dict(cmap=cm_res, vmin=-5, vmax=5),
+                (np.ma.masked_where(bad[sl], z[sl]), dict(cmap=cmRes, vmin=-5, vmax=5),
                  "residual / σ_eff")]
         near = [k for k in tree.query_ball_point((x, y), half * 1.42)]
         for c, (ax, (img, kw, ttl)) in enumerate(zip(row, imgs)):
@@ -232,7 +232,7 @@ def show_star_zooms(run, stars=None, n=8, half=12, sigma="model", grayscale=Fals
             mc = "w" if c < 2 else ("#00b4d8" if grayscale else "k")
             for k in near:
                 px, py = xy[k]
-                if S["from_gaia"][k]:
+                if S["fromGaia"][k]:
                     ax.plot(px, py, "o", mfc="none", mec=mc, ms=9 if k == j else 6, mew=1.2)
                     rx, ry = S["ref"][k]
                     if np.isfinite(rx):
@@ -246,46 +246,46 @@ def show_star_zooms(run, stars=None, n=8, half=12, sigma="model", grayscale=Fals
             ax.set_title(ttl, fontsize=9)
         row[0].set_ylabel(f"({x:.0f}, {y:.0f})\nflux {amps[j]:.3g}" +
                           (f"\nchi2 {chi:.2f}" if np.isfinite(chi) else ""), fontsize=9)
-        print(f"star ({x:.1f}, {y:.1f})  flux {amps[j]:.3g}  {'Gaia' if S['from_gaia'][j] else 'non-Gaia'}"
+        print(f"star ({x:.1f}, {y:.1f})  flux {amps[j]:.3g}  {'Gaia' if S['fromGaia'][j] else 'non-Gaia'}"
               + (f"  chi2 {chi:.2f}" if np.isfinite(chi) else "")
               + (f"  [{np.hypot(*(xy[j] - S['ref'][j])):.2f}px from its Gaia position]"
-                 if S["from_gaia"][j] and np.isfinite(S["ref"][j, 0]) else ""))
+                 if S["fromGaia"][j] and np.isfinite(S["ref"][j, 0]) else ""))
         for k in sorted(near, key=lambda k: np.hypot(*(xy[k] - xy[j]))):
             if k == j:
                 continue
             dx, dy = xy[k] - xy[j]
             off = (f", {np.hypot(*(xy[k] - S['ref'][k])):.2f}px from its Gaia position"
-                   if S["from_gaia"][k] and np.isfinite(S["ref"][k, 0]) else "")
+                   if S["fromGaia"][k] and np.isfinite(S["ref"][k, 0]) else "")
             print(f"    neighbour dx {dx:+6.1f} dy {dy:+6.1f}  flux ratio {amps[k] / max(amps[j], 1e-30):6.3f}"
-                  f"  {'Gaia' if S['from_gaia'][k] else 'found in residual'}{off}")
+                  f"  {'Gaia' if S['fromGaia'][k] else 'found in residual'}{off}")
     fig.suptitle("o = source started from Gaia (+ = its Gaia position, line = fitted shift), "
                  "x = source found in the residual; magenta = bad, orange = near-saturated core",
                  fontsize=10)
     plt.tight_layout()
     plt.show()
     if cuts:
-        show_cross_sections(run, stars=[tuple(xy[j]) for j, _ in targets], half=half, sigma=sigma)
+        showCrossSections(run, stars=[tuple(xy[j]) for j, _ in targets], half=half, sigma=sigma)
     return [j for j, _ in targets]
 
 
-def _pick_stars(run, stars, n, min_snr):
+def _pickStars(run, stars, n, minSnr):
     """Return [(index, chi2)] of the worst stars, or of the sources nearest the given positions."""
     import contextlib
     import io
-    S = run.outer_history[-1]["result"]["S"]
+    S = run.outerHistory[-1]["result"]["S"]
     if stars is None:
         with contextlib.redirect_stdout(io.StringIO()):
-            t = star_residual_table(run, min_snr=min_snr, plot=False)
+            t = starResidualTable(run, minSnr=minSnr, plot=False)
         if t is None:
             return []
-        o = np.argsort(-t["chi2_final"])[:n]
-        return [(int(t["idx"][i]), float(t["chi2_final"][i])) for i in o]
+        o = np.argsort(-t["chi2Final"])[:n]
+        return [(int(t["idx"][i]), float(t["chi2Final"][i])) for i in o]
     tree = cKDTree(S["xy"])
     return [(int(tree.query(p)[1]), np.nan) for p in stars]
 
 
-def show_cross_sections(run, stars=None, n=4, half=15, width=1, sigma="model", min_snr=30.0,
-                        log=True):
+def showCrossSections(run, stars=None, n=4, half=15, width=1, sigma="model", minSnr=30.0,
+                      log=True):
     """Plot cuts through stars along x, along y and the radial profile.
 
     Top: data (points) and model (line); bottom: residual with its +-1 sigma band, so a ring shows
@@ -297,7 +297,7 @@ def show_cross_sections(run, stars=None, n=4, half=15, width=1, sigma="model", m
     run : `lsst.meas.crowd.session.CutoutRun`
         A finished run.
     stars : `list` [`tuple` [`float`, `float`]], optional
-        Detector positions; None = the ``n`` worst stars of `star_residual_table`.
+        Detector positions; None = the ``n`` worst stars of `starResidualTable`.
     n : `int`, optional
         Number of worst stars shown.
     half : `int`, optional
@@ -305,8 +305,8 @@ def show_cross_sections(run, stars=None, n=4, half=15, width=1, sigma="model", m
     width : `int`, optional
         Rows / columns averaged for the x / y cuts (odd; 1 = single pixel).
     sigma : `str`, optional
-        'model', 'effective' or 'pixel' (see `plot_final_comparison`).
-    min_snr : `float`, optional
+        'model', 'effective' or 'pixel' (see `plotFinalComparison`).
+    minSnr : `float`, optional
         Minimum peak S/N when choosing the worst stars.
     log : `bool`, optional
         Symmetric-log axis for data and model (wings visible).
@@ -317,21 +317,21 @@ def show_cross_sections(run, stars=None, n=4, half=15, width=1, sigma="model", m
         Per star ``index`` and ``cuts`` (the x, y and radial profiles); None if no stars.
     """
     import matplotlib.pyplot as plt
-    final = run.outer_history[-1]
+    final = run.outerHistory[-1]
     exp, res = final["exposure"], final["result"]
     S, fit = res["S"], res["snaps"][-1]["fit"]
     bb = exp.getBBox()
     X0, Y0 = bb.getMinX(), bb.getMinY()
-    data, model = exp.image.array, res["model_full"]
+    data, model = exp.image.array, res["modelFull"]
     m = np.clip(model, 0, None)
     var = exp.variance.array.copy()
     if sigma in ("effective", "model"):
-        var = var + float(final.get("poisson_k", 0.0) or 0.0) * m
+        var = var + float(final.get("poissonK", 0.0) or 0.0) * m
     if sigma == "model":
-        var = var + (float(final.get("model_err", 0.0) or 0.0) * m) ** 2
-    bad = ((exp.mask.array & run.bad_bitmask) != 0) | ~np.isfinite(data - model) | ~(var > 0)
+        var = var + (float(final.get("modelErr", 0.0) or 0.0) * m) ** 2
+    bad = ((exp.mask.array & run.badBitmask) != 0) | ~np.isfinite(data - model) | ~(var > 0)
     noise = float(np.sqrt(np.nanmedian(exp.variance.array)))
-    targets = _pick_stars(run, stars, n, min_snr)
+    targets = _pickStars(run, stars, n, minSnr)
     if not targets:
         print("no stars to show")
         return None
@@ -399,12 +399,12 @@ def show_cross_sections(run, stars=None, n=4, half=15, width=1, sigma="model", m
             a2.axhline(0, color="k", lw=0.7)
             a2.plot(coord, r_, "o-", ms=3, lw=0.8, color="C3", label="data − model")
             good_ = np.isfinite(r_) & (sg > 0)
-            chi_c = float(np.mean((r_[good_] / sg[good_]) ** 2)) if good_.any() else np.nan
-            a2.text(0.01, 0.95, f"χ²/pt = {chi_c:.2f}", transform=a2.transAxes, va="top", fontsize=8)
+            chiC = float(np.mean((r_[good_] / sg[good_]) ** 2)) if good_.any() else np.nan
+            a2.text(0.01, 0.95, f"χ²/pt = {chiC:.2f}", transform=a2.transAxes, va="top", fontsize=8)
             for k, off in other:
-                ls = ":" if S["from_gaia"][k] else "--"
+                ls = ":" if S["fromGaia"][k] else "--"
                 for a in (a1, a2):
-                    a.axvline(off, color="C0" if S["from_gaia"][k] else "C3", ls=ls, lw=0.9, alpha=0.8)
+                    a.axvline(off, color="C0" if S["fromGaia"][k] else "C3", ls=ls, lw=0.9, alpha=0.8)
             a1.set_title(ttl + (f"  (width {2 * w2 + 1} px)" if name != "r" and w2 else ""), fontsize=9)
             a1.tick_params(labelbottom=False)
             a2.set_xlabel("offset from star centre [px]" if name != "r" else "radius [px]", fontsize=8)
@@ -423,7 +423,7 @@ def show_cross_sections(run, stars=None, n=4, half=15, width=1, sigma="model", m
     return out
 
 
-def compare_runs(variants, min_snr=200.0):
+def compareRuns(variants, minSnr=200.0):
     """Print side-by-side numbers for several runs of the same cutouts.
 
     For each cutout and variant: robust residual/sigma, number of sources and the stacked PSF-only
@@ -433,9 +433,9 @@ def compare_runs(variants, min_snr=200.0):
     Parameters
     ----------
     variants : `dict` [`str`, `dict`]
-        Variant name -> runs (as returned by ``run_session_gaia``), e.g.
+        Variant name -> runs (as returned by ``runSessionGaia``), e.g.
         ``{"default": runs, "wider wing join": runs_b}``.
-    min_snr : `float`, optional
+    minSnr : `float`, optional
         Minimum peak S/N of the stacked stars.
     """
     import contextlib
@@ -451,33 +451,33 @@ def compare_runs(variants, min_snr=200.0):
             run = runs.get(nm)
             if run is None:
                 continue
-            final = run.outer_history[-1]
+            final = run.outerHistory[-1]
             exp, res = final["exposure"], final["result"]
-            data, model = exp.image.array, res["model_full"]
+            data, model = exp.image.array, res["modelFull"]
             m = np.clip(model, 0, None)
-            var = (exp.variance.array + float(final.get("poisson_k", 0) or 0) * m
-                   + (float(final.get("model_err", 0) or 0) * m) ** 2)
-            bad = ((exp.mask.array & run.bad_bitmask) != 0) | ~np.isfinite(data - model) | ~(var > 0)
+            var = (exp.variance.array + float(final.get("poissonK", 0) or 0) * m
+                   + (float(final.get("modelErr", 0) or 0) * m) ** 2)
+            bad = ((exp.mask.array & run.badBitmask) != 0) | ~np.isfinite(data - model) | ~(var > 0)
             z = (data - model) / np.sqrt(np.where(var > 0, var, np.nan))
-            st = cn.robust_stats(z, ~bad)
+            st = cn.robustStats(z, ~bad)
             with contextlib.redirect_stdout(io.StringIO()):
-                stk = show_bright_star_stack(run, min_snr=min_snr, plot=False)
+                stk = showBrightStarStack(run, minSnr=minSnr, plot=False)
             prof = []
-            if stk.get("psf_only") is not None:
-                h = stk["psf_only"].shape[0] // 2
+            if stk.get("psfOnly") is not None:
+                h = stk["psfOnly"].shape[0] // 2
                 u = np.arange(-h, h + 1)
                 R = np.hypot(*np.meshgrid(u, u))
                 for a, b in zip(edges[:-1], edges[1:]):
-                    sel = (R >= a) & (R < b) & np.isfinite(stk["psf_only"])
-                    prof.append(1e5 * np.nanmean(stk["psf_only"][sel]) if sel.any() else np.nan)
-            print(f"  {vname:22s} {st['sigma_iqr']:9.3f} {len(res['peaks']):6d}   "
+                    sel = (R >= a) & (R < b) & np.isfinite(stk["psfOnly"])
+                    prof.append(1e5 * np.nanmean(stk["psfOnly"][sel]) if sel.any() else np.nan)
+            print(f"  {vname:22s} {st['sigmaIqr']:9.3f} {len(res['peaks']):6d}   "
                   + "  ".join(f"{p:+6.2f}" for p in prof) + f"   ({stk.get('n', 0)} stars)")
 
 
-def core_excess_diagnostic(run, min_snr=100.0, plot=True):
+def coreExcessDiagnostic(run, minSnr=100.0, plot=True):
     """Find out why bright stars' cores are sharper than the model.
 
-    For each unsaturated, fairly isolated star with peak S/N >= ``min_snr``, the central excess
+    For each unsaturated, fairly isolated star with peak S/N >= ``minSnr``, the central excess
     (data - model summed over the central 3x3 px, divided by the model there) is correlated with
     flux (sensor effects or a flux-dependent PSF), peak / saturation level (non-linearity) and
     sub-pixel phase (stamps blurred by sub-pixel shifting).  No trend but a significant excess
@@ -488,7 +488,7 @@ def core_excess_diagnostic(run, min_snr=100.0, plot=True):
     ----------
     run : `lsst.meas.crowd.session.CutoutRun`
         A finished run.
-    min_snr : `float`, optional
+    minSnr : `float`, optional
         Minimum peak S/N of the stars used.
     plot : `bool`, optional
         Plot the excess against each quantity.
@@ -496,12 +496,12 @@ def core_excess_diagnostic(run, min_snr=100.0, plot=True):
     Returns
     -------
     result : `dict` or `None`
-        Per-star arrays (``idx``, ``flux``, ``snr``, ``peak``, ``excess``, ``excess_psf_only``,
-        ``centre_px``, ``phase``, ``err``), ``correlations`` and ``verdict``; None if fewer than
+        Per-star arrays (``idx``, ``flux``, ``snr``, ``peak``, ``excess``, ``excessPsfOnly``,
+        ``centrePx``, ``phase``, ``err``), ``correlations`` and ``verdict``; None if fewer than
         six stars.
     """
     from scipy.stats import spearmanr
-    final = run.outer_history[-1]
+    final = run.outerHistory[-1]
     exp, res = final["exposure"], final["result"]
     S, fit = res["S"], res["snaps"][-1]["fit"]
     bb = exp.getBBox()
@@ -515,9 +515,9 @@ def core_excess_diagnostic(run, min_snr=100.0, plot=True):
     amps, xy = fit["amps"], S["xy"]
     snr = amps * kern.max() / noise
     P = dict(_params(run.config))
-    P.update(psf_stack_min_snr=min_snr, psf_stack_n=1000)
-    idx = select_psf_stars(exp, res, fwhm, kern.max(), noise, P, verbose=False)
-    lvl, how = saturation_level(exp, P)
+    P.update(psfStackMinSnr=minSnr, psfStackN=1000)
+    idx = selectPsfStars(exp, res, fwhm, kern.max(), noise, P, verbose=False)
+    lvl, how = saturationLevel(exp, P)
     rows = []
     for j in idx:
         x, y = xy[j]
@@ -528,7 +528,7 @@ def core_excess_diagnostic(run, min_snr=100.0, plot=True):
         if not fit["good"][sl].all():
             continue
         d = data[sl]
-        mf, mp = res["model_full"][sl], fit["model_full"][sl]
+        mf, mp = res["modelFull"][sl], fit["modelFull"][sl]
         ef = float(np.sum(d - mf) / np.sum(mf))
         ep = float(np.sum(d - mp) / np.sum(mp))
         cen = float((d - mf)[1, 1] / mf[1, 1])
@@ -536,23 +536,23 @@ def core_excess_diagnostic(run, min_snr=100.0, plot=True):
         err = float(np.sqrt(np.sum(exp.variance.array[sl])) / np.sum(mf))
         rows.append((j, amps[j], snr[j], d.max(), ef, ep, cen, phase, err))
     if len(rows) < 6:
-        print(f"only {len(rows)} usable star(s) -- lower min_snr")
+        print(f"only {len(rows)} usable star(s) -- lower minSnr")
         return None
     T = np.array(rows)
     out = dict(idx=T[:, 0].astype(int), flux=T[:, 1], snr=T[:, 2], peak=T[:, 3], excess=T[:, 4],
-               excess_psf_only=T[:, 5], centre_px=T[:, 6], phase=T[:, 7], err=T[:, 8])
+               excessPsfOnly=T[:, 5], centrePx=T[:, 6], phase=T[:, 7], err=T[:, 8])
     ex = out["excess"]
     se = 1.2533 * 1.4826 * np.median(np.abs(ex - np.median(ex))) / np.sqrt(len(ex))   # error of the median
-    print(f"{len(rows)} isolated unsaturated stars with peak S/N >= {min_snr:g}")
+    print(f"{len(rows)} isolated unsaturated stars with peak S/N >= {minSnr:g}")
     print(f"  central 3x3 excess (data - model)/model:  median {100 * np.median(out['excess']):+.2f}% "
-          f"(final model),  {100 * np.median(out['excess_psf_only']):+.2f}% (PSF-only)")
+          f"(final model),  {100 * np.median(out['excessPsfOnly']):+.2f}% (PSF-only)")
     corr = {}
     tests = [("flux", np.log10(out["flux"])), ("sub-pixel phase", out["phase"])]
     if lvl:
-        out["peak_frac_sat"] = out["peak"] / lvl
-        tests.append(("peak / saturation", out["peak_frac_sat"]))
+        out["peakFracSat"] = out["peak"] / lvl
+        tests.append(("peak / saturation", out["peakFracSat"]))
         print(f"  saturation level {lvl:.4g} ({how}); brightest peak = "
-              f"{100 * out['peak_frac_sat'].max():.0f}% of it")
+              f"{100 * out['peakFracSat'].max():.0f}% of it")
     for lab, v in tests:
         rho, pv = spearmanr(v, out["excess"])
         corr[lab] = (float(rho), float(pv))
@@ -569,13 +569,13 @@ def core_excess_diagnostic(run, min_snr=100.0, plot=True):
     v = []
     # a trend only counts if it is large compared with the excess itself: a uniformly too-broad
     # PSF also shows a mild flux trend, because the fit weights bright cores less (Poisson noise)
-    e_fa, e_br = np.median(out["excess"][fa]), np.median(out["excess"][br])
-    big_trend = abs(e_br - e_fa) > 0.3 * max(abs(np.median(ex)), 3 * se)
-    if corr["flux"][1] < 0.01 and corr["flux"][0] > 0.3 and big_trend:
+    eFa, eBr = np.median(out["excess"][fa]), np.median(out["excess"][br])
+    bigTrend = abs(eBr - eFa) > 0.3 * max(abs(np.median(ex)), 3 * se)
+    if corr["flux"][1] < 0.01 and corr["flux"][0] > 0.3 and bigTrend:
         v.append("excess GROWS WITH FLUX -> a brightness-dependent effect (sensor non-linearity / "
                  "brighter-fatter correction in the pipeline); one PSF cannot fit it")
     if ("peak / saturation" in corr and corr["peak / saturation"][1] < 0.01
-            and corr["peak / saturation"][0] > 0.3 and big_trend):
+            and corr["peak / saturation"][0] > 0.3 and bigTrend):
         v.append("excess grows toward SATURATION -> non-linearity of the brightest pixels")
     if corr["sub-pixel phase"][1] < 0.01 and corr["sub-pixel phase"][0] > 0.3:
         v.append("excess larger for stars near a pixel CORNER -> the PSF stamp is blurred when "
@@ -605,8 +605,8 @@ def core_excess_diagnostic(run, min_snr=100.0, plot=True):
     return out
 
 
-def plot_residual_gray(run, **kw):
-    """Plot the two residual panels of `plot_final_comparison`, larger and in greyscale.
+def plotResidualGray(run, **kw):
+    """Plot the two residual panels of `plotFinalComparison`, larger and in greyscale.
 
     Black = negative, white = positive; areas that cannot be modelled are drawn in blue.
 
@@ -615,38 +615,38 @@ def plot_residual_gray(run, **kw):
     run : `lsst.meas.crowd.session.CutoutRun`
         A finished run.
     **kw
-        Keyword arguments of `plot_final_comparison`.
+        Keyword arguments of `plotFinalComparison`.
 
     Returns
     -------
     stats : `dict`
-        See `plot_final_comparison`.
+        See `plotFinalComparison`.
     """
     kw.setdefault("panels", "residuals")
     kw.setdefault("grayscale", True)
-    return plot_final_comparison(run, **kw)
+    return plotFinalComparison(run, **kw)
 
 
-def _print_run_version(h):
+def _printRunVersion(h):
     """Print which code version produced a run and whether the brightness term was active."""
     v = h.get("version")
     if v is None:
-        print("  (run made by an OLDER cutout_gaia without the brightness term -- restart the kernel "
-              "and re-run)")
+        print("  (run made by an older meas_crowd version without the brightness term -- restart "
+              "the kernel and re-run)")
         return
     bf = h.get("bf")
     if bf is None:
-        print(f"  (run made by cutout_gaia {v}; brightness term NOT active in the final fit)")
+        print(f"  (run made by meas_crowd {v}; brightness term NOT active in the final fit)")
     else:
-        print(f"  (run made by cutout_gaia {v}; brightness term active in the final fit, "
+        print(f"  (run made by meas_crowd {v}; brightness term active in the final fit, "
               f"L0 = 10^{bf['L0']:.2f})")
 
 
-def star_residual_table(run, min_snr=30.0, r_fwhm=2.5, plot=True, n_worst=10):
+def starResidualTable(run, minSnr=30.0, rFwhm=2.5, plot=True, nWorst=10):
     """Find which stars carry the leftover residual, and what they have in common.
 
-    For every unsaturated point source with peak S/N >= ``min_snr``: chi2 per pixel within
-    ``r_fwhm`` FWHM for the final and the PSF-only model, the PSF-only core residual (flux within
+    For every unsaturated point source with peak S/N >= ``minSnr``: chi2 per pixel within
+    ``rFwhm`` FWHM for the final and the PSF-only model, the PSF-only core residual (flux within
     1 FWHM / star flux; < 0 = star broader than the PSF) and the mismatch (residual flux beyond
     the noise / star flux, independent of brightness).  The mismatch is rank-correlated with flux,
     position and crowding, and outlier stars are counted.
@@ -655,31 +655,31 @@ def star_residual_table(run, min_snr=30.0, r_fwhm=2.5, plot=True, n_worst=10):
     ----------
     run : `lsst.meas.crowd.session.CutoutRun`
         A finished run.
-    min_snr : `float`, optional
+    minSnr : `float`, optional
         Minimum peak S/N.
-    r_fwhm : `float`, optional
+    rFwhm : `float`, optional
         Radius of the chi2 region [FWHM].
     plot : `bool`, optional
         Plot chi2 and core residual against flux and the stars' positions.
-    n_worst : `int`, optional
+    nWorst : `int`, optional
         Number of worst stars listed.
 
     Returns
     -------
     table : `dict` or `None`
-        Per-star arrays (``idx``, ``flux``, ``snr``, ``x``, ``y``, ``dist``, ``n_nb``,
-        ``chi2_final``, ``chi2_psf``, ``core_psf``, ``npix``, ``mismatch``), ``correlations``,
-        ``core_vs_flux``, ``outliers`` and ``verdict``; None if fewer than eight stars.
+        Per-star arrays (``idx``, ``flux``, ``snr``, ``x``, ``y``, ``dist``, ``nNb``,
+        ``chi2Final``, ``chi2Psf``, ``corePsf``, ``npix``, ``mismatch``), ``correlations``,
+        ``coreVsFlux``, ``outliers`` and ``verdict``; None if fewer than eight stars.
     """
     from scipy.stats import spearmanr
-    final = run.outer_history[-1]
+    final = run.outerHistory[-1]
     exp, res = final["exposure"], final["result"]
     S, fit = res["S"], res["snaps"][-1]["fit"]
     bb = exp.getBBox()
     c = bb.getCenter()
     X0, Y0 = bb.getMinX(), bb.getMinY()
     data = exp.image.array
-    var = exp.variance.array + float(final.get("poisson_k", 0.0) or 0.0) * np.clip(res["model_full"], 0, None)
+    var = exp.variance.array + float(final.get("poissonK", 0.0) or 0.0) * np.clip(res["modelFull"], 0, None)
     good = fit["good"] & np.isfinite(var) & (var > 0)
     psf = exp.getPsf()
     kern = psf.computeKernelImage(c).array
@@ -687,7 +687,7 @@ def star_residual_table(run, min_snr=30.0, r_fwhm=2.5, plot=True, n_worst=10):
     noise = float(np.sqrt(np.nanmedian(exp.variance.array)))
     amps, xy = fit["amps"], S["xy"]
     snr = amps * kern.max() / noise
-    cand = np.flatnonzero((snr >= min_snr) & (S["ext"] == 0) & (amps > 0))
+    cand = np.flatnonzero((snr >= minSnr) & (S["ext"] == 0) & (amps > 0))
     sat = _satlike(exp)
     if sat.any():
         from scipy.ndimage import binary_dilation
@@ -696,7 +696,7 @@ def star_residual_table(run, min_snr=30.0, r_fwhm=2.5, plot=True, n_worst=10):
         iy = np.clip(np.round(xy[cand, 1]).astype(int) - Y0, 0, sat.shape[0] - 1)
         cand = cand[~near[iy, ix]]
     tree = cKDTree(xy)
-    r = r_fwhm * fwhm
+    r = rFwhm * fwhm
     rows = []
     for j in cand:
         x, y = xy[j]
@@ -710,47 +710,47 @@ def star_residual_table(run, min_snr=30.0, r_fwhm=2.5, plot=True, n_worst=10):
         if g.sum() < 0.8 * np.pi * r * r:              # too much of it masked
             continue
         d, v = data[ya:yb, xa:xb], var[ya:yb, xa:xb]
-        rf = d - res["model_full"][ya:yb, xa:xb]
-        rp = d - fit["model_full"][ya:yb, xa:xb]
-        chi_f = float(np.mean(rf[g] ** 2 / v[g]))
-        chi_p = float(np.mean(rp[g] ** 2 / v[g]))
+        rf = d - res["modelFull"][ya:yb, xa:xb]
+        rp = d - fit["modelFull"][ya:yb, xa:xb]
+        chiF = float(np.mean(rf[g] ** 2 / v[g]))
+        chiP = float(np.mean(rp[g] ** 2 / v[g]))
         core = float(np.sum(rp[g & (R < fwhm)]) / amps[j])
         # flux-independent shape mismatch: rms residual flux beyond the noise, / star flux
         mis = float(np.sqrt(max(np.sum(rf[g] ** 2) - np.sum(v[g]), 0.0)) / amps[j])
         nb = [k for k in tree.query_ball_point(xy[j], 2.5 * fwhm) if k != j and amps[k] > 0.1 * amps[j]]
         rows.append((j, amps[j], snr[j], x, y, np.hypot(x - c.getX(), y - c.getY()), len(nb),
-                     chi_f, chi_p, core, int(g.sum()), mis))
+                     chiF, chiP, core, int(g.sum()), mis))
     if len(rows) < 8:
-        print(f"only {len(rows)} usable star(s) with S/N >= {min_snr:g} -- lower min_snr")
+        print(f"only {len(rows)} usable star(s) with S/N >= {minSnr:g} -- lower minSnr")
         return None
     T = np.array(rows)
-    names = ["idx", "flux", "snr", "x", "y", "dist", "n_nb", "chi2_final", "chi2_psf", "core_psf", "npix",
+    names = ["idx", "flux", "snr", "x", "y", "dist", "nNb", "chi2Final", "chi2Psf", "corePsf", "npix",
              "mismatch"]
     out = {n: T[:, i] for i, n in enumerate(names)}
     out["idx"] = out["idx"].astype(int)
-    ex = out["chi2_final"] - 1.0
+    ex = out["chi2Final"] - 1.0
     mis = out["mismatch"]
     lf = np.log10(out["flux"])
     corr = {}
     for lab, v in (("flux", lf), ("distance from centre", out["dist"]), ("x", out["x"]),
-                   ("y", out["y"]), ("crowding (n neighbours)", out["n_nb"])):
+                   ("y", out["y"]), ("crowding (n neighbours)", out["nNb"])):
         rho, pv = spearmanr(v, mis) if np.ptp(v) > 0 else (0.0, 1.0)
         corr[lab] = (float(rho), float(pv))
-    rho_core, p_core = spearmanr(lf, out["core_psf"])
+    rhoCore, pCore = spearmanr(lf, out["corePsf"])
     o = np.argsort(-ex)
     mmed = np.median(mis[mis > 0]) if np.any(mis > 0) else 0.0
-    outl = (mis > 3 * mmed) & (out["chi2_final"] > 1.5)
+    outl = (mis > 3 * mmed) & (out["chi2Final"] > 1.5)
     nb_ = len(lf) // 3
     fo = np.argsort(lf)
-    _print_run_version(final)
-    print(f"{len(rows)} unsaturated stars with peak S/N >= {min_snr:g}; chi2/px within "
-          f"{r_fwhm:g} FWHM (1.0 = noise only):")
+    _printRunVersion(final)
+    print(f"{len(rows)} unsaturated stars with peak S/N >= {minSnr:g}; chi2/px within "
+          f"{rFwhm:g} FWHM (1.0 = noise only):")
     print(f"  {'':16s} {'median flux':>11s} {'chi2 final':>11s} {'chi2 PSF-only':>14s} "
           f"{'core (PSF-only)':>16s} {'mismatch':>9s}")
     for lab, sel in (("faintest third", fo[:nb_]), ("middle third", fo[nb_:2 * nb_]),
                      ("brightest third", fo[2 * nb_:])):
-        print(f"  {lab:16s} {np.median(out['flux'][sel]):11.3g} {np.median(out['chi2_final'][sel]):11.2f} "
-              f"{np.median(out['chi2_psf'][sel]):14.2f} {100 * np.median(out['core_psf'][sel]):+15.2f}% "
+        print(f"  {lab:16s} {np.median(out['flux'][sel]):11.3g} {np.median(out['chi2Final'][sel]):11.2f} "
+              f"{np.median(out['chi2Psf'][sel]):14.2f} {100 * np.median(out['corePsf'][sel]):+15.2f}% "
               f"{100 * np.median(mis[sel]):8.2f}%")
     print("  (mismatch = rms residual flux beyond the noise / star flux: a flux-independent shape error;")
     print("   chi2 alone always grows with flux for the same fractional error)")
@@ -758,17 +758,17 @@ def star_residual_table(run, min_snr=30.0, r_fwhm=2.5, plot=True, n_worst=10):
     for lab, (rho, pv) in corr.items():
         flag = "  <-- significant" if pv < 0.01 and abs(rho) > 0.3 else ""
         print(f"    {lab:24s} rho = {rho:+.2f}  (p = {pv:.1g}){flag}")
-    print(f"    core residual vs flux    rho = {rho_core:+.2f}  (p = {p_core:.1g})  "
+    print(f"    core residual vs flux    rho = {rhoCore:+.2f}  (p = {pCore:.1g})  "
           f"[negative = brighter stars broader than the PSF]")
     print(f"  {int(outl.sum())} star(s) with mismatch > 3x the median ({100 * mmed:.2f}%) and chi2 > 1.5")
     verdict = []
-    bright_chi = np.median(out["chi2_final"][fo[2 * nb_:]])
-    if bright_chi < 1.1:
+    brightChi = np.median(out["chi2Final"][fo[2 * nb_:]])
+    if brightChi < 1.1:
         verdict.append("brightest stars are fitted to within ~noise (chi2 < 1.1): the splotches in the "
                        "data-model panel are mostly their PHOTON NOISE (sigma grows as sqrt(flux)); "
                        "judge the residual/sigma panel")
-    if p_core < 0.01 and abs(rho_core) > 0.3:
-        verdict.append(f"PSF-only core residual {'falls' if rho_core < 0 else 'rises'} with flux -> the PSF "
+    if pCore < 0.01 and abs(rhoCore) > 0.3:
+        verdict.append(f"PSF-only core residual {'falls' if rhoCore < 0 else 'rises'} with flux -> the PSF "
                        f"core width depends on brightness")
     if any(corr[k][1] < 0.01 and abs(corr[k][0]) > 0.3 for k in ("distance from centre", "x", "y")):
         verdict.append("shape mismatch depends on POSITION -> the PSF varies across the cutout")
@@ -782,38 +782,38 @@ def star_residual_table(run, min_snr=30.0, r_fwhm=2.5, plot=True, n_worst=10):
     print("  VERDICT:")
     for v in verdict:
         print("   - " + v)
-    print(f"  worst {min(n_worst, len(o))} stars:")
+    print(f"  worst {min(nWorst, len(o))} stars:")
     print(f"    {'x':>8s} {'y':>8s} {'flux':>9s} {'S/N':>6s} {'chi2':>6s} {'mismatch':>9s} {'nbrs':>5s} {'Gaia':>5s}")
-    for i in o[:n_worst]:
+    for i in o[:nWorst]:
         j = out["idx"][i]
         print(f"    {out['x'][i]:8.1f} {out['y'][i]:8.1f} {out['flux'][i]:9.3g} {out['snr'][i]:6.0f} "
-              f"{out['chi2_final'][i]:6.2f} {100 * mis[i]:8.2f}% {int(out['n_nb'][i]):5d} {'yes' if S['from_gaia'][j] else 'no':>5s}")
-    out.update(correlations=corr, core_vs_flux=(float(rho_core), float(p_core)),
+              f"{out['chi2Final'][i]:6.2f} {100 * mis[i]:8.2f}% {int(out['nNb'][i]):5d} {'yes' if S['fromGaia'][j] else 'no':>5s}")
+    out.update(correlations=corr, coreVsFlux=(float(rhoCore), float(pCore)),
                outliers=out["idx"][outl], verdict=verdict)
     if plot:
         import matplotlib.pyplot as plt
         fig, ax = plt.subplots(1, 3, figsize=(18, 5.2))
-        sc = ax[0].scatter(out["flux"], out["chi2_final"], c=out["n_nb"], cmap="viridis", s=18,
-                           vmin=0, vmax=max(3, out["n_nb"].max()))
+        sc = ax[0].scatter(out["flux"], out["chi2Final"], c=out["nNb"], cmap="viridis", s=18,
+                           vmin=0, vmax=max(3, out["nNb"].max()))
         ax[0].axhline(1, color="k", lw=0.8, ls=":")
         ax[0].set_xscale("log")
         ax[0].set_yscale("log")
         ax[0].set_xlabel("star flux")
-        ax[0].set_ylabel(f"chi2/px within {r_fwhm:g} FWHM (final model)")
+        ax[0].set_ylabel(f"chi2/px within {rFwhm:g} FWHM (final model)")
         ax[0].set_title("excess vs brightness (colour = neighbours)")
         plt.colorbar(sc, ax=ax[0], fraction=0.046, label="neighbours > 10% flux")
-        ax[1].scatter(out["flux"], 100 * out["core_psf"], s=18, color="C1")
+        ax[1].scatter(out["flux"], 100 * out["corePsf"], s=18, color="C1")
         ax[1].axhline(0, color="k", lw=0.8, ls=":")
         ax[1].set_xscale("log")
         ax[1].set_xlabel("star flux")
         ax[1].set_ylabel("PSF-only residual within 1 FWHM [% of flux]")
         ax[1].set_title("core residual vs brightness (brighter-fatter test)")
-        z = (data - res["model_full"]) / np.sqrt(var)
+        z = (data - res["modelFull"]) / np.sqrt(var)
         z = np.where(good, z, np.nan)
         ax[2].imshow(z, origin="lower", cmap="gray_r", vmin=-4, vmax=4,
                      extent=(X0 - .5, X0 + data.shape[1] - .5, Y0 - .5, Y0 + data.shape[0] - .5))
-        sc = ax[2].scatter(out["x"], out["y"], c=out["chi2_final"], cmap="magma_r", s=40,
-                           vmin=1, vmax=max(2, np.percentile(out["chi2_final"], 95)),
+        sc = ax[2].scatter(out["x"], out["y"], c=out["chi2Final"], cmap="magma_r", s=40,
+                           vmin=1, vmax=max(2, np.percentile(out["chi2Final"], 95)),
                            edgecolors="k", linewidths=0.4)
         plt.colorbar(sc, ax=ax[2], fraction=0.046, label="chi2/px")
         ax[2].set_title("where the excess is (on residual/sigma)")
@@ -824,11 +824,11 @@ def star_residual_table(run, min_snr=30.0, r_fwhm=2.5, plot=True, n_worst=10):
     return out
 
 
-def plot_final_comparison(run, view="interior", bad_color=BAD_PIXEL_COLOR, circles="images",
-                          show_zones=True, exclude_near_mask=True, excluded_color=EXCLUDED_COLOR,
-                          mask_pad_fwhm=1.5, z_clip=5.0, resid_clip_pct=99.0, figsize=(26, 7),
-                          sigma="model", nearsat_color=NEARSAT_COLOR, grayscale=False,
-                          panels="all", verbose=True):
+def plotFinalComparison(run, view="interior", badColor=BAD_PIXEL_COLOR, circles="images",
+                        showZones=True, excludeNearMask=True, excludedColor=EXCLUDED_COLOR,
+                        maskPadFwhm=1.5, zClip=5.0, residClipPct=99.0, figsize=(26, 7),
+                        sigma="model", nearsatColor=NEARSAT_COLOR, grayscale=False,
+                        panels="all", verbose=True):
     """Plot original | final model | residual | residual/sigma of a run.
 
     Bad pixels are drawn opaque in one colour (default magenta) in all four panels and excluded
@@ -843,28 +843,28 @@ def plot_final_comparison(run, view="interior", bad_color=BAD_PIXEL_COLOR, circl
     view : `str` or `tuple`, optional
         'interior' (the requested box), None (the whole fitted array) or
         (xmin, xmax, ymin, ymax) in detector pixels.
-    bad_color : `str`, optional
+    badColor : `str`, optional
         Colour of bad pixels.
     circles : `str`, optional
         Where to draw the source circles: 'images' (data and model), 'all' or 'none'.
-    show_zones : `bool`, optional
+    showZones : `bool`, optional
         Outline the saturated-star zones.
-    exclude_near_mask : `bool`, optional
+    excludeNearMask : `bool`, optional
         Grey out (and exclude) pixels next to bad pixels that cannot be modelled.
-    excluded_color : `str`, optional
+    excludedColor : `str`, optional
         Colour of those pixels.
-    mask_pad_fwhm : `float`, optional
+    maskPadFwhm : `float`, optional
         Pad around bad pixels [FWHM].
-    z_clip : `float`, optional
+    zClip : `float`, optional
         Colour range of residual/sigma.
-    resid_clip_pct : `float`, optional
+    residClipPct : `float`, optional
         Percentile setting the colour range of the residual.
     figsize : `tuple` [`float`, `float`], optional
         Figure size [inches].
     sigma : `str`, optional
         'model' = sqrt(variance + (eps*model)^2 + k*model) with the measured PSF model error eps;
         'effective' = without eps; 'pixel' = the variance plane only.
-    nearsat_color : `str`, optional
+    nearsatColor : `str`, optional
         Colour of near-saturated cores fitted from their wings.
     grayscale : `bool`, optional
         Residual panels in greyscale (excluded areas then in blue).
@@ -876,26 +876,26 @@ def plot_final_comparison(run, view="interior", bad_color=BAD_PIXEL_COLOR, circl
     Returns
     -------
     stats : `dict`
-        ``residual`` and ``residual_over_sigma`` (median, robust sigma, quartiles, number of
-        pixels) and ``excluded_px``.
+        ``residual`` and ``residualOverSigma`` (median, robust sigma, quartiles, number of
+        pixels) and ``excludedPx``.
     """
     from . import session as cn
     import matplotlib.pyplot as plt
     import matplotlib.patches as mpatches
     from matplotlib.colors import ListedColormap
     from astropy.visualization import simple_norm
-    final = run.outer_history[-1]
+    final = run.outerHistory[-1]
     exp, res = final["exposure"], final["result"]
     bb = exp.getBBox()
-    data, model, var = exp.image.array, res["model_full"], exp.variance.array
-    raw = run.raw_crop[bb].image.array
-    bad = ((exp.mask.array & run.bad_bitmask) != 0) | ~np.isfinite(data - model)
+    data, model, var = exp.image.array, res["modelFull"], exp.variance.array
+    raw = run.rawCrop[bb].image.array
+    bad = ((exp.mask.array & run.badBitmask) != 0) | ~np.isfinite(data - model)
     ny, nx = data.shape
     x0, y0 = bb.getMinX(), bb.getMinY()
     ext = (x0 - .5, x0 + nx - .5, y0 - .5, y0 + ny - .5)
     xs, ys = x0 + np.arange(nx), y0 + np.arange(ny)
     if isinstance(view, str) and view == "interior":
-        b = run.interior_bbox
+        b = run.interiorBbox
         view = (b.getMinX() - .5, b.getMaxX() + .5, b.getMinY() - .5, b.getMaxY() + .5)
     elif isinstance(view, str):
         view = None
@@ -904,17 +904,17 @@ def plot_final_comparison(run, view="interior", bad_color=BAD_PIXEL_COLOR, circl
         region = ((xs[None, :] >= view[0]) & (xs[None, :] <= view[1]) &
                   (ys[:, None] >= view[2]) & (ys[:, None] <= view[3]))
     resid = data - model
-    k_used, eps_used = 0.0, 0.0
+    kUsed, epsUsed = 0.0, 0.0
     if sigma in ("effective", "model"):   # include the photon noise the variance plane misses
-        k_used = float(final.get("poisson_k", 0.0) or 0.0)
+        kUsed = float(final.get("poissonK", 0.0) or 0.0)
         try:
-            k_used = max(k_used, float(run.config.get("poisson_k", 0.0) or 0.0))
+            kUsed = max(kUsed, float(run.config.get("poissonK", 0.0) or 0.0))
         except Exception:
             pass
-        var = var + k_used * np.clip(model, 0, None)
+        var = var + kUsed * np.clip(model, 0, None)
     if sigma == "model":                  # + the measured PSF model error (option A)
-        eps_used = float(final.get("model_err", 0.0) or 0.0)
-        var = var + (eps_used * np.clip(model, 0, None)) ** 2
+        epsUsed = float(final.get("modelErr", 0.0) or 0.0)
+        var = var + (epsUsed * np.clip(model, 0, None)) ** 2
     varok = np.isfinite(var) & (var > 0)
     z = resid / np.sqrt(np.where(varok, var, np.nan))
     fw = L._fwhm(exp.getPsf(), bb.getCenter())
@@ -922,49 +922,49 @@ def plot_final_comparison(run, view="interior", bad_color=BAD_PIXEL_COLOR, circl
         nearsat = (exp.mask.array & exp.mask.getPlaneBitMask("NEARSAT")) != 0
     except Exception:
         nearsat = np.zeros(bad.shape, bool)
-    excl = (unmodeled_near_mask(resid, var, bad, fw, mask_pad_fwhm, modeled=nearsat)
-            if exclude_near_mask else np.zeros(bad.shape, bool))
+    excl = (unmodeledNearMask(resid, var, bad, fw, maskPadFwhm, modeled=nearsat)
+            if excludeNearMask else np.zeros(bad.shape, bool))
     use = ~bad & ~excl & region
-    st_r = cn.robust_stats(resid, use)
-    st_z = cn.robust_stats(z, use & varok)
+    stR = cn.robustStats(resid, use)
+    stZ = cn.robustStats(z, use & varok)
     sel = resid[use]
-    rs = np.nanpercentile(np.abs(sel), resid_clip_pct) if sel.size else 1.0
+    rs = np.nanpercentile(np.abs(sel), residClipPct) if sel.size else 1.0
     norm = simple_norm(raw, vmin=np.nanmin(raw), vmax=np.nanpercentile(raw, 99),
                        stretch="log", log_a=1000)
-    cm_res = plt.get_cmap("gray" if grayscale else "RdBu_r").copy()
-    cm_res.set_bad(bad_color)
-    if grayscale and excluded_color == EXCLUDED_COLOR:
-        excluded_color = EXCLUDED_COLOR_GRAY            # grey would vanish in a grey map
-    zone_col = "#00b4d8" if grayscale else "k"
+    cmRes = plt.get_cmap("gray" if grayscale else "RdBu_r").copy()
+    cmRes.set_bad(badColor)
+    if grayscale and excludedColor == EXCLUDED_COLOR:
+        excludedColor = EXCLUDED_COLOR_GRAY            # grey would vanish in a grey map
+    zoneCol = "#00b4d8" if grayscale else "k"
     badimg = np.ma.masked_where(~bad, np.ones(bad.shape))
     S = res.get("S")
-    ext_src = (S["ext"] > 0) if S is not None and "ext" in S else np.zeros(len(res["peaks"]), bool)
+    extSrc = (S["ext"] > 0) if S is not None and "ext" in S else np.zeros(len(res["peaks"]), bool)
     peaks = np.asarray(res["peaks"], float).reshape(-1, 2)
     zmask = None
-    if show_zones:
+    if showZones:
         try:
             P = _params(run.config)
             import contextlib
             import io
             with contextlib.redirect_stdout(io.StringIO()):
-                zmask = (sat_zones(exp, L._fwhm(exp.getPsf(), bb.getCenter()), P)[1]
-                         if P["sat_zone_fwhm"] else None)
+                zmask = (satZones(exp, L._fwhm(exp.getPsf(), bb.getCenter()), P)[1]
+                         if P["satZoneFwhm"] else None)
         except Exception:
             zmask = None
     radius = 0.75 * L._fwhm(exp.getPsf(), bb.getCenter())
 
     def sub(st):
-        return f"median {st['median']:+.2f},  robust σ {st['sigma_iqr']:.2f}  (N={st['n']})"
+        return f"median {st['median']:+.2f},  robust σ {st['sigmaIqr']:.2f}  (N={st['n']})"
 
     plist = [("Original visit image (cutout)", raw, dict(cmap=L.CMAP, norm=norm)),
-              (f"Final model ({len(peaks)} sources)", model, dict(cmap=L.CMAP, norm=norm)),
-              ("Residual = data − model\n" + sub(st_r), np.ma.masked_where(bad | excl, resid),
-               dict(cmap=cm_res, vmin=-rs, vmax=rs)),
-              (("Residual / σ_eff  (σ² + (%.2f%%·model)²%s)" % (100 * eps_used, " + %.3g·model" % k_used if k_used else "")
-                if sigma == "model" else
-                "Residual / σ_eff (σ² + %.3g·model)" % k_used if sigma == "effective" else "Residual / σ")
-               + "\n" + sub(st_z), np.ma.masked_where(bad | excl | ~varok, z),
-               dict(cmap=cm_res, vmin=-z_clip, vmax=z_clip))]
+             (f"Final model ({len(peaks)} sources)", model, dict(cmap=L.CMAP, norm=norm)),
+             ("Residual = data − model\n" + sub(stR), np.ma.masked_where(bad | excl, resid),
+              dict(cmap=cmRes, vmin=-rs, vmax=rs)),
+             (("Residual / σ_eff  (σ² + (%.2f%%·model)²%s)" % (100 * epsUsed, " + %.3g·model" % kUsed if kUsed else "")
+               if sigma == "model" else
+               "Residual / σ_eff (σ² + %.3g·model)" % kUsed if sigma == "effective" else "Residual / σ")
+              + "\n" + sub(stZ), np.ma.masked_where(bad | excl | ~varok, z),
+              dict(cmap=cmRes, vmin=-zClip, vmax=zClip))]
     show = [0, 1, 2, 3] if panels == "all" else [2, 3]
     if panels != "all" and figsize == (26, 7):
         figsize = (16, 7.5)
@@ -974,25 +974,25 @@ def plot_final_comparison(run, view="interior", bad_color=BAD_PIXEL_COLOR, circl
         im = ax.imshow(img, extent=ext, origin="lower", **kw)
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
         if bad.any():
-            ax.imshow(badimg, extent=ext, origin="lower", cmap=ListedColormap([bad_color]),
+            ax.imshow(badimg, extent=ext, origin="lower", cmap=ListedColormap([badColor]),
                       interpolation="nearest", zorder=3)
         if nearsat.any():
             ax.imshow(np.ma.masked_where(~nearsat, np.ones(bad.shape)), extent=ext, origin="lower",
-                      cmap=ListedColormap([nearsat_color]), interpolation="nearest", zorder=3.5)
+                      cmap=ListedColormap([nearsatColor]), interpolation="nearest", zorder=3.5)
         if excl.any():
             if i >= 2:
                 ax.imshow(np.ma.masked_where(~excl, np.ones(excl.shape)), extent=ext,
-                          origin="lower", cmap=ListedColormap([excluded_color]),
+                          origin="lower", cmap=ListedColormap([excludedColor]),
                           interpolation="nearest", zorder=3)
             else:
-                ax.contour(xs, ys, excl.astype(float), levels=[0.5], colors=excluded_color,
+                ax.contour(xs, ys, excl.astype(float), levels=[0.5], colors=excludedColor,
                            linewidths=1.2, zorder=4)
         if zmask is not None and zmask.any():
             ax.contour(xs, ys, zmask.astype(float), levels=[0.5], linestyles="--",
-                       colors="w" if i < 2 else zone_col, linewidths=1.0, zorder=4)
+                       colors="w" if i < 2 else zoneCol, linewidths=1.0, zorder=4)
         if len(peaks) and (circles == "all" or (circles == "images" and i < 2)):
-            col = "w" if i < 2 else zone_col
-            for (px, py), e in zip(peaks, ext_src):
+            col = "w" if i < 2 else zoneCol
+            for (px, py), e in zip(peaks, extSrc):
                 ax.add_patch(mpatches.Circle((px, py), radius * (1.6 if e else 1.0), fill=False,
                                              ec=col, lw=0.6 if not e else 0.9,
                                              ls="--" if e else "-",
@@ -1001,26 +1001,26 @@ def plot_final_comparison(run, view="interior", bad_color=BAD_PIXEL_COLOR, circl
         ax.set_xlabel("x [px]")
         ax.grid(False)
         if i >= 2:
-            st = st_r if i == 2 else st_z
-            ax.text(0.02, 0.98, f"median = {st['median']:+.3f}\nσ_IQR = {st['sigma_iqr']:.3f}",
+            st = stR if i == 2 else stZ
+            ax.text(0.02, 0.98, f"median = {st['median']:+.3f}\nσ_IQR = {st['sigmaIqr']:.3f}",
                     transform=ax.transAxes, va="top", ha="left", fontsize=10,
                     bbox=dict(fc="white", ec="k", alpha=0.85, pad=3), zorder=10)
     axes[0].set_ylabel("y [px]")
     axes[0].set_xlim(*(view[:2] if view else ext[:2]))
     axes[0].set_ylim(*(view[2:] if view else ext[2:]))
-    handles = [mpatches.Patch(fc=bad_color, ec="k", label="bad pixel (excluded)")]
+    handles = [mpatches.Patch(fc=badColor, ec="k", label="bad pixel (excluded)")]
     if nearsat.any():
-        handles.append(mpatches.Patch(fc=nearsat_color, ec="k",
+        handles.append(mpatches.Patch(fc=nearsatColor, ec="k",
                                       label="near-saturated core, fitted from wings (excluded)"))
     if excl.any():
-        handles.append(mpatches.Patch(fc=excluded_color, ec="k",
+        handles.append(mpatches.Patch(fc=excludedColor, ec="k",
                                       label="next to bad pixels, not modelable (excluded)"))
     if zmask is not None and zmask.any():
         handles.append(mpatches.Patch(fc="none", ec="k", ls="--",
                                       label="saturated-star zone (non-Gaia S/N ≥ 10)"))
-    if ext_src.any() and circles != "none":
+    if extSrc.any() and circles != "none":
         handles.append(mpatches.Patch(fc="none", ec="k", ls="--",
-                                      label=f"extended source ({int(ext_src.sum())})"))
+                                      label=f"extended source ({int(extSrc.sum())})"))
     axes[show.index(2)].legend(handles=handles, loc="lower left", fontsize=8, framealpha=0.9)
     fig.text(0.5, -0.01, "Statistics exclude bad pixels" +
              (" and the grey unmodelable areas next to them" if excl.any() else "") +
@@ -1028,19 +1028,19 @@ def plot_final_comparison(run, view="interior", bad_color=BAD_PIXEL_COLOR, circl
              + (" over the plotted view" if view is not None else " over the full array"),
              ha="center", fontsize=9)
     plt.tight_layout()
-    stats = dict(residual=st_r, residual_over_sigma=st_z, excluded_px=int((excl & region).sum()))
+    stats = dict(residual=stR, residualOverSigma=stZ, excludedPx=int((excl & region).sum()))
     if verbose:
-        cn._print_stats({k: v for k, v in stats.items() if isinstance(v, dict)})
+        cn._printStats({k: v for k, v in stats.items() if isinstance(v, dict)})
         if excl.any():
             print(f"excluded next to bad pixels: {int((excl & region).sum())} px "
                   f"({100 * (excl & region).sum() / max(region.sum(), 1):.1f}% of the view)")
     return stats
 
 
-def plot_gaia_comparison(phot, min_snr=20.0, figsize=(22, 5.5), out=None):
+def plotGaiaComparison(phot, minSnr=20.0, figsize=(22, 5.5), out=None):
     """Plot how the fitted photometry and positions compare with Gaia.
 
-    Four panels for the Gaia-matched point sources with PSF S/N >= ``min_snr``: magnitude
+    Four panels for the Gaia-matched point sources with PSF S/N >= ``minSnr``: magnitude
     difference (offset removed) against Gaia G and against Gaia BP - RP (the colour term between
     G and the LSST band), the position offsets, and the offsets as arrows across the image
     (a pattern there is a WCS distortion; scatter is centroid noise).
@@ -1048,9 +1048,9 @@ def plot_gaia_comparison(phot, min_snr=20.0, figsize=(22, 5.5), out=None):
     Parameters
     ----------
     phot : `astropy.table.Table`
-        Output of `lsst.meas.crowd.photometry.compare_with_gaia` (or of ``measure_photometry``
+        Output of `lsst.meas.crowd.photometry.compareWithGaia` (or of ``measurePhotometry``
         with ``gaia=``).
-    min_snr : `float`, optional
+    minSnr : `float`, optional
         Minimum PSF S/N of the plotted sources.
     figsize : `tuple` [`float`, `float`], optional
         Figure size [inches].
@@ -1060,7 +1060,7 @@ def plot_gaia_comparison(phot, min_snr=20.0, figsize=(22, 5.5), out=None):
     Returns
     -------
     summary : `dict`
-        ``n`` (sources plotted), ``dmag_scatter`` (robust std of ``gaia_dmag_rel`` [mag]),
+        ``n`` (sources plotted), ``dmagScatter`` (robust std of ``gaiaDmagRel`` [mag]),
         ``offset`` (the removed median offset [mag]) and ``dx``, ``dy`` (median position offsets
         [mas] or, without sky coordinates, [px]).
 
@@ -1070,35 +1070,35 @@ def plot_gaia_comparison(phot, min_snr=20.0, figsize=(22, 5.5), out=None):
         Raised if the table has no Gaia comparison columns.
     """
     import matplotlib.pyplot as plt
-    if "gaia_match" not in phot.colnames:
-        raise ValueError("no Gaia columns: run compare_with_gaia / measure_photometry(gaia=...) first")
-    sel = (np.asarray(phot["gaia_match"], bool) & (np.asarray(phot["psf_snr"], float) >= min_snr)
-           & np.isfinite(np.asarray(phot["gaia_dmag_rel"], float)))
+    if "gaiaMatch" not in phot.colnames:
+        raise ValueError("no Gaia columns: run compareWithGaia / measurePhotometry(gaia=...) first")
+    sel = (np.asarray(phot["gaiaMatch"], bool) & (np.asarray(phot["psfSnr"], float) >= minSnr)
+           & np.isfinite(np.asarray(phot["gaiaDmagRel"], float)))
     if "extended" in phot.colnames:
         sel &= ~np.asarray(phot["extended"], bool)
     t = phot[sel]
-    sky = "gaia_dra" in t.colnames
-    dx = np.asarray(t["gaia_dra"] if sky else t["gaia_dx"], float)
-    dy = np.asarray(t["gaia_ddec"] if sky else t["gaia_dy"], float)
+    sky = "gaiaDra" in t.colnames
+    dx = np.asarray(t["gaiaDra"] if sky else t["gaiaDx"], float)
+    dy = np.asarray(t["gaiaDdec"] if sky else t["gaiaDy"], float)
     unit = "mas" if sky else "px"
     nd = 1 if sky else 3                       # decimals of the offsets
-    dm = np.asarray(t["gaia_dmag_rel"], float)
-    linked = np.asarray(t["gaia_match_type"]) == "linked"
+    dm = np.asarray(t["gaiaDmagRel"], float)
+    linked = np.asarray(t["gaiaMatchType"]) == "linked"
 
     def rstd(v):
         v = v[np.isfinite(v)]
         return 1.4826 * float(np.median(np.abs(v - np.median(v)))) if v.size else np.nan
 
     fig, ax = plt.subplots(1, 4, figsize=figsize)
-    for a, xv, xl in ((ax[0], np.asarray(t["gaia_G"], float), "Gaia G [mag]"),
-                      (ax[1], np.asarray(t["gaia_bp_rp"], float), "Gaia BP - RP [mag]")):
+    for a, xv, xl in ((ax[0], np.asarray(t["gaiaG"], float), "Gaia G [mag]"),
+                      (ax[1], np.asarray(t["gaiaBpRp"], float), "Gaia BP - RP [mag]")):
         a.scatter(xv[linked], dm[linked], s=8, c="C0",
                   label=f"fitted from the Gaia position ({int(linked.sum())})")
         a.scatter(xv[~linked], dm[~linked], s=14, c="C3", marker="x",
                   label=f"matched by position ({int((~linked).sum())})")
         a.axhline(0, color="k", lw=0.8)
         a.set_xlabel(xl)
-        a.set_ylabel("psf_mag - G - offset [mag]")
+        a.set_ylabel("psfMag - G - offset [mag]")
         lim = max(0.2, 4 * rstd(dm)) if dm.size else 1.0
         a.set_ylim(-lim, lim)
         if not np.isfinite(xv).any():
@@ -1120,7 +1120,7 @@ def plot_gaia_comparison(phot, min_snr=20.0, figsize=(22, 5.5), out=None):
     ax[2].legend(fontsize=8)
     ax[2].set_aspect("equal", adjustable="datalim")
     q = ax[3].quiver(np.asarray(t["x"], float), np.asarray(t["y"], float),
-                     np.asarray(t["gaia_dx"], float), np.asarray(t["gaia_dy"], float),
+                     np.asarray(t["gaiaDx"], float), np.asarray(t["gaiaDy"], float),
                      angles="xy", scale_units="xy", scale=0.01, width=0.003)
     ax[3].quiverkey(q, 0.8, 1.03, 0.1, "0.1 px (x100)", labelpos="E")
     ax[3].set_xlabel("x [px]")
@@ -1130,7 +1130,12 @@ def plot_gaia_comparison(phot, min_snr=20.0, figsize=(22, 5.5), out=None):
     plt.tight_layout()
     if out:
         fig.savefig(out, dpi=110)
-    print(f"Gaia comparison ({len(t)} matched point sources, S/N >= {min_snr:g}): magnitude scatter "
+    print(f"Gaia comparison ({len(t)} matched point sources, S/N >= {minSnr:g}): magnitude scatter "
           f"{rstd(dm):.3f} mag after removing {off:+.3f}; position offset median "
           f"({mx:+.2f}, {my:+.2f}) {unit}, scatter ({rstd(dx):.2f}, {rstd(dy):.2f}) {unit}")
-    return dict(n=len(t), dmag_scatter=rstd(dm), offset=off, dx=mx, dy=my)
+    return dict(n=len(t), dmagScatter=rstd(dm), offset=off, dx=mx, dy=my)
+
+
+# old snake_case names still work (with a FutureWarning)
+from ._compat import moduleGetattr  # noqa: E402
+__getattr__ = moduleGetattr(globals())

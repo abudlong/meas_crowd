@@ -20,11 +20,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-# Whole-detector run at USDF as a Slurm array: N tasks share the tiles, then one stitch job.
-#
-#   VISIT=2025062100433 DETECTOR=144 bash examples/usdf_detector_array.sh
-#
-# Check partition / account for your allocation (`sacctmgr show assoc user=$USER`).
+# Whole detector as a Slurm array at USDF:  VISIT=... DETECTOR=... bash examples/usdf_detector_array.sh
 set -euo pipefail
 VISIT=${VISIT:-2025062100433}
 DETECTOR=${DETECTOR:-144}
@@ -35,6 +31,7 @@ mkdir -p "$OUT/logs"
 
 SETUP="source /sdf/group/rubin/sw/w_latest/loadLSST.bash && setup lsst_distrib && setup -k -r $PKG && export OMP_NUM_THREADS=1"
 
+# partition / account: see sacctmgr show assoc user=$USER
 FIT=$(sbatch --parsable --job-name=crowd_fit --partition=milano --account=rubin:developers \
   --array=0-$((NTASKS - 1)) --cpus-per-task=1 --mem=8G --time=04:00:00 \
   --output="$OUT/logs/fit_%a.log" \

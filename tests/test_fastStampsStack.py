@@ -62,7 +62,7 @@ class StackComparisonTestCase(unittest.TestCase):
         fast = FastPsf(self.psf.computeKernelImage(self.geom.Point2D(0, 0)).array)
         clip = self.geom.Box2I(self.geom.Point2I(-1000, -1000), self.geom.Point2I(1000, 1000))
         for x, y in [(10.1, 20.2), (-33.4, 5.05), (100.49, -7.7)]:
-            dx0, dy0, bb = fitLib.compute_psf_derivatives(self.psf, x, y, clip)
+            dx0, dy0, bb = fitLib.computePsfDerivatives(self.psf, x, y, clip)
             dx1, dy1, b = fast.derivatives(x, y, (bb.getMinX(), bb.getMinY(), bb.getMaxX(), bb.getMaxY()))
             scale = np.abs(dx0).max()
             self.assertLess(np.abs(dx1 - dx0).max() / scale, 5e-3)

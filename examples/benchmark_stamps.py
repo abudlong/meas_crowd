@@ -45,21 +45,21 @@ rng = np.random.default_rng(0)
 xy = rng.uniform(0, 300, (400, 2))
 
 
-def timeit(fn, label, n_calls):
+def timeit(fn, label, nCalls):
     t = time.perf_counter()
     fn()
     dt = time.perf_counter() - t
-    print(f"{label:52s} {1e3 * dt:8.1f} ms  ({1e6 * dt / n_calls:6.0f} us per stamp)")
+    print(f"{label:52s} {1e3 * dt:8.1f} ms  ({1e6 * dt / nCalls:6.0f} us per stamp)")
 
 
 timeit(lambda: [psf.computeImage(geom.Point2D(x, y)) for x, y in xy], "afw psf.computeImage, 400 stamps", 400)
-timeit(lambda: fk.render_stamps(kern, xy[:, 0], xy[:, 1], use_cxx=False), "meas_crowd NumPy, 400 stamps", 400)
+timeit(lambda: fk.renderStamps(kern, xy[:, 0], xy[:, 1], useCxx=False), "meas_crowd NumPy, 400 stamps", 400)
 if fk.HAVE_CXX:
-    timeit(lambda: fk.render_stamps(kern, xy[:, 0], xy[:, 1], use_cxx=True),
+    timeit(lambda: fk.renderStamps(kern, xy[:, 0], xy[:, 1], useCxx=True),
            "meas_crowd C++, 400 stamps", 400)
 timeit(lambda: [[psf.computeImage(geom.Point2D(x + dx, y + dy))
                  for dx, dy in ((.25, 0), (-.25, 0), (0, .25), (0, -.25))] for x, y in xy],
        "afw derivatives (4 computeImage each), 400 sources", 400)
 if fk.HAVE_CXX:
-    timeit(lambda: fk.render_derivatives(kern, xy[:, 0], xy[:, 1], use_cxx=True),
+    timeit(lambda: fk.renderDerivatives(kern, xy[:, 0], xy[:, 1], useCxx=True),
            "meas_crowd C++ derivatives, 400 sources", 400)

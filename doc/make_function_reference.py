@@ -60,16 +60,16 @@ MODULES = [
 ]
 
 START_HERE = [
-    ("session", "make_config"), ("session", "prepare_session"), ("gaiaCatalog", "attach_gaia"),
-    ("pipeline", "run_session_gaia"), ("pipeline", "report"),
-    ("photometry", "measure_photometry"), ("plotting", "plot_final_comparison"),
-    ("plotting", "plot_gaia_comparison"), ("stagePlots", "show_rounds"),
-    ("stagePlots", "show_linked_source_pages"), ("stagePlots", "compare_passes"),
-    ("detector", "fit_tiles"), ("detector", "stitch_tiles"), ("detector", "plot_detector"),
+    ("session", "makeConfig"), ("session", "prepareSession"), ("gaiaCatalog", "attachGaia"),
+    ("pipeline", "runSessionGaia"), ("pipeline", "report"),
+    ("photometry", "measurePhotometry"), ("plotting", "plotFinalComparison"),
+    ("plotting", "plotGaiaComparison"), ("stagePlots", "showRounds"),
+    ("stagePlots", "showLinkedSourcePages"), ("stagePlots", "comparePasses"),
+    ("detector", "fitTiles"), ("detector", "stitchTiles"), ("detector", "plotDetector"),
 ]
 
 
-def _import_package():
+def _importPackage():
     """Import the package, with the test stand-ins when the Rubin stack is missing."""
     sys.path.insert(0, os.path.join(ROOT, "python"))
     try:
@@ -139,7 +139,7 @@ def _signature(name, obj):
     return f"{name}{sig.replace(parameters=params, return_annotation=sig.empty)}"
 
 
-def _doc_block(doc, lines):
+def _docBlock(doc, lines):
     """Append the summary, parameters, returns and raises of a parsed docstring."""
     summary = _para(doc["Summary"])
     if summary:
@@ -172,14 +172,14 @@ def build():
         The Markdown page.
     """
     from numpydoc.docscrape import ClassDoc, FunctionDoc
-    _import_package()
+    _importPackage()
     # the pipeline swaps some fitLib functions for faster ones while it runs; list the originals
-    importlib.import_module("lsst.meas.crowd.pipeline").disable_speedups()
+    importlib.import_module("lsst.meas.crowd.pipeline").disableSpeedups()
     mods = [(name, role, importlib.import_module(f"lsst.meas.crowd.{name}"))
             for name, role in MODULES]
     items = {name: _public(mod) for name, _, mod in mods}
-    n_fun = sum(1 for v in items.values() for _, o in v if inspect.isfunction(o))
-    n_cls = sum(1 for v in items.values() for _, o in v if inspect.isclass(o))
+    nFun = sum(1 for v in items.values() for _, o in v if inspect.isfunction(o))
+    nCls = sum(1 for v in items.values() for _, o in v if inspect.isclass(o))
 
     lines = ["# meas_crowd: function reference", "",
              "Every public function and class of `lsst.meas.crowd`: what it does, its "
@@ -188,7 +188,7 @@ def build():
              "`python doc/make_function_reference.py` after changing a docstring).  How the "
              "pipeline fits together is in [pipeline_guide.md](pipeline_guide.md); the output "
              "catalogue in [catalog_columns.md](catalog_columns.md).", "",
-             f"{n_fun} functions and {n_cls} classes in {len(mods)} modules.  Everything listed "
+             f"{nFun} functions and {nCls} classes in {len(mods)} modules.  Everything listed "
              "here can be used as `crowd.<name>` after `import lsst.meas.crowd as crowd`, or "
              "from its module (`from lsst.meas.crowd import photometry`).  Names starting with "
              "`_` are internal helpers and are not listed.", "",
@@ -218,15 +218,15 @@ def build():
         for n, o in items[name]:
             if inspect.isclass(o):
                 lines += [f"### {name}.{n}", "", f"Class.  `{_signature(n, o)}`", ""]
-                _doc_block(ClassDoc(o, config={"show_class_members": False}), lines)
+                _docBlock(ClassDoc(o, config={"show_class_members": False}), lines)
                 for mn, mo in sorted(((k, v) for k, v in vars(o).items()
                                       if inspect.isfunction(v) and not k.startswith("_")),
                                      key=lambda t: inspect.getsourcelines(t[1])[1]):
                     lines += [f"#### {name}.{n}.{mn}", "", f"`{_signature(mn, mo)}`", ""]
-                    _doc_block(FunctionDoc(mo), lines)
+                    _docBlock(FunctionDoc(mo), lines)
             else:
                 lines += [f"### {name}.{n}", "", f"`{_signature(n, o)}`", ""]
-                _doc_block(FunctionDoc(o), lines)
+                _docBlock(FunctionDoc(o), lines)
     return "\n".join(lines).rstrip() + "\n"
 
 

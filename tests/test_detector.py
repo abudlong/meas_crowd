@@ -48,18 +48,18 @@ plt.show = lambda *a, **k: None
 class TileSpecTestCase(unittest.TestCase):
     def testPartition(self):
         for (w, h, t) in ((4072, 4000, 400), (600, 500, 200), (100, 90, 400), (1001, 999, 250)):
-            specs = det.tile_specs(w, h, t, x0=7, y0=3)
+            specs = det.tileSpecs(w, h, t, x0=7, y0=3)
             cover = np.zeros((h, w), int)
             for x0, y0, tw, th in specs:
                 self.assertLessEqual(tw, t + 1)
                 cover[y0 - 3:y0 - 3 + th, x0 - 7:x0 - 7 + tw] += 1
             self.assertTrue(np.all(cover == 1), (w, h, t))      # every pixel in exactly one tile
-        self.assertEqual(len(det.tile_specs(4072, 4000, 400)), 11 * 10)
+        self.assertEqual(len(det.tileSpecs(4072, 4000, 400)), 11 * 10)
 
     def testRegion(self):
-        specs = det.tile_specs(600, 500, 200, region=(250, 330, 0, 50))
+        specs = det.tileSpecs(600, 500, 200, region=(250, 330, 0, 50))
         self.assertEqual([s[:2] for s in specs], [(200, 0)])
-        self.assertEqual(det.tile_name((200, 0, 200, 167)), "x0200_y0000_200x167")
+        self.assertEqual(det.tileName((200, 0, 200, 167)), "x0200_y0000_200x167")
 
 
 class _Synthetic:
@@ -72,16 +72,16 @@ class _Synthetic:
         self.flux = 10 ** rng.uniform(3.5, 5, n)
         truth = np.zeros(shape)
         for (x, y), f in zip(self.xy, self.flux):
-            truth += lsstStubs.place(shape, lsstStubs.gaussian_comp(shape, x, y, sigma, half), f)
+            truth += lsstStubs.place(shape, lsstStubs.gaussianComp(shape, x, y, sigma, half), f)
         self.truth = truth
         self.var = 100 + truth
         self.data = truth + rng.normal(0, 1, shape) * np.sqrt(self.var)
-        self.psf = lsstStubs.FakePsf(lsstStubs.gaussian_kernel(sigma, half))
+        self.psf = lsstStubs.FakePsf(lsstStubs.gaussianKernel(sigma, half))
         self.calls = []
         bb = geom.Box2I(geom.Point2I(0, 0), geom.Point2I(shape[1] - 1, shape[0] - 1))
-        self.visit_image = types.SimpleNamespace(getBBox=lambda: bb)
+        self.visitImage = types.SimpleNamespace(getBBox=lambda: bb)
 
-    def prepare_session(self, visit, detector, cutouts, pad=0, psf_source=None, visit_image=None):
+    def prepareSession(self, visit, detector, cutouts, pad=0, psfSource=None, visitImage=None):
         jobs = {}
         for c in cutouts:
             ib = geom.Box2I(geom.Point2I(c["x0"], c["y0"]),
@@ -95,7 +95,7 @@ class _Synthetic:
             jobs[c["name"]] = dict(interior=ib, raw=exp)
         return types.SimpleNamespace(jobs=jobs, gaia=None)
 
-    def run_session_gaia(self, sess, cfg, names=None, plot_final=False, **kw):
+    def runSessionGaia(self, sess, cfg, names=None, plotFinal=False, **kw):
         name = names[0]
         self.calls.append(name)
         job = sess.jobs[name]
@@ -106,15 +106,15 @@ class _Synthetic:
         inside = ((self.xy[:, 0] > x0 - 3) & (self.xy[:, 0] < bb.getMaxX() + 3) &
                   (self.xy[:, 1] > y0 - 3) & (self.xy[:, 1] < bb.getMaxY() + 3))
         xy, fl = self.xy[inside], self.flux[inside]
-        comps = [lsstStubs.gaussian_comp(shape, x, y, self.sigma, self.half, x0, y0) for x, y in xy]
+        comps = [lsstStubs.gaussianComp(shape, x, y, self.sigma, self.half, x0, y0) for x, y in xy]
         model = self.truth[y0:y0 + shape[0], x0:x0 + shape[1]].copy()
-        S = pipeline._state(xy, from_gaia=True)
-        fit = dict(amps=fl, model_full=model, good=np.ones(shape, bool), variance=exp.variance.array,
+        S = pipeline._state(xy, fromGaia=True)
+        fit = dict(amps=fl, modelFull=model, good=np.ones(shape, bool), variance=exp.variance.array,
                    comps=comps)
-        res = dict(S=S, snaps=[dict(fit=fit)], model_full=model, amps=fl.copy(), bright_corr={},
+        res = dict(S=S, snaps=[dict(fit=fit)], modelFull=model, amps=fl.copy(), brightCorr={},
                    peaks=[tuple(p) for p in xy])
-        run = types.SimpleNamespace(name=name, outer_history=[dict(exposure=exp, result=res)],
-                                    bad_bitmask=4, interior_bbox=job["interior"], config={})
+        run = types.SimpleNamespace(name=name, outerHistory=[dict(exposure=exp, result=res)],
+                                    badBitmask=4, interiorBbox=job["interior"], config={})
         return {name: run}
 
 
@@ -123,10 +123,10 @@ class FitStitchTestCase(unittest.TestCase):
         self.syn = _Synthetic()
         self.tmp = tempfile.TemporaryDirectory()
         self.out = self.tmp.name
-        self.patches = [mock.patch.object(session, "prepare_session", self.syn.prepare_session),
-                        mock.patch.object(session, "make_config", lambda *a, **k: {}),
-                        mock.patch.object(gaiaCatalog, "attach_gaia", lambda *a, **k: None),
-                        mock.patch.object(pipeline, "run_session_gaia", self.syn.run_session_gaia)]
+        self.patches = [mock.patch.object(session, "prepareSession", self.syn.prepareSession),
+                        mock.patch.object(session, "makeConfig", lambda *a, **k: {}),
+                        mock.patch.object(gaiaCatalog, "attachGaia", lambda *a, **k: None),
+                        mock.patch.object(pipeline, "runSessionGaia", self.syn.runSessionGaia)]
         for p in self.patches:
             p.start()
 
@@ -137,18 +137,18 @@ class FitStitchTestCase(unittest.TestCase):
         plt.close("all")
 
     def _fit(self, **kw):
-        return det.fit_tiles(1, 2, out_dir=self.out, tile=200, pad=20,
-                             visit_image=self.syn.visit_image, **kw)
+        return det.fitTiles(1, 2, outDir=self.out, tile=200, pad=20,
+                            visitImage=self.syn.visitImage, **kw)
 
     def testTasksResumeAndStitch(self):
-        a = self._fit(task_index=0, n_tasks=2)
-        b = self._fit(task_index=1, n_tasks=2)
+        a = self._fit(taskIndex=0, nTasks=2)
+        b = self._fit(taskIndex=1, nTasks=2)
         self.assertEqual(len(a) + len(b), 9)                        # 3 x 3 tiles, split in two
         self.assertEqual(len(set(a) & set(b)), 0)
-        n_calls = len(self.syn.calls)
+        nCalls = len(self.syn.calls)
         self._fit()                                                 # everything done: no refits
-        self.assertEqual(len(self.syn.calls), n_calls)
-        m = det.stitch_tiles(self.out, verbose=False)
+        self.assertEqual(len(self.syn.calls), nCalls)
+        m = det.stitchTiles(self.out, verbose=False)
         np.testing.assert_allclose(m["data"], self.syn.data.astype(np.float32), rtol=1e-6)
         np.testing.assert_allclose(m["model"], self.syn.truth.astype(np.float32), rtol=1e-5, atol=1e-3)
         self.assertTrue(np.all(m["tile"] >= 0))
@@ -160,56 +160,56 @@ class FitStitchTestCase(unittest.TestCase):
         order = np.lexsort((cat["y"], cat["x"]))
         torder = np.lexsort((self.syn.xy[:, 1], self.syn.xy[:, 0]))
         np.testing.assert_allclose(np.asarray(cat["x"])[order], self.syn.xy[torder, 0])
-        np.testing.assert_allclose(np.asarray(cat["psf_flux"])[order], self.syn.flux[torder])
+        np.testing.assert_allclose(np.asarray(cat["psfFlux"])[order], self.syn.flux[torder])
         # files on disk
         self.assertTrue(os.path.exists(os.path.join(self.out, "detector_mosaic.fits")))
-        m2 = det.load_mosaic(self.out)
+        m2 = det.loadMosaic(self.out)
         np.testing.assert_array_equal(m2["tile"], m["tile"])
         self.assertEqual(len(m2["catalog"]), len(cat))
 
     def testRegionAndGaps(self):
         files = self._fit(region=(0, 150, 0, 150))                  # only the corner tile
         self.assertEqual(len(files), 1)
-        m = det.stitch_tiles(self.out, verbose=False)
+        m = det.stitchTiles(self.out, verbose=False)
         self.assertEqual(m["data"].shape, (167, 200))
 
     def testFailingTileDoesNotStopTask(self):
-        good = self.syn.run_session_gaia
+        good = self.syn.runSessionGaia
 
         def flaky(sess, cfg, names=None, **kw):
             if names[0].startswith("x0200_y0167"):
                 raise RuntimeError("boom")
             return good(sess, cfg, names=names, **kw)
 
-        with mock.patch.object(pipeline, "run_session_gaia", flaky):
+        with mock.patch.object(pipeline, "runSessionGaia", flaky):
             files = self._fit()
         self.assertEqual(len(files), 8)
-        m = det.stitch_tiles(self.out, verbose=False)
+        m = det.stitchTiles(self.out, verbose=False)
         self.assertTrue(np.any(m["tile"] < 0))                      # the gap is marked
 
     def testPlot(self):
         self._fit()
-        m = det.stitch_tiles(self.out, verbose=False)
+        m = det.stitchTiles(self.out, verbose=False)
         png = os.path.join(self.out, "view.png")
-        st = det.plot_detector(m, out=png)
+        st = det.plotDetector(m, out=png)
         self.assertTrue(os.path.getsize(png) > 1000)
-        self.assertLess(abs(st["residual_sigma"] - 1), 0.05)
-        st = det.plot_detector(self.out, view=(100, 300, 50, 250), binning=1, sources=True,
-                               grayscale=True)
+        self.assertLess(abs(st["residualSigma"] - 1), 0.05)
+        st = det.plotDetector(self.out, view=(100, 300, 50, 250), binning=1, sources=True,
+                              grayscale=True)
         self.assertEqual(st["binning"], 1)
 
     def testTile(self):
         files = self._fit(region=(0, 150, 0, 150))                  # the corner tile
-        t = det.load_tile(files[0])
+        t = det.loadTile(files[0])
         ix0, iy0, ix1, iy1 = t["interiors"][0]
         self.assertEqual((ix0, iy0), (0, 0))
         self.assertEqual(t["data"].shape[1], ix1 - ix0 + 1 + 20)    # interior + pad on one side
         self.assertEqual(int(np.sum(t["catalog"]["owned"])),
                          int(np.sum((self.syn.xy[:, 0] < ix1 + .5) & (self.syn.xy[:, 1] < iy1 + .5))))
         png = os.path.join(self.out, "tile.png")
-        st = det.plot_tile(files[0], out=png)
+        st = det.plotTile(files[0], out=png)
         self.assertTrue(os.path.getsize(png) > 1000)
-        self.assertLess(abs(st["residual_sigma"] - 1), 0.1)
+        self.assertLess(abs(st["residualSigma"] - 1), 0.1)
 
     def testCli(self):
         import importlib.util

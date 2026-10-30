@@ -51,7 +51,7 @@ void shiftImage(double const *in, std::size_t ny, std::size_t nx, double dx, dou
                 double *out);
 
 /**
- * Tame the wings of a PSF stamp in place, exactly like cutout_fit_lib.psf_stamp(taper=...):
+ * Tame the wings of a PSF stamp in place, exactly like fitLib.psf_stamp(taper=...):
  * subtract the median of the outermost pixel ring, then multiply by a raised-cosine taper that
  * is 1 inside r0 = t0 * h and 0 outside r1 = t1 * h (h = half the stamp size, r measured from
  * (cx, cy) in stamp pixel coordinates).

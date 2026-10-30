@@ -207,14 +207,14 @@ class FakePsf:
 
 
 class FakeExposure:
-    def __init__(self, image, variance, mask=None, psf=None, x0=0, y0=0, photo_scale=None):
+    def __init__(self, image, variance, mask=None, psf=None, x0=0, y0=0, photoScale=None):
         ny, nx = image.shape
         self.image = types.SimpleNamespace(array=image)
         self.variance = types.SimpleNamespace(array=variance)
         self.mask = FakeMask(np.zeros((ny, nx), int) if mask is None else mask)
         self._psf = psf
         self._bbox = Box2I(Point2I(x0, y0), Point2I(x0 + nx - 1, y0 + ny - 1))
-        self._scale = photo_scale
+        self._scale = photoScale
 
     def getBBox(self):
         return self._bbox
@@ -231,14 +231,14 @@ class FakeExposure:
         raise RuntimeError("no WCS in tests")
 
 
-def gaussian_kernel(sigma, half):
+def gaussianKernel(sigma, half):
     u = np.arange(-half, half + 1)
     X, Y = np.meshgrid(u, u)
     k = np.exp(-0.5 * (X ** 2 + Y ** 2) / sigma ** 2)
     return k / k.sum()
 
 
-def gaussian_comp(shape, x, y, sigma, half, x0=0, y0=0):
+def gaussianComp(shape, x, y, sigma, half, x0=0, y0=0):
     """Joint-fit component dict (stamp, ys, xs) of a unit Gaussian at (x, y)."""
     ny, nx = shape
     ix, iy = int(round(x)) - x0, int(round(y)) - y0

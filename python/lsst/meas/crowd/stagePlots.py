@@ -26,16 +26,16 @@ round by round, and per-source pages whose coloured frames match boxes drawn on 
 and residual images.
 """
 
-__all__ = ["psf_star_positions", "show_psf_stars", "show_backgrounds", "show_rounds",
-           "show_linked_source_pages", "compare_passes"]
+__all__ = ["psfStarPositions", "showPsfStars", "showBackgrounds", "showRounds",
+           "showLinkedSourcePages", "comparePasses"]
 
 import numpy as np
 
 from . import fitLib as L
-from .pipeline import _params, select_psf_stars
+from .pipeline import _params, selectPsfStars
 
 
-def _xy_from_catalog(cat, flag=None):
+def _xyFromCatalog(cat, flag=None):
     """Return (N, 2) positions of a source catalogue's rows, optionally only flagged ones."""
     if hasattr(cat, "getX"):                        # a single afw record
         cat = [cat]
@@ -56,18 +56,18 @@ def _xy_from_catalog(cat, flag=None):
     return np.column_stack([x[keep], y[keep]])
 
 
-def psf_star_positions(session=None, catalog=None, run=None, outer=-1):
+def psfStarPositions(session=None, catalog=None, run=None, outer=-1):
     """Return the candidate and used PSF stars of one of the pipeline's PSF determinations.
 
     Exactly one source is used, in this order: a catalogue with ``calib_psf_candidate`` /
     ``calib_psf_used`` flags (the visit PSF's own stars), a session (the detector-level
-    ``psf_source='refit'`` PSF), or a run (the clean stars the residual-stack PSF update after
+    ``psfSource='refit'`` PSF), or a run (the clean stars the residual-stack PSF update after
     pass ``outer`` used).
 
     Parameters
     ----------
     session : `lsst.meas.crowd.session.Session`, optional
-        A session prepared with ``psf_source='refit'``.
+        A session prepared with ``psfSource='refit'``.
     catalog : `lsst.afw.table.SourceCatalog` or `astropy.table.Table`, optional
         A source catalogue with PSF flags, e.g. the visit's ``single_visit_star_unstandardized``.
     run : `lsst.meas.crowd.session.CutoutRun`, optional
@@ -91,21 +91,21 @@ def psf_star_positions(session=None, catalog=None, run=None, outer=-1):
             cols = set(catalog.schema.getNames())
         except AttributeError:                      # astropy Table / pandas DataFrame
             cols = set(getattr(catalog, "colnames", None) or list(getattr(catalog, "columns", [])))
-        cand = _xy_from_catalog(catalog, "calib_psf_candidate" if "calib_psf_candidate" in cols
-                                else None)
-        used = (_xy_from_catalog(catalog, "calib_psf_used") if "calib_psf_used" in cols
+        cand = _xyFromCatalog(catalog, "calib_psf_candidate" if "calib_psf_candidate" in cols
+                              else None)
+        used = (_xyFromCatalog(catalog, "calib_psf_used") if "calib_psf_used" in cols
                 else np.zeros((0, 2)))
         return dict(candidates=cand, used=used, source="catalogue (calib_psf_* flags)")
     if session is not None:
         if session.starCat is None:
-            raise ValueError("this session used the visit PSF (psf_source='visit'): pass the "
+            raise ValueError("this session used the visit PSF (psfSource='visit'): pass the "
                              "visit's source catalogue as `catalog` instead")
-        used = session.psf_used_xy
-        return dict(candidates=_xy_from_catalog(session.starCat),
+        used = session.psfUsedXy
+        return dict(candidates=_xyFromCatalog(session.starCat),
                     used=np.zeros((0, 2)) if used is None else np.asarray(used, float),
                     source="detector-level refit (ObjectSizeStarSelector + PCA PSF)")
     if run is not None:
-        h = run.outer_history[outer]
+        h = run.outerHistory[outer]
         exp, res = h["exposure"], h["result"]
         P = _params(run.config)
         c = exp.getBBox().getCenter()
@@ -114,15 +114,15 @@ def psf_star_positions(session=None, catalog=None, run=None, outer=-1):
         fwhm = L._fwhm(h["psf"], c)
         xy = np.asarray(res["S"]["xy"], float).reshape(-1, 2)
         amps = np.asarray(res["snaps"][-1]["fit"]["amps"], float)
-        cand = xy[amps * kernel.max() / noise >= P["psf_stack_min_snr"]]
-        idx = select_psf_stars(exp, res, fwhm, kernel.max(), noise, P, verbose=False)
-        n = len(run.outer_history)
+        cand = xy[amps * kernel.max() / noise >= P["psfStackMinSnr"]]
+        idx = selectPsfStars(exp, res, fwhm, kernel.max(), noise, P, verbose=False)
+        n = len(run.outerHistory)
         return dict(candidates=cand, used=xy[np.asarray(idx, int)],
                     source=f"residual-stack PSF update after pass {outer % n + 1}")
     raise ValueError("give a catalogue, a session or a run")
 
 
-def _kernel_profile(kernel):
+def _kernelProfile(kernel):
     """Return the azimuthally averaged radial profile of a kernel image (r [px], value)."""
     ny, nx = kernel.shape
     yy, xx = np.mgrid[:ny, :nx]
@@ -132,7 +132,7 @@ def _kernel_profile(kernel):
     return np.arange(len(prof)), prof
 
 
-def show_psf_stars(image, stars=None, psf=None, at=None, view=None, figsize=(19, 6), out=None):
+def showPsfStars(image, stars=None, psf=None, at=None, view=None, figsize=(19, 6), out=None):
     """Plot the PSF stars over an image, the PSF kernel and its radial profile.
 
     Parameters
@@ -140,7 +140,7 @@ def show_psf_stars(image, stars=None, psf=None, at=None, view=None, figsize=(19,
     image : `lsst.afw.image.Exposure`
         The visit image (or a cutout) to draw the stars on.
     stars : `dict`, optional
-        Output of `psf_star_positions`; None = draw no stars.
+        Output of `psfStarPositions`; None = draw no stars.
     psf : `lsst.afw.detection.Psf`, optional
         PSF to show (default: the image's own PSF).
     at : `tuple` [`float`, `float`], optional
@@ -155,7 +155,7 @@ def show_psf_stars(image, stars=None, psf=None, at=None, view=None, figsize=(19,
     Returns
     -------
     info : `dict`
-        ``kernel`` (the rendered kernel image), ``fwhm`` [px], ``n_candidates`` and ``n_used``.
+        ``kernel`` (the rendered kernel image), ``fwhm`` [px], ``nCandidates`` and ``nUsed``.
     """
     import matplotlib.pyplot as plt
     from astropy.visualization import simple_norm
@@ -198,7 +198,7 @@ def show_psf_stars(image, stars=None, psf=None, at=None, view=None, figsize=(19,
                     f"FWHM {fwhm:.2f} px", fontsize=10)
     ax[1].set_xlabel("dx [px]")
 
-    r, prof = _kernel_profile(kernel)
+    r, prof = _kernelProfile(kernel)
     ok = prof > 0
     ax[2].semilogy(r[ok], prof[ok] / prof.max(), "k.-")
     ax[2].axvline(fwhm / 2, color="C1", ls="--", label=f"HWHM {fwhm / 2:.2f} px")
@@ -209,10 +209,10 @@ def show_psf_stars(image, stars=None, psf=None, at=None, view=None, figsize=(19,
     plt.tight_layout()
     if out:
         fig.savefig(out, dpi=110)
-    return dict(kernel=kernel, fwhm=fwhm, n_candidates=len(cand), n_used=len(used))
+    return dict(kernel=kernel, fwhm=fwhm, nCandidates=len(cand), nUsed=len(used))
 
 
-def _image_array(img, bbox):
+def _imageArray(img, bbox):
     """Return an afw image's pixels over ``bbox`` (it may cover a larger area)."""
     arr = getattr(img, "array", None)
     if arr is not None and arr.shape == (bbox.getHeight(), bbox.getWidth()):
@@ -220,10 +220,10 @@ def _image_array(img, bbox):
     return np.asarray(img[bbox].array, float)
 
 
-def show_backgrounds(run, initial=None, figsize_per_panel=4.2, out=None):
+def showBackgrounds(run, initial=None, figsizePerPanel=4.2, out=None):
     """Plot the background entering every outer pass, and the change from pass to pass.
 
-    Pass 1 uses ``initial`` (the detector-level background of ``psf_source='refit'``; a visit
+    Pass 1 uses ``initial`` (the detector-level background of ``psfSource='refit'``; a visit
     image is already background-subtracted, so there is none).  Before each later pass the
     background is refitted on the raw cutout with the previous pass's sources masked.
 
@@ -233,7 +233,7 @@ def show_backgrounds(run, initial=None, figsize_per_panel=4.2, out=None):
         A finished run.
     initial : `lsst.afw.image.Image`, optional
         The background subtracted before pass 1 (``session.bgImage``).
-    figsize_per_panel : `float`, optional
+    figsizePerPanel : `float`, optional
         Size of each panel [inches].
     out : `str`, optional
         Also save the figure to this file.
@@ -244,13 +244,13 @@ def show_backgrounds(run, initial=None, figsize_per_panel=4.2, out=None):
         Background entering each pass (None = nothing was subtracted).
     """
     import matplotlib.pyplot as plt
-    hist = run.outer_history
+    hist = run.outerHistory
     bb = hist[0]["exposure"].getBBox()
     ext = (bb.getMinX() - .5, bb.getMaxX() + .5, bb.getMinY() - .5, bb.getMaxY() + .5)
-    bgs = [None if initial is None else _image_array(initial, bb)]
-    bgs += [None if h.get("bg_image") is None else _image_array(h["bg_image"], bb) for h in hist[1:]]
+    bgs = [None if initial is None else _imageArray(initial, bb)]
+    bgs += [None if h.get("bgImage") is None else _imageArray(h["bgImage"], bb) for h in hist[1:]]
     n = len(bgs)
-    fig, ax = plt.subplots(2, n, figsize=(figsize_per_panel * n, 2 * figsize_per_panel), squeeze=False)
+    fig, ax = plt.subplots(2, n, figsize=(figsizePerPanel * n, 2 * figsizePerPanel), squeeze=False)
     have = [b for b in bgs if b is not None]
     lo, hi = ((np.nanpercentile(np.concatenate([b.ravel() for b in have]), [0.5, 99.5]))
               if have else (0, 1))
@@ -287,20 +287,20 @@ def show_backgrounds(run, initial=None, figsize_per_panel=4.2, out=None):
     return bgs
 
 
-def _mad_std(v):
+def _madStd(v):
     """Return the robust (MAD-based) standard deviation."""
     return 1.4826 * float(np.nanmedian(np.abs(v - np.nanmedian(v)))) if v.size else np.nan
 
 
-def _pick(n, max_rows):
-    """Return up to ``max_rows`` indices out of ``n``, evenly spaced, first and last included."""
-    if n <= max_rows:
+def _pick(n, maxRows):
+    """Return up to ``maxRows`` indices out of ``n``, evenly spaced, first and last included."""
+    if n <= maxRows:
         return list(range(n))
-    return sorted({int(round(v)) for v in np.linspace(0, n - 1, max_rows)})
+    return sorted({int(round(v)) for v in np.linspace(0, n - 1, maxRows)})
 
 
-def show_rounds(run, level="outer", outer=-1, rounds=None, max_rows=8, view=None, z_clip=5.0,
-                figsize_per_panel=3.6, out=None):
+def showRounds(run, level="outer", outer=-1, rounds=None, maxRows=8, view=None, zClip=5.0,
+               figsizePerPanel=3.6, out=None):
     """Plot data | model | residual | residual/sigma for each round of the fit.
 
     ``level='outer'``: one row per outer pass (each with its own background and PSF).
@@ -317,14 +317,14 @@ def show_rounds(run, level="outer", outer=-1, rounds=None, max_rows=8, view=None
     outer : `int`, optional
         Outer pass whose inner iterations are shown (``level='inner'``).
     rounds : `list` [`int`], optional
-        Rounds to show (default: up to ``max_rows``, evenly spaced, the last included).
-    max_rows : `int`, optional
+        Rounds to show (default: up to ``maxRows``, evenly spaced, the last included).
+    maxRows : `int`, optional
         Maximum number of rows when ``rounds`` is not given.
     view : `tuple` [`float`, `float`, `float`, `float`], optional
         (xmin, xmax, ymin, ymax) zoom in detector pixels.
-    z_clip : `float`, optional
+    zClip : `float`, optional
         Colour range of residual/sigma.
-    figsize_per_panel : `float`, optional
+    figsizePerPanel : `float`, optional
         Size of each panel [inches].
     out : `str`, optional
         Also save the figure to this file.
@@ -332,8 +332,8 @@ def show_rounds(run, level="outer", outer=-1, rounds=None, max_rows=8, view=None
     Returns
     -------
     rows : `list` [`dict`]
-        Per row ``label``, ``n_sources``, ``resid_std`` (robust std of the residual) and
-        ``chi_std`` (robust std of residual/sigma) over the good pixels in view.
+        Per row ``label``, ``nSources``, ``residStd`` (robust std of the residual) and
+        ``chiStd`` (robust std of residual/sigma) over the good pixels in view.
 
     Raises
     ------
@@ -341,27 +341,27 @@ def show_rounds(run, level="outer", outer=-1, rounds=None, max_rows=8, view=None
         Raised if ``level`` is not 'outer' or 'inner'.
     """
     import matplotlib.pyplot as plt
-    hist = run.outer_history
+    hist = run.outerHistory
     items = []
     if level == "outer":
         for k, h in enumerate(hist):
             res = h["result"]
             data = np.asarray(h["exposure"].image.array, float)
-            items.append((f"outer pass {k + 1}", h["exposure"], data, np.asarray(res["model_full"]),
+            items.append((f"outer pass {k + 1}", h["exposure"], data, np.asarray(res["modelFull"]),
                           len(res["S"]["xy"])))
     elif level == "inner":
         h = hist[outer]
         exp = h["exposure"]
         data = np.asarray(exp.image.array, float)
         for s in h["result"]["snaps"]:
-            model = (data - s["residual"]) if "residual" in s else np.asarray(s["fit"]["model_full"])
+            model = (data - s["residual"]) if "residual" in s else np.asarray(s["fit"]["modelFull"])
             thr = s.get("threshold")
             lab = (f"pass {outer % len(hist) + 1}, it {s.get('it', 0) + 1}"
                    + (f" ({thr:.2f}σ)" if thr is not None else ""))
-            items.append((lab, exp, data, model, len(s.get("merged_arr", s["fit"]["amps"]))))
+            items.append((lab, exp, data, model, len(s.get("mergedArr", s["fit"]["amps"]))))
     else:
         raise ValueError("level must be 'outer' or 'inner'")
-    sel = rounds if rounds is not None else _pick(len(items), max_rows)
+    sel = rounds if rounds is not None else _pick(len(items), maxRows)
     items = [items[i] for i in sel]
 
     bb = items[0][1].getBBox()
@@ -373,13 +373,13 @@ def show_rounds(run, level="outer", outer=-1, rounds=None, max_rows=8, view=None
         ya, yb = max(int(view[2]) - y0, 0), min(int(view[3]) - y0 + 1, ny)
     sl = (slice(ya, yb), slice(xa, xb))
     ext = (x0 + xa - .5, x0 + xb - .5, y0 + ya - .5, y0 + yb - .5)
-    bad = ((items[0][1].mask.array & run.bad_bitmask) != 0)[sl]
+    bad = ((items[0][1].mask.array & run.badBitmask) != 0)[sl]
     var = np.asarray(items[0][1].variance.array, float)[sl]
-    norm = L._data_norm(np.where(bad, np.nan, items[-1][2][sl]))
-    last_r = (items[-1][2] - items[-1][3])[sl]
-    rlim = np.nanpercentile(np.abs(last_r[~bad]), 99) if (~bad).any() else 1.0
+    norm = L._dataNorm(np.where(bad, np.nan, items[-1][2][sl]))
+    lastR = (items[-1][2] - items[-1][3])[sl]
+    rlim = np.nanpercentile(np.abs(lastR[~bad]), 99) if (~bad).any() else 1.0
 
-    fig, ax = plt.subplots(len(items), 4, figsize=(4 * figsize_per_panel, figsize_per_panel * len(items)),
+    fig, ax = plt.subplots(len(items), 4, figsize=(4 * figsizePerPanel, figsizePerPanel * len(items)),
                            squeeze=False)
     rows = []
     for r, (lab, exp, data, model, n) in enumerate(items):
@@ -387,13 +387,13 @@ def show_rounds(run, level="outer", outer=-1, rounds=None, max_rows=8, view=None
         resid = d - m
         chi = resid / np.sqrt(np.maximum(var, 1e-12))
         good = ~bad & np.isfinite(resid)
-        st, cs = _mad_std(resid[good]), _mad_std(chi[good])
-        rows.append(dict(label=lab, n_sources=n, resid_std=float(st), chi_std=float(cs)))
+        st, cs = _madStd(resid[good]), _madStd(chi[good])
+        rows.append(dict(label=lab, nSources=n, residStd=float(st), chiStd=float(cs)))
         for c, (img, kw, t) in enumerate((
                 (d, dict(norm=norm, cmap=L.CMAP), "data"),
                 (m, dict(norm=norm, cmap=L.CMAP), f"model ({n} sources)"),
                 (resid, dict(vmin=-rlim, vmax=rlim, cmap="RdBu_r"), f"residual (std {st:.3g})"),
-                (chi, dict(vmin=-z_clip, vmax=z_clip, cmap="RdBu_r"), f"residual/σ (std {cs:.2f})"))):
+                (chi, dict(vmin=-zClip, vmax=zClip, cmap="RdBu_r"), f"residual/σ (std {cs:.2f})"))):
             a = ax[r, c]
             im = a.imshow(np.where(bad, np.nan, img), origin="lower", extent=ext,
                           interpolation="nearest", **kw)
@@ -405,8 +405,8 @@ def show_rounds(run, level="outer", outer=-1, rounds=None, max_rows=8, view=None
     if out:
         fig.savefig(out, dpi=100)
     for row in rows:
-        print(f"{row['label']:>26s}: {row['n_sources']:5d} sources, residual std "
-              f"{row['resid_std']:.4g}, residual/σ std {row['chi_std']:.3f}")
+        print(f"{row['label']:>26s}: {row['nSources']:5d} sources, residual std "
+              f"{row['residStd']:.4g}, residual/σ std {row['chiStd']:.3f}")
     return rows
 
 
@@ -416,18 +416,18 @@ def _nearest(xy, positions):
     return [int(np.argmin(np.hypot(xy[:, 0] - x, xy[:, 1] - y))) for x, y in positions]
 
 
-def _pass_sources(h):
+def _passSources(h):
     """Return positions, fluxes, peak S/N and Gaia flags of one outer pass's sources."""
     res, exp = h["result"], h["exposure"]
     xy = np.asarray(res["S"]["xy"], float).reshape(-1, 2)
     amps = np.asarray(res["snaps"][-1]["fit"]["amps"], float)
     peak = float(h["psf"].computeKernelImage(exp.getBBox().getCenter()).array.max())
     noise = float(np.sqrt(np.nanmedian(exp.variance.array)))
-    from_gaia = np.asarray(res["S"].get("from_gaia", np.zeros(len(xy), bool)), bool)
-    return xy, amps, amps * peak / noise, from_gaia
+    fromGaia = np.asarray(res["S"].get("fromGaia", np.zeros(len(xy), bool)), bool)
+    return xy, amps, amps * peak / noise, fromGaia
 
 
-def _matched_flux(resid, var, good, kernel, x, y, x0, y0):
+def _matchedFlux(resid, var, good, kernel, x, y, x0, y0):
     """Return the PSF-weighted flux and its S/N of the residual at a position."""
     k = kernel / kernel.sum()
     hy, hx = k.shape[0] // 2, k.shape[1] // 2
@@ -445,10 +445,10 @@ def _matched_flux(resid, var, good, kernel, x, y, x0, y0):
     return f, f * np.sqrt(den)
 
 
-def compare_passes(run, a=-2, b=-1, match_px=1.0, n_show=8, half=12, plot=True, out=None):
+def comparePasses(run, a=-2, b=-1, matchPx=1.0, nShow=8, half=12, plot=True, out=None):
     """Find the sources that one outer pass lost or gained relative to another, and why.
 
-    Sources are matched by position (within ``match_px``).  For every source of pass ``a``
+    Sources are matched by position (within ``matchPx``).  For every source of pass ``a``
     without a match in pass ``b`` the residual of pass ``b`` is measured at its position with a
     PSF-weighted (matched-filter) flux: if most of its flux is still there, a real source was
     lost; if a neighbour within 1.5 FWHM gained that flux, it was merged; if a halo or ring check
@@ -460,9 +460,9 @@ def compare_passes(run, a=-2, b=-1, match_px=1.0, n_show=8, half=12, plot=True, 
         A finished run with at least two outer passes.
     a, b : `int`, optional
         The two outer passes to compare (default: the last two).
-    match_px : `float`, optional
+    matchPx : `float`, optional
         Matching radius [px].
-    n_show : `int`, optional
+    nShow : `int`, optional
         Number of lost sources drawn (brightest first).
     half : `int`, optional
         Half-size of each zoom [px].
@@ -475,9 +475,9 @@ def compare_passes(run, a=-2, b=-1, match_px=1.0, n_show=8, half=12, plot=True, 
     -------
     table : `astropy.table.Table`
         One row per lost or gained source: ``kind`` ('lost' / 'gained'), ``x``, ``y``, ``flux``,
-        ``snr`` (peak S/N in the pass it exists in), ``gaia``, ``flux_left`` and ``left_snr``
-        (matched-filter flux and S/N in the residual of the pass without it), ``left_frac``,
-        ``nearest_px`` (distance to the nearest source of the other pass), ``nearest_dflux``
+        ``snr`` (peak S/N in the pass it exists in), ``gaia``, ``fluxLeft`` and ``leftSnr``
+        (matched-filter flux and S/N in the residual of the pass without it), ``leftFrac``,
+        ``nearestPx`` (distance to the nearest source of the other pass), ``nearestDflux``
         (that source's flux change) and ``verdict``.
 
     Raises
@@ -487,55 +487,55 @@ def compare_passes(run, a=-2, b=-1, match_px=1.0, n_show=8, half=12, plot=True, 
     """
     from astropy.table import Table
     from scipy.spatial import cKDTree
-    hist = run.outer_history
+    hist = run.outerHistory
     if len(hist) < 2:
         raise ValueError("the run has only one outer pass")
     ia, ib = a % len(hist), b % len(hist)
     ha, hb = hist[ia], hist[ib]
-    xa_, fa, sa, ga = _pass_sources(ha)
-    xb_, fb, sb, gb = _pass_sources(hb)
+    xa_, fa, sa, ga = _passSources(ha)
+    xb_, fb, sb, gb = _passSources(hb)
     c = hb["exposure"].getBBox().getCenter()
     fwhm = L._fwhm(hb["psf"], c)
     da, _ = cKDTree(xb_).query(xa_) if len(xb_) else (np.full(len(xa_), np.inf), None)
     db, _ = cKDTree(xa_).query(xb_) if len(xa_) else (np.full(len(xb_), np.inf), None)
-    rej_a = np.asarray(ha.get("rejects", np.zeros((0, 2))), float).reshape(-1, 2)
-    rej_b = np.asarray(hb.get("rejects", np.zeros((0, 2))), float).reshape(-1, 2)
-    new_rej = rej_b[len(rej_a):] if len(rej_b) >= len(rej_a) else rej_b
+    rejA = np.asarray(ha.get("rejects", np.zeros((0, 2))), float).reshape(-1, 2)
+    rejB = np.asarray(hb.get("rejects", np.zeros((0, 2))), float).reshape(-1, 2)
+    newRej = rejB[len(rejA):] if len(rejB) >= len(rejA) else rejB
 
     rows = []
-    for kind, src, other, flux, snr, gaia, dist, h_other in (
+    for kind, src, other, flux, snr, gaia, dist, hOther in (
             ("lost", xa_, (xb_, fb, xa_, fa), fa, sa, ga, da, hb),
             ("gained", xb_, (xa_, fa, xb_, fb), fb, sb, gb, db, ha)):
-        exp = h_other["exposure"]
+        exp = hOther["exposure"]
         bb = exp.getBBox()
-        resid = np.asarray(exp.image.array, float) - np.asarray(h_other["result"]["model_full"], float)
+        resid = np.asarray(exp.image.array, float) - np.asarray(hOther["result"]["modelFull"], float)
         var = np.asarray(exp.variance.array, float)
-        good = ((exp.mask.array & run.bad_bitmask) == 0) & np.isfinite(resid)
-        kern = np.asarray(h_other["psf"].computeKernelImage(bb.getCenter()).array, float)
+        good = ((exp.mask.array & run.badBitmask) == 0) & np.isfinite(resid)
+        kern = np.asarray(hOther["psf"].computeKernelImage(bb.getCenter()).array, float)
         oxy, oflux, sxy, sflux = other
         tree = cKDTree(oxy) if len(oxy) else None
         stree = cKDTree(sxy) if len(sxy) else None
-        for j in np.flatnonzero(dist > match_px):
+        for j in np.flatnonzero(dist > matchPx):
             x, y = src[j]
-            fl, fs = _matched_flux(resid, var, good, kern, x, y, bb.getMinX(), bb.getMinY())
+            fl, fs = _matchedFlux(resid, var, good, kern, x, y, bb.getMinX(), bb.getMinY())
             near, dfl = np.inf, np.nan
             if tree is not None:
                 near, k = tree.query((x, y))
                 # flux change of that neighbour between the passes
                 if stree is not None:
                     d2, k2 = stree.query(oxy[k])
-                    if d2 <= match_px:            # always pass b minus pass a
+                    if d2 <= matchPx:            # always pass b minus pass a
                         dfl = (oflux[k] - sflux[k2]) * (1 if kind == "lost" else -1)
             frac = fl / flux[j] if flux[j] > 0 else np.nan
             if kind == "lost":
-                blocked = len(new_rej) and np.min(np.hypot(*(new_rej - (x, y)).T)) <= match_px
+                blocked = len(newRej) and np.min(np.hypot(*(newRej - (x, y)).T)) <= matchPx
                 if blocked:
                     verdict = "removed by halo/ring check; blocked from re-detection"
                 elif np.isfinite(fs) and fs >= 5 and frac > 0.5:
                     verdict = "LOST: its flux is still in the residual"
                 elif near <= 1.5 * fwhm and np.isfinite(dfl) and dfl >= 0.5 * flux[j]:
                     verdict = "merged into a neighbour"
-                elif near <= match_px * 3:
+                elif near <= matchPx * 3:
                     verdict = "moved"
                 else:
                     verdict = "flux not needed (likely spurious)"
@@ -544,31 +544,31 @@ def compare_passes(run, a=-2, b=-1, match_px=1.0, n_show=8, half=12, plot=True, 
                            else "new: faint / split off")
             rows.append((kind, x, y, flux[j], snr[j], bool(gaia[j]), fl, fs, frac, near, dfl,
                          verdict))
-    t = Table(rows=rows, names=("kind", "x", "y", "flux", "snr", "gaia", "flux_left", "left_snr",
-                                "left_frac", "nearest_px", "nearest_dflux", "verdict"),
+    t = Table(rows=rows, names=("kind", "x", "y", "flux", "snr", "gaia", "fluxLeft", "leftSnr",
+                                "leftFrac", "nearestPx", "nearestDflux", "verdict"),
               dtype=(str, float, float, float, float, bool, float, float, float, float, float, str))
     t.sort(["kind", "flux"], reverse=True)
     lost, gained = t[t["kind"] == "lost"], t[t["kind"] == "gained"]
     print(f"pass {ia + 1} -> pass {ib + 1}: {len(xa_)} -> {len(xb_)} sources; {len(lost)} lost, "
-          f"{len(gained)} gained (match radius {match_px} px)")
+          f"{len(gained)} gained (match radius {matchPx} px)")
     for v in sorted(set(lost["verdict"])):
         print(f"  lost, {v}: {int(np.sum(lost['verdict'] == v))}")
     for r in lost:
         print(f"    ({r['x']:7.1f}, {r['y']:7.1f})  flux {r['flux']:9.1f}  S/N {r['snr']:6.1f}  "
-              f"{'Gaia' if r['gaia'] else '    '}  left {100 * r['left_frac']:5.0f}% "
-              f"(S/N {r['left_snr']:5.1f})  nearest {r['nearest_px']:4.1f} px  -> {r['verdict']}")
+              f"{'Gaia' if r['gaia'] else '    '}  left {100 * r['leftFrac']:5.0f}% "
+              f"(S/N {r['leftSnr']:5.1f})  nearest {r['nearestPx']:4.1f} px  -> {r['verdict']}")
 
     if plot and len(t):
         import matplotlib.pyplot as plt
         expb = hb["exposure"]
         bb = expb.getBBox()
         ext = (bb.getMinX() - .5, bb.getMaxX() + .5, bb.getMinY() - .5, bb.getMaxY() + .5)
-        bad = (expb.mask.array & run.bad_bitmask) != 0
-        rb = np.asarray(expb.image.array, float) - np.asarray(hb["result"]["model_full"], float)
+        bad = (expb.mask.array & run.badBitmask) != 0
+        rb = np.asarray(expb.image.array, float) - np.asarray(hb["result"]["modelFull"], float)
         ra = (np.asarray(ha["exposure"].image.array, float)
-              - np.asarray(ha["result"]["model_full"], float))
+              - np.asarray(ha["result"]["modelFull"], float))
         rl = np.nanpercentile(np.abs(rb[~bad]), 99) if (~bad).any() else 1.0
-        show = lost[:n_show]
+        show = lost[:nShow]
         nrow = 1 + len(show)
         fig = plt.figure(figsize=(15, 4.6 * nrow))
         gs = fig.add_gridspec(nrow, 3)
@@ -581,7 +581,7 @@ def compare_passes(run, a=-2, b=-1, match_px=1.0, n_show=8, half=12, plot=True, 
         ax.legend(loc="upper right")
         ax.set_title(f"residual of pass {ib + 1}; sources lost / gained since pass {ia + 1}")
         ax.set_aspect("equal")
-        norm = L._data_norm(np.where(bad, np.nan, np.asarray(ha["exposure"].image.array, float)))
+        norm = L._dataNorm(np.where(bad, np.nan, np.asarray(ha["exposure"].image.array, float)))
         for r, row in enumerate(show, 1):
             x, y = row["x"], row["y"]
             win = (x - half, x + half, y - half, y + half)
@@ -590,7 +590,7 @@ def compare_passes(run, a=-2, b=-1, match_px=1.0, n_show=8, half=12, plot=True, 
                      f"pass {ia + 1} data: flux {row['flux']:.0f}, S/N {row['snr']:.0f}"),
                     (ra, dict(cmap="RdBu_r", vmin=-rl, vmax=rl), f"pass {ia + 1} residual (with it)"),
                     (rb, dict(cmap="RdBu_r", vmin=-rl, vmax=rl),
-                     f"pass {ib + 1} residual: {100 * row['left_frac']:.0f}% left"))):
+                     f"pass {ib + 1} residual: {100 * row['leftFrac']:.0f}% left"))):
                 a_ = fig.add_subplot(gs[r, cc])
                 a_.imshow(np.where(bad, np.nan, img), origin="lower", extent=ext,
                           interpolation="nearest", **kw)
@@ -609,23 +609,23 @@ def compare_passes(run, a=-2, b=-1, match_px=1.0, n_show=8, half=12, plot=True, 
 class _PngPages:
     """Stand-in for `PdfPages` that writes every page to its own PNG file at once."""
 
-    def __init__(self, out_dir, prefix):
+    def __init__(self, outDir, prefix):
         import os
-        os.makedirs(out_dir, exist_ok=True)
-        self.out_dir, self.prefix, self.n, self.paths = out_dir, prefix, 0, []
+        os.makedirs(outDir, exist_ok=True)
+        self.outDir, self.prefix, self.n, self.paths = outDir, prefix, 0, []
 
     def savefig(self, fig, dpi=80, **kw):
         """Save one page and remember its file name."""
         import os
         self.n += 1
-        path = os.path.join(self.out_dir, f"{self.prefix}_{self.n:03d}.png")
+        path = os.path.join(self.outDir, f"{self.prefix}_{self.n:03d}.png")
         fig.savefig(path, dpi=dpi, **kw)
         self.paths.append(path)
 
 
-def show_linked_source_pages(run, outer=-1, snap=-1, sources=None, source_view="all",
-                             sources_per_page=6, max_pages=1, view_half=20, show_pages=True,
-                             out_dir=None, pdf=None, dpi=80, figsize=(21, 7.5), out=None):
+def showLinkedSourcePages(run, outer=-1, snap=-1, sources=None, sourceView="all",
+                          sourcesPerPage=6, maxPages=1, viewHalf=20, showPages=True,
+                          outDir=None, pdf=None, dpi=80, figsize=(21, 7.5), out=None):
     """Plot per-source pages whose coloured frames match boxes on the data, model and residual.
 
     For each page: an overview (data | model | residual of the whole cutout) with one coloured
@@ -633,7 +633,7 @@ def show_linked_source_pages(run, outer=-1, snap=-1, sources=None, source_view="
     per source with data | model | residual | x cross-section | y cross-section, framed in the
     same colour.
 
-    For many pages use ``out_dir``: every figure is written to its own PNG file and closed at
+    For many pages use ``outDir``: every figure is written to its own PNG file and closed at
     once, so memory stays flat.  A `PdfPages` (``pdf``) keeps every image in memory until it is
     closed (matplotlib), which can exhaust a notebook's memory for hundreds of sources.
 
@@ -645,21 +645,21 @@ def show_linked_source_pages(run, outer=-1, snap=-1, sources=None, source_view="
         Outer pass.
     snap : `int`, optional
         Inner-iteration snapshot of that pass; only the last one keeps the per-source stamps
-        unless the run used ``keep_all_fits=True``.
+        unless the run used ``keepAllFits=True``.
     sources : `list`, optional
         Source indices, or (x, y) detector positions (the nearest source is used); None =
-        choose with ``source_view``.
-    source_view : `str`, optional
-        'all' (brightest first), 'new' or 'changed' (see `fitLib.select_source_pages`).
-    sources_per_page : `int`, optional
+        choose with ``sourceView``.
+    sourceView : `str`, optional
+        'all' (brightest first), 'new' or 'changed' (see `fitLib.selectSourcePages`).
+    sourcesPerPage : `int`, optional
         Rows per page.
-    max_pages : `int`, optional
+    maxPages : `int`, optional
         Maximum number of pages (None = all).
-    view_half : `int`, optional
+    viewHalf : `int`, optional
         Half-size of each source window [px] (the size of the boxes).
-    show_pages : `bool`, optional
+    showPages : `bool`, optional
         Draw the pages (False = only the overviews).
-    out_dir : `str`, optional
+    outDir : `str`, optional
         Write ``overview_NNN.png`` and ``page_NNN.png`` here instead of showing them.
     pdf : `matplotlib.backends.backend_pdf.PdfPages`, optional
         Open PDF; the overviews and pages are saved into it instead of being shown.
@@ -674,7 +674,7 @@ def show_linked_source_pages(run, outer=-1, snap=-1, sources=None, source_view="
     -------
     linked : `dict`
         ``pages`` (source indices per page), ``colors`` (colour per source index) and ``files``
-        (the PNG files written with ``out_dir``).
+        (the PNG files written with ``outDir``).
 
     Raises
     ------
@@ -683,44 +683,44 @@ def show_linked_source_pages(run, outer=-1, snap=-1, sources=None, source_view="
     """
     import matplotlib.pyplot as plt
     import matplotlib.patches as patches
-    hist = run.outer_history
+    hist = run.outerHistory
     h = hist[outer]
     exp = h["exposure"]
     sn = h["result"]["snaps"][snap]
     fit = sn["fit"]
     if "comps" not in fit:
         raise ValueError("this snapshot has no per-source stamps any more: use snap=-1 or rerun "
-                         "with keep_all_fits=True")
-    xy = np.asarray(sn.get("merged_arr", h["result"]["S"]["xy"]), float)
-    sn = dict(sn, merged_arr=xy)
-    sn.setdefault("prev_amp", np.full(len(xy), np.nan))
-    sn.setdefault("is_new", np.zeros(len(xy), bool))
-    sn.setdefault("bad_mask", (exp.mask.array & run.bad_bitmask) != 0)
+                         "with keepAllFits=True")
+    xy = np.asarray(sn.get("mergedArr", h["result"]["S"]["xy"]), float)
+    sn = dict(sn, mergedArr=xy)
+    sn.setdefault("prevAmp", np.full(len(xy), np.nan))
+    sn.setdefault("isNew", np.zeros(len(xy), bool))
+    sn.setdefault("badMask", (exp.mask.array & run.badBitmask) != 0)
     sn.setdefault("it", len(h["result"]["snaps"]) - 1 if snap == -1 else snap)
     if sources is not None:
         idx = [int(s) if np.ndim(s) == 0 else _nearest(xy, [s])[0] for s in sources]
-        pages = [idx[i:i + sources_per_page] for i in range(0, len(idx), sources_per_page)]
-        pages = pages[:max_pages] if max_pages is not None else pages
+        pages = [idx[i:i + sourcesPerPage] for i in range(0, len(idx), sourcesPerPage)]
+        pages = pages[:maxPages] if maxPages is not None else pages
     else:
-        pages = L.select_source_pages(sn, source_view, sources_per_page, max_pages)
-    colors = L.source_colors(pages)
+        pages = L.selectSourcePages(sn, sourceView, sourcesPerPage, maxPages)
+    colors = L.sourceColors(pages)
 
     bb = exp.getBBox()
     data = np.asarray(exp.image.array, float)
-    model = np.asarray(fit["model_full"], float)
-    bad = sn["bad_mask"]
+    model = np.asarray(fit["modelFull"], float)
+    bad = sn["badMask"]
     ext = (bb.getMinX() - .5, bb.getMaxX() + .5, bb.getMinY() - .5, bb.getMaxY() + .5)
-    norm = L._data_norm(np.where(bad, np.nan, data))
+    norm = L._dataNorm(np.where(bad, np.nan, data))
     resid = data - model
     rlim = np.nanpercentile(np.abs(resid[~bad]), 99) if (~bad).any() else 1.0
-    radius = L._circle_radius(exp)
+    radius = L._circleRadius(exp)
     panels = ((data, dict(norm=norm, cmap=L.CMAP), "data"),
               (model, dict(norm=norm, cmap=L.CMAP), f"model ({len(xy)} sources)"),
               (resid, dict(vmin=-rlim, vmax=rlim, cmap="RdBu_r"), "residual"))
-    png = _PngPages(out_dir, "page") if out_dir else None
-    ovw = _PngPages(out_dir, "overview") if out_dir else None
+    png = _PngPages(outDir, "page") if outDir else None
+    ovw = _PngPages(outDir, "overview") if outDir else None
     sink = png or pdf
-    n_pass = outer % len(hist) + 1
+    nPass = outer % len(hist) + 1
     for p, page in enumerate(pages):
         fig, ax = plt.subplots(1, 3, figsize=figsize)
         for a, (img, kw, t) in zip(ax, panels):
@@ -729,12 +729,12 @@ def show_linked_source_pages(run, outer=-1, snap=-1, sources=None, source_view="
             plt.colorbar(im, ax=a, fraction=0.046)
             for j in page:
                 px, py = xy[j]
-                ix, iy, xa, xb, ya, yb = L._view_window(bb, px, py, view_half)
+                ix, iy, xa, xb, ya, yb = L._viewWindow(bb, px, py, viewHalf)
                 a.add_patch(patches.Rectangle((bb.getMinX() + xa - .5, bb.getMinY() + ya - .5),
                                               xb - xa, yb - ya, fill=False, ec=colors[j], lw=2,
                                               path_effects=L._OUTLINE))
-                L._mark_source(a, px, py, colors[j], radius, label=j)
-            a.set_title(f"pass {n_pass}, page {p + 1}/{len(pages)}: {t}; boxes = rows on the page",
+                L._markSource(a, px, py, colors[j], radius, label=j)
+            a.set_title(f"pass {nPass}, page {p + 1}/{len(pages)}: {t}; boxes = rows on the page",
                         fontsize=10)
         plt.tight_layout()
         if out and p == 0:
@@ -744,10 +744,15 @@ def show_linked_source_pages(run, outer=-1, snap=-1, sources=None, source_view="
             plt.close(fig)
         else:
             plt.show()
-        if show_pages:
-            L.plot_source_pages(exp, sn, n_pass - 1, pages=[page], colors=colors,
-                                view_half=view_half, pdf=sink, show=sink is None, dpi=dpi)
+        if showPages:
+            L.plotSourcePages(exp, sn, nPass - 1, pages=[page], colors=colors,
+                              viewHalf=viewHalf, pdf=sink, show=sink is None, dpi=dpi)
     files = sorted((png.paths if png else []) + (ovw.paths if ovw else []))
-    if out_dir:
-        print(f"{len(files)} files in {out_dir}/ ({len(pages)} page(s))")
+    if outDir:
+        print(f"{len(files)} files in {outDir}/ ({len(pages)} page(s))")
     return dict(pages=pages, colors=colors, files=files)
+
+
+# old snake_case names still work (with a FutureWarning)
+from ._compat import moduleGetattr  # noqa: E402
+__getattr__ = moduleGetattr(globals())

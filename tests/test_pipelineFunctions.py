@@ -40,21 +40,21 @@ L = pl.L
 geom = L.geom
 
 
-def gauss_image(shape, x, y, sigma, x0=0, y0=0):
+def gaussImage(shape, x, y, sigma, x0=0, y0=0):
     yy, xx = np.mgrid[y0:y0 + shape[0], x0:x0 + shape[1]]
     return np.exp(-0.5 * ((xx - x) ** 2 + (yy - y) ** 2) / sigma ** 2) / (2 * np.pi * sigma ** 2)
 
 
-def lstsq_fit(data, var, comp_fn):
-    """A stand-in for the joint fit: unconstrained weighted least squares of comp_fn stamps."""
+def lstsqFit(data, var, compFn):
+    """A stand-in for the joint fit: unconstrained weighted least squares of compFn stamps."""
     shape = data.shape
 
-    def fit(exposure, psf, S, bad, var_model, fitkw):
-        comps = [comp_fn(x, y) for x, y in S["xy"]]
+    def fit(exposure, psf, S, bad, varModel, fitkw):
+        comps = [compFn(x, y) for x, y in S["xy"]]
         A = np.array([lsstStubs.place(shape, c).ravel() for c in comps]).T
         w = 1 / np.sqrt(var.ravel())
         a = np.linalg.lstsq(A * w[:, None], data.ravel() * w, rcond=None)[0]
-        return dict(amps=a, model_full=(A @ a).reshape(shape), good=np.ones(shape, bool),
+        return dict(amps=a, modelFull=(A @ a).reshape(shape), good=np.ones(shape, bool),
                     variance=var, comps=comps)
     return fit
 
@@ -72,7 +72,7 @@ class PsfKernelTestCase(unittest.TestCase):
             bad[H + y, H + x] *= 0.01
         bad += np.random.default_rng(1).normal(0, 2e-6, bad.shape) * (R > 6)   # wing pixel noise
         bad /= bad.sum()
-        new = pl.smooth_psf_kernel(bad, 4.3)
+        new = pl.smoothPsfKernel(bad, 4.3)
         self.assertGreaterEqual(new.min(), 0.0)
         self.assertAlmostEqual(new.sum(), 1.0, places=10)
         ratio = new[R <= 1.5 * 4.3] / bad[R <= 1.5 * 4.3]     # core kept (up to renormalisation)
@@ -86,7 +86,7 @@ class PsfKernelTestCase(unittest.TestCase):
         self.assertAlmostEqual(np.sum(new * X ** 2) / np.sum(new * Y ** 2),
                                np.sum(true * X ** 2) / np.sum(true * Y ** 2), delta=0.08)
 
-    def _core_case(self, truth_fn):
+    def _coreCase(self, truthFn):
         n, h = 420, 20
         u = np.arange(-h, h + 1)
         X, Y = np.meshgrid(u, u)
@@ -95,7 +95,7 @@ class PsfKernelTestCase(unittest.TestCase):
             k = np.exp(-0.5 * ((X - dx) ** 2 + Y ** 2) / s ** 2)
             return k / k.sum()
 
-        truthk, modelk = truth_fn(g), g(2.2)
+        truthk, modelk = truthFn(g), g(2.2)
 
         def placek(k, x, y):
             m = np.zeros((n, n))
@@ -115,27 +115,27 @@ class PsfKernelTestCase(unittest.TestCase):
         def fakefit(exposure, psf, S, bad, vm, kw):
             A = np.array([placek(psf.k, *p).ravel() for p in S["xy"]]).T
             a = np.linalg.lstsq(A, data.ravel(), rcond=None)[0]
-            return dict(amps=a, model_full=(A @ a).reshape(n, n), good=np.ones((n, n), bool))
+            return dict(amps=a, modelFull=(A @ a).reshape(n, n), good=np.ones((n, n), bool))
 
         exp = lsstStubs.FakeExposure(data, var)
-        S = pl._state(xy, from_gaia=True)
+        S = pl._state(xy, fromGaia=True)
         P = dict(pl._params({}))
-        P["_halo_rejects"] = np.zeros((0, 2))
+        P["_haloRejects"] = np.zeros((0, 2))
         with mock.patch.object(pl, "_fit", fakefit), \
-                mock.patch.object(L, "kernel_to_lsst_psf", mkpsf, create=True), \
+                mock.patch.object(L, "kernelToLsstPsf", mkpsf, create=True), \
                 mock.patch.object(L, "_fwhm", lambda p, pt: 5.0, create=True):
             fit = fakefit(exp, mkpsf(modelk), S, 0, None, {})
-            new = pl.refine_psf_median(exp, mkpsf(modelk), dict(S=S, snaps=[dict(fit=fit)]), 0, P, {},
-                                       fit0=fit, verbose=False)
+            new = pl.refinePsfMedian(exp, mkpsf(modelk), dict(S=S, snaps=[dict(fit=fit)]), 0, P, {},
+                                     fit0=fit, verbose=False)
         return truthk, modelk, new.k
 
     def testCoreCorrectionFixesWrongPsf(self):
-        truthk, modelk, newk = self._core_case(lambda g: 0.85 * g(1.9) + 0.15 * g(1.9, dx=1.2))
+        truthk, modelk, newk = self._coreCase(lambda g: 0.85 * g(1.9) + 0.15 * g(1.9, dx=1.2))
         self.assertLess(np.abs(newk - truthk).sum(), 0.25 * np.abs(modelk - truthk).sum())
         self.assertGreaterEqual(newk.min(), 0.0)
 
     def testCoreCorrectionLeavesCorrectPsf(self):
-        truthk, modelk, newk = self._core_case(lambda g: g(2.2))
+        truthk, modelk, newk = self._coreCase(lambda g: g(2.2))
         np.testing.assert_allclose(newk, modelk, atol=1e-12)
 
 
@@ -157,16 +157,16 @@ class BrightStarTermsTestCase(unittest.TestCase):
         fit = dict(amps=np.array([F]), good=np.ones((n, n), bool),
                    comps=[dict(stamp=psf[sy, sx], ys=sy, xs=sx)])
         exp = lsstStubs.FakeExposure(data, var)
-        S = pl._state(np.array([[x0, y0]]), from_gaia=True)
+        S = pl._state(np.array([[x0, y0]]), fromGaia=True)
         return exp, S, fit, F * psf, psf.max(), 2.355 * s0, (int(round(y0)), int(round(x0)))
 
     def testCoreRings(self):
         exp, S, fit, model, peak, fwhm, c = self._star(0.0)
         out = {}
         for rings in ((), (0.0, 1.0, 2.0, 3.0, 4.0)):
-            corr, info = pl.bright_star_corrections(exp, S, fit, model, peak, 23.5, fwhm, 1,
-                                                    radial=True, bright_modes=4, core_rings=rings)
-            out[bool(rings)] = (info[0]["chi2_after"], abs((exp.image.array - model - corr)[c]))
+            corr, info = pl.brightStarCorrections(exp, S, fit, model, peak, 23.5, fwhm, 1,
+                                                  radial=True, brightModes=4, coreRings=rings)
+            out[bool(rings)] = (info[0]["chi2After"], abs((exp.image.array - model - corr)[c]))
         self.assertGreater(out[False][0], 1.5)
         self.assertLess(out[True][0], 1.1)
         self.assertLess(out[True][1], 0.1 * out[False][1])
@@ -175,17 +175,17 @@ class BrightStarTermsTestCase(unittest.TestCase):
         exp, S, fit, model, peak, fwhm, c = self._star(0.3)
         chi = {}
         for modes in (0, 2):
-            corr, info = pl.bright_star_corrections(exp, S, fit, model, peak, 23.5, fwhm, 1,
-                                                    radial=True, bright_modes=4,
-                                                    core_rings=(0.0, 1.0, 2.0, 3.0, 4.0),
-                                                    core_modes=modes)
-            chi[modes] = info[0]["chi2_after"]
+            corr, info = pl.brightStarCorrections(exp, S, fit, model, peak, 23.5, fwhm, 1,
+                                                  radial=True, brightModes=4,
+                                                  coreRings=(0.0, 1.0, 2.0, 3.0, 4.0),
+                                                  coreModes=modes)
+            chi[modes] = info[0]["chi2After"]
         self.assertLess(chi[2], chi[0])
         self.assertLess(chi[2], 1.0)
 
 
 class ModelErrorTestCase(unittest.TestCase):
-    def _run(self, eps_true):
+    def _run(self, epsTrue):
         n, h, s0 = 360, 14, 1.9
         u = np.arange(-h, h + 1)
         K = np.exp(-0.5 * (u[None] ** 2 + u[:, None] ** 2) / s0 ** 2)
@@ -197,13 +197,13 @@ class ModelErrorTestCase(unittest.TestCase):
         model = np.zeros((n, n))
         for f, (x, y) in zip(fl, xy):
             model[int(y) - h:int(y) + h + 1, int(x) - h:int(x) + h + 1] += f * K
-        truth = model * (1 + eps_true * rng.normal(0, 1, (n, n)))
+        truth = model * (1 + epsTrue * rng.normal(0, 1, (n, n)))
         data = truth + rng.normal(0, 1, (n, n)) * np.sqrt(100 + truth)
         exp = lsstStubs.FakeExposure(data, 100 + model, psf=psf)
-        res = dict(S=pl._state(xy, from_gaia=True), model_full=model,
+        res = dict(S=pl._state(xy, fromGaia=True), modelFull=model,
                    snaps=[dict(fit=dict(amps=fl, good=np.ones((n, n), bool)))])
         with mock.patch.object(L, "_fwhm", lambda p, pt: 2.355 * s0, create=True):
-            eps, _ = pl.measure_model_error(exp, res, dict(pl._params({})), verbose=False)
+            eps, _ = pl.measureModelError(exp, res, dict(pl._params({})), verbose=False)
         return eps
 
     def testRecoversModelError(self):
@@ -222,15 +222,15 @@ class SaturationLevelTestCase(unittest.TestCase):
         d[70, 70] = 60000
         exp = lsstStubs.FakeExposure(d, np.ones_like(d), mask=m)
         P = dict(pl._params({}))
-        self.assertEqual(pl.saturation_level(exp, P)[0], 98000.0)
+        self.assertEqual(pl.saturationLevel(exp, P)[0], 98000.0)
         d[40:45, 40:45] = 500                      # interpolated SAT pixels
-        lvl, how = pl.saturation_level(exp, P)
+        lvl, how = pl.saturationLevel(exp, P)
         self.assertEqual(lvl, 60000.0)
         self.assertIn("lower bound", how)
         m[:] = 0
-        self.assertIsNone(pl.saturation_level(exp, P)[0])
-        P["near_sat_level"] = 1.2e5
-        self.assertEqual(pl.saturation_level(exp, P)[0], 1.2e5)
+        self.assertIsNone(pl.saturationLevel(exp, P)[0])
+        P["nearSatLevel"] = 1.2e5
+        self.assertEqual(pl.saturationLevel(exp, P)[0], 1.2e5)
 
 
 class RingMimicTestCase(unittest.TestCase):
@@ -240,7 +240,7 @@ class RingMimicTestCase(unittest.TestCase):
         yy, xx = np.mgrid[:n, :n]
 
         def comp(x, y):
-            return lsstStubs.gaussian_comp((n, n), x, y, s0, h)
+            return lsstStubs.gaussianComp((n, n), x, y, s0, h)
 
         FB = 2e6
         r = np.hypot(xx - 60, yy - 60)
@@ -260,11 +260,11 @@ class RingMimicTestCase(unittest.TestCase):
         A = np.array([lsstStubs.place((n, n), c).ravel() for c in comps]).T
         amps = np.linalg.lstsq(A, data.ravel(), rcond=None)[0]
         S = pl._state(xy)
-        S["from_gaia"][0] = True
+        S["fromGaia"][0] = True
         fit = dict(amps=amps, variance=var, good=np.ones((n, n), bool), comps=comps)
         exp = lsstStubs.FakeExposure(data, var)
-        drop, nchk = pl.ring_mimics(exp, S, fit, (A @ amps).reshape(n, n), dict(pl._params({})),
-                                    fwhm, 1 / (2 * np.pi * s0 ** 2), 10.0)
+        drop, nchk = pl.ringMimics(exp, S, fit, (A @ amps).reshape(n, n), dict(pl._params({})),
+                                   fwhm, 1 / (2 * np.pi * s0 ** 2), 10.0)
         return set(drop), set(range(3, 3 + len(fakes)))
 
     def testSmoothRing(self):
@@ -284,40 +284,40 @@ class SplitAndPolishTestCase(unittest.TestCase):
         self.singles = [(x, y) for x in (30, 90, 150, 210) for y in (30, 90)]
         self.pairs = [(x, y) for x in (30, 90, 150, 210) for y in (150, 210)][:5]
         truth = np.zeros((n, n))
-        model_xy = []
+        modelXy = []
         for x, y in self.singles:
-            truth += lsstStubs.place((n, n), lsstStubs.gaussian_comp((n, n), x + .3, y - .2, s0, h),
+            truth += lsstStubs.place((n, n), lsstStubs.gaussianComp((n, n), x + .3, y - .2, s0, h),
                                      rng.uniform(4e3, 1.2e4))
-            model_xy.append((x + .3, y - .2))
+            modelXy.append((x + .3, y - .2))
         for x, y in self.pairs:
             a, b, f1, f2 = (x, y), (x + 2.5, y + 0.8), 8e3, 3e3
             for p, f in ((a, f1), (b, f2)):
-                truth += lsstStubs.place((n, n), lsstStubs.gaussian_comp((n, n), *p, s0, h), f)
-            model_xy.append(((f1 * a[0] + f2 * b[0]) / (f1 + f2), (f1 * a[1] + f2 * b[1]) / (f1 + f2)))
+                truth += lsstStubs.place((n, n), lsstStubs.gaussianComp((n, n), *p, s0, h), f)
+            modelXy.append(((f1 * a[0] + f2 * b[0]) / (f1 + f2), (f1 * a[1] + f2 * b[1]) / (f1 + f2)))
         self.var = 100 + truth
         self.data = truth + rng.normal(0, 1, (n, n)) * np.sqrt(self.var)
-        self.model_xy = np.array(model_xy)
-        self.fakefit = lstsq_fit(self.data, self.var,
-                                 lambda x, y: lsstStubs.gaussian_comp((n, n), x, y, s0, h))
+        self.modelXy = np.array(modelXy)
+        self.fakefit = lstsqFit(self.data, self.var,
+                                lambda x, y: lsstStubs.gaussianComp((n, n), x, y, s0, h))
         self.exp = lsstStubs.FakeExposure(self.data, self.var)
 
     def testSplitFindsPairs(self):
         from scipy.ndimage import gaussian_filter
 
-        def msnr(resid, var, usable, fwhm, noise_mask):
+        def msnr(resid, var, usable, fwhm, noiseMask):
             s = fwhm / 2.355
             num = gaussian_filter(resid, s) * 4 * np.pi * s * s
             den = np.sqrt(gaussian_filter(var, s / np.sqrt(2)) * 4 * np.pi * s * s / 2)
             return (num / den / np.sqrt(2),)
 
-        S = pl._state(self.model_xy, from_gaia=True)
-        with mock.patch.object(pl, "_fit", self.fakefit), mock.patch.object(pl.ca, "_matched_snr", msnr):
+        S = pl._state(self.modelXy, fromGaia=True)
+        with mock.patch.object(pl, "_fit", self.fakefit), mock.patch.object(pl.ca, "_matchedSnr", msnr):
             f0 = self.fakefit(self.exp, None, S, 0, None, {})
-            S2, f2, ntry, nkeep = pl.split_test(self.exp, None, S, f0, f0["model_full"],
-                                                dict(pl._params({})), 2.355 * self.s0,
-                                                1 / (2 * np.pi * self.s0 ** 2), 10.0, 0, {})
+            S2, f2, ntry, nkeep = pl.splitTest(self.exp, None, S, f0, f0["modelFull"],
+                                               dict(pl._params({})), 2.355 * self.s0,
+                                               1 / (2 * np.pi * self.s0 ** 2), 10.0, 0, {})
         self.assertEqual(nkeep, len(self.pairs))
-        new = S2["xy"][len(self.model_xy):]
+        new = S2["xy"][len(self.modelXy):]
         for x, y in self.pairs:      # one new source next to each pair ...
             self.assertLess(np.min(np.hypot(new[:, 0] - x - 1.2, new[:, 1] - y - 0.4)), 6.0)
         for x, y in self.singles:    # ... and none at a single star
@@ -340,27 +340,27 @@ class SplitAndPolishTestCase(unittest.TestCase):
         truth = np.array([(x + rng.uniform(-.5, .5), y + rng.uniform(-.5, .5))
                           for x in range(20, 230, 30) for y in range(20, 230, 30)])
         fl = 10 ** rng.uniform(3.5, 5.0, len(truth))
-        img = sum(f * lsstStubs.place((n, n), lsstStubs.gaussian_comp((n, n), x, y, s0, h))
+        img = sum(f * lsstStubs.place((n, n), lsstStubs.gaussianComp((n, n), x, y, s0, h))
                   for f, (x, y) in zip(fl, truth))
         var = np.full((n, n), 100.0)
         data = img + rng.normal(0, 10, (n, n))
         exp = lsstStubs.FakeExposure(data, var)
-        fakefit = lstsq_fit(data, var, lambda x, y: lsstStubs.gaussian_comp((n, n), x, y, s0, h))
+        fakefit = lstsqFit(data, var, lambda x, y: lsstStubs.gaussianComp((n, n), x, y, s0, h))
         stale = truth + rng.normal(0, 0.2, truth.shape) * (rng.uniform(size=(len(truth), 1)) < 0.4)
-        S = pl._state(stale, from_gaia=True)
+        S = pl._state(stale, fromGaia=True)
         S["ref"] = truth.copy()
         P = dict(pl._params({}))
-        P["final_polish_rounds"] = 8
+        P["finalPolishRounds"] = 8
         with mock.patch.object(pl, "_fit", fakefit), \
-                mock.patch.object(L, "compute_psf_derivatives", deriv, create=True), \
-                mock.patch.object(L, "psf_stamp", lambda psf, x, y, bb, taper=None: stamp(x, y)[::3],
+                mock.patch.object(L, "computePsfDerivatives", deriv, create=True), \
+                mock.patch.object(L, "psfStamp", lambda psf, x, y, bb, taper=None: stamp(x, y)[::3],
                                   create=True), \
-                mock.patch.object(L, "bbox_to_slices", lambda b, eb: (slice(b.getMinY(), b.getMaxY() + 1),
-                                                                       slice(b.getMinX(), b.getMaxX() + 1)),
+                mock.patch.object(L, "bboxToSlices", lambda b, eb: (slice(b.getMinY(), b.getMaxY() + 1),
+                                                                    slice(b.getMinX(), b.getMaxX() + 1)),
                                   create=True), \
                 mock.patch.object(L, "WING_TAPER", None, create=True):
             f0 = fakefit(exp, None, S, 0, None, {})
-            S2, f1, info = pl.final_position_polish(exp, None, S, f0, 0, P, {}, 2.355 * s0, s0)
+            S2, f1, info = pl.finalPositionPolish(exp, None, S, f0, 0, P, {}, 2.355 * s0, s0)
         e0, e1 = np.hypot(*(stale - truth).T), np.hypot(*(S2["xy"] - truth).T)
         self.assertLess(info["chi1"], info["chi0"])
         self.assertLess(e1.mean(), 0.3 * e0.mean())
@@ -370,7 +370,7 @@ class SplitAndPolishTestCase(unittest.TestCase):
 class EllipticalSourceTestCase(unittest.TestCase):
     n, s0, h = 120, 1.9, 14
 
-    def _run(self, truth_fn, xy, gaia_idx):
+    def _run(self, truthFn, xy, gaiaIdx):
         from scipy.signal import fftconvolve
         n, s0, h = self.n, self.s0, self.h
         big = geom.Box2I(geom.Point2I(0, 0), geom.Point2I(n - 1, n - 1))
@@ -386,48 +386,48 @@ class EllipticalSourceTestCase(unittest.TestCase):
             m[b.getMinY():b.getMaxY() + 1, b.getMinX():b.getMaxX() + 1] = arr
             return m
 
-        truth = truth_fn(gstamp, place, fftconvolve)
+        truth = truthFn(gstamp, place, fftconvolve)
         var = 500 + truth
         data = truth + np.random.default_rng(1).normal(0, 1, (n, n)) * np.sqrt(var)
 
         def fakefit(exposure, psf, S, bad, vm, kw):
-            pl._set_ext_rule(S)
+            pl._setExtRule(S)
             comps = []
             for x, y in S["xy"]:
-                a, bb = pl._psf_stamp_cached(psf, x, y, big)
+                a, bb = pl._psfStampCached(psf, x, y, big)
                 comps.append(dict(stamp=a, ys=slice(bb.getMinY(), bb.getMaxY() + 1),
                                   xs=slice(bb.getMinX(), bb.getMaxX() + 1)))
             A = np.array([place(c["stamp"], geom.Box2I(geom.Point2I(c["xs"].start, c["ys"].start),
                                                        geom.Point2I(c["xs"].stop - 1, c["ys"].stop - 1))).ravel()
                           for c in comps]).T
             a = np.linalg.lstsq(A, data.ravel(), rcond=None)[0]
-            return dict(amps=a, model_full=(A @ a).reshape(n, n), good=np.ones((n, n), bool),
+            return dict(amps=a, modelFull=(A @ a).reshape(n, n), good=np.ones((n, n), bool),
                         variance=var, comps=comps)
 
         exp = lsstStubs.FakeExposure(data, var)
         S = pl._state(np.array(xy, float))
-        S["from_gaia"][gaia_idx] = True
+        S["fromGaia"][gaiaIdx] = True
         S["ref"] = S["xy"].copy()
-        pl._bf_reset()
-        pl.clear_stamp_cache()
+        pl._bfReset()
+        pl.clearStampCache()
         with mock.patch.object(pl, "_fit", fakefit), \
-                mock.patch.object(pl, "_raw_psf_stamp", lambda psf, x, y, taper: gstamp(x, y)), \
-                mock.patch.object(pl, "_ORIG", {"psf_stamp": lambda psf, x, y, bb, taper=None: gstamp(x, y)}), \
+                mock.patch.object(pl, "_rawPsfStamp", lambda psf, x, y, taper: gstamp(x, y)), \
+                mock.patch.object(pl, "_ORIG", {"psfStamp": lambda psf, x, y, bb, taper=None: gstamp(x, y)}), \
                 mock.patch.object(pl, "_HUGE", big):
             f0 = fakefit(exp, None, S, 0, None, {})
-            S2, f2, ntry, nkeep = pl.ellip_test(exp, None, S, f0, f0["model_full"], dict(pl._params({})),
-                                                2.355 * s0, gstamp(50, 50)[0].max(), 10.0, 0, {}, s0,
-                                                verbose_ellip=False)
-            chi0 = float(np.mean((data - f0["model_full"]) ** 2 / var))
-            chi1 = float(np.mean((data - f2["model_full"]) ** 2 / var))
-        pl._bf_reset()
-        pl.clear_stamp_cache()
+            S2, f2, ntry, nkeep = pl.ellipTest(exp, None, S, f0, f0["modelFull"], dict(pl._params({})),
+                                               2.355 * s0, gstamp(50, 50)[0].max(), 10.0, 0, {}, s0,
+                                               verboseEllip=False)
+            chi0 = float(np.mean((data - f0["modelFull"]) ** 2 / var))
+            chi1 = float(np.mean((data - f2["modelFull"]) ** 2 / var))
+        pl._bfReset()
+        pl.clearStampCache()
         return S2, nkeep, chi0, chi1
 
     def testGalaxyReplacesPoints(self):
         def truth(gstamp, place, conv):
             st, b = gstamp(60.3, 58.7)
-            gal = place(conv(st, pl._ellip_kernel(1.6, 0.6, np.radians(25)), mode="same"), b) * 4.4e4
+            gal = place(conv(st, pl._ellipKernel(1.6, 0.6, np.radians(25)), mode="same"), b) * 4.4e4
             st2, b2 = gstamp(85.2, 80.4)
             return gal + place(st2, b2) * 4e4
 
@@ -442,7 +442,7 @@ class EllipticalSourceTestCase(unittest.TestCase):
     def testStarPlusGalaxy(self):
         def truth(gstamp, place, conv):
             st, b = gstamp(64.5, 60.0)
-            gal = place(conv(st, pl._ellip_kernel(1.8, 0.45, np.radians(20), "exp"), mode="same"), b) * 3e4
+            gal = place(conv(st, pl._ellipKernel(1.8, 0.45, np.radians(20), "exp"), mode="same"), b) * 3e4
             return gal + place(*gstamp(59.2, 58.4)) * 4e4 + place(*gstamp(85.2, 80.4)) * 4e4
 
         S2, nkeep, chi0, chi1 = self._run(truth, [[59.2, 58.4], [64.0, 59.8], [85.2, 80.4]], [0, 2])
@@ -464,7 +464,7 @@ class FastStampSwitchTestCase(unittest.TestCase):
     """The pipeline uses the fast stamps only when they agree with psf.computeImage."""
 
     def setUp(self):
-        self.k = lsstStubs.gaussian_kernel(2.3, 12)
+        self.k = lsstStubs.gaussianKernel(2.3, 12)
         self.psf = lsstStubs.FakePsf(self.k)
         pl._FAST["cache"].clear()
         pl._FAST["on"] = True
@@ -474,31 +474,31 @@ class FastStampSwitchTestCase(unittest.TestCase):
 
     def _ref(self, kernel):
         def ref(psf, x, y, bb, taper=None):
-            st, x0, y0 = fk.render_stamps(kernel, [x], [y], use_cxx=False)
+            st, x0, y0 = fk.renderStamps(kernel, [x], [y], useCxx=False)
             return st[0], geom.Box2I(geom.Point2I(int(x0[0]), int(y0[0])),
                                      geom.Point2I(int(x0[0]) + 24, int(y0[0]) + 24))
         return ref
 
     def testAgreeingPsfUsesFastPath(self):
-        with mock.patch.dict(pl._ORIG, {"psf_stamp": self._ref(self.k)}), \
+        with mock.patch.dict(pl._ORIG, {"psfStamp": self._ref(self.k)}), \
                 mock.patch.object(pl, "_HUGE", geom.Box2I()):
             pl._FAST["verbose"] = False
-            fast = pl._fast_for(self.psf)
+            fast = pl._fastFor(self.psf)
             self.assertIsNotNone(fast)
-            arr, bb = pl._raw_psf_stamp(self.psf, 100.3, 50.6, None)
+            arr, bb = pl._rawPsfStamp(self.psf, 100.3, 50.6, None)
             self.assertEqual((bb.getMinX(), bb.getMinY()), (88, 39))
-            ref = fk.render_stamps(self.k, [100.3], [50.6], use_cxx=False)[0][0]
+            ref = fk.renderStamps(self.k, [100.3], [50.6], useCxx=False)[0][0]
             np.testing.assert_allclose(arr, ref, atol=1e-14)
 
     def testVaryingPsfFallsBack(self):
-        with mock.patch.dict(pl._ORIG, {"psf_stamp": self._ref(self.k * 1.05)}), \
+        with mock.patch.dict(pl._ORIG, {"psfStamp": self._ref(self.k * 1.05)}), \
                 mock.patch.object(pl, "_HUGE", geom.Box2I()):
             pl._FAST["verbose"] = False
-            self.assertIsNone(pl._fast_for(self.psf))
+            self.assertIsNone(pl._fastFor(self.psf))
 
     def testSwitchOff(self):
         pl._FAST["on"] = False
-        self.assertIsNone(pl._fast_for(self.psf))
+        self.assertIsNone(pl._fastFor(self.psf))
         pl._FAST["on"] = True
 
 
@@ -520,24 +520,24 @@ class BackgroundLowFitTestCase(unittest.TestCase):
 
     def testPlaneRecovered(self):
         exp, sky, img = self._exposure()
-        exp, bg = pl.refit_background_lowfit(exp, "plane", verbose=False)
+        exp, bg = pl.refitBackgroundLowfit(exp, "plane", verbose=False)
         np.testing.assert_allclose(bg.array, sky, atol=0.15)
         np.testing.assert_allclose(exp.image.array, img - bg.array)      # subtracted in place
 
     def testConstantAndNone(self):
         exp, sky, _ = self._exposure(1)
-        _, bg = pl.refit_background_lowfit(exp, "constant", verbose=False)
+        _, bg = pl.refitBackgroundLowfit(exp, "constant", verbose=False)
         self.assertAlmostEqual(float(bg.array.mean()), 4.0, delta=0.3)
         self.assertEqual(np.ptp(bg.array), 0.0)
         exp, _, img = self._exposure(2)
-        _, bg = pl.refit_background_lowfit(exp, "none", verbose=False)
+        _, bg = pl.refitBackgroundLowfit(exp, "none", verbose=False)
         self.assertFalse(bg.array.any())
         np.testing.assert_array_equal(exp.image.array, img)
         with self.assertRaises(ValueError):
-            pl.refit_background_lowfit(exp, "spline")
+            pl.refitBackgroundLowfit(exp, "spline")
 
     def testDefaultIsPlane(self):
-        self.assertEqual(pl.PIPELINE_DEFAULTS["bg_mode"], "plane")
+        self.assertEqual(pl.PIPELINE_DEFAULTS["bgMode"], "plane")
 
 
 if __name__ == "__main__":

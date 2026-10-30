@@ -24,25 +24,25 @@
 For each source: data | model | residual | residual/sigma, x and y cross-sections and the
 radial profile, labelled with the source's PSF and aperture magnitudes.
 
-`source_cutout_data` returns the numbers behind one panel row (unit tested); `plot_source_cutouts`
+`sourceCutoutData` returns the numbers behind one panel row (unit tested); `plotSourceCutouts`
 draws them for a selection of sources (worst fitted, brightest, random, or given positions) and
 can write every page to a PDF.
 """
 
-__all__ = ["source_cutout_data", "select_sources", "plot_source_cutouts"]
+__all__ = ["sourceCutoutData", "selectSources", "plotSourceCutouts"]
 
 import numpy as np
 from scipy.spatial import cKDTree
 
 
-def _effective_variance(final, model, var, sigma):
+def _effectiveVariance(final, model, var, sigma):
     """Return the variance for residual/sigma ('pixel', 'effective' or 'model')."""
     m = np.clip(model, 0, None)
     v = var.copy()
     if sigma in ("effective", "model"):
-        v = v + float(final.get("poisson_k", 0.0) or 0.0) * m
+        v = v + float(final.get("poissonK", 0.0) or 0.0) * m
     if sigma == "model":
-        v = v + (float(final.get("model_err", 0.0) or 0.0) * m) ** 2
+        v = v + (float(final.get("modelErr", 0.0) or 0.0) * m) ** 2
     return v
 
 
@@ -57,7 +57,7 @@ def _cut(D, M, V, B):
     return d, m, s
 
 
-def source_cutout_data(data, model, var, bad, x, y, x0=0, y0=0, half=15, width=1):
+def sourceCutoutData(data, model, var, bad, x, y, x0=0, y0=0, half=15, width=1):
     """Compute the arrays one cutout row shows for a source.
 
     Parameters
@@ -124,17 +124,17 @@ def source_cutout_data(data, model, var, bad, x, y, x0=0, y0=0, half=15, width=1
     return out
 
 
-def select_sources(phot, how="worst", n=6, positions=None, xy=None, chi2=None, min_snr=20.0,
-                   seed=0):
+def selectSources(phot, how="worst", n=6, positions=None, xy=None, chi2=None, minSnr=20.0,
+                  seed=0):
     """Choose the sources to show.
 
     Parameters
     ----------
     phot : `astropy.table.Table` or `dict`
-        Photometry with ``psf_snr``.
+        Photometry with ``psfSnr``.
     how : `str`, optional
         'worst' (highest ``chi2``), 'brightest', 'faintest' or 'random', among sources with S/N
-        >= ``min_snr``.
+        >= ``minSnr``.
     n : `int`, optional
         Number of sources.
     positions : `list` [`tuple` [`float`, `float`]], optional
@@ -143,7 +143,7 @@ def select_sources(phot, how="worst", n=6, positions=None, xy=None, chi2=None, m
         Source positions (needed with ``positions``).
     chi2 : `numpy.ndarray`, optional
         Local chi2 per source (needed for 'worst').
-    min_snr : `float`, optional
+    minSnr : `float`, optional
         Minimum S/N.
     seed : `int`, optional
         Random seed for 'random'.
@@ -160,8 +160,8 @@ def select_sources(phot, how="worst", n=6, positions=None, xy=None, chi2=None, m
     """
     if how == "positions" or positions is not None:
         return [int(cKDTree(xy).query(p)[1]) for p in positions]
-    snr = np.asarray(phot["psf_snr"], float)
-    ok = np.flatnonzero(np.isfinite(snr) & (snr >= min_snr))
+    snr = np.asarray(phot["psfSnr"], float)
+    ok = np.flatnonzero(np.isfinite(snr) & (snr >= minSnr))
     if not len(ok):
         return []
     if how == "worst" and chi2 is not None:
@@ -176,7 +176,7 @@ def select_sources(phot, how="worst", n=6, positions=None, xy=None, chi2=None, m
     raise ValueError(f"unknown selection {how!r}")
 
 
-def _local_chi2(data, model, var, good, xy, x0, y0, r):
+def _localChi2(data, model, var, good, xy, x0, y0, r):
     """Return the chi2 per pixel within ``r`` px of each source."""
     out = np.full(len(xy), np.nan)
     ny, nx = data.shape
@@ -193,9 +193,9 @@ def _local_chi2(data, model, var, good, xy, x0, y0, r):
     return out
 
 
-def plot_source_cutouts(run, how="worst", n=6, positions=None, half=15, width=1, sigma="model",
-                        phot=None, min_snr=20.0, log=True, per_page=4, pdf_path=None, show=True,
-                        grayscale=False):
+def plotSourceCutouts(run, how="worst", n=6, positions=None, half=15, width=1, sigma="model",
+                      phot=None, minSnr=20.0, log=True, perPage=4, pdfPath=None, show=True,
+                      grayscale=False):
     """Plot cutouts and cross-sections of individual sources, labelled with their magnitudes.
 
     One row per source: data | model | residual | residual/sigma | x-cut | y-cut | radial
@@ -207,7 +207,7 @@ def plot_source_cutouts(run, how="worst", n=6, positions=None, half=15, width=1,
     run : `lsst.meas.crowd.session.CutoutRun`
         A finished run.
     how : `str`, optional
-        'worst', 'brightest', 'faintest' or 'random' (see `select_sources`).
+        'worst', 'brightest', 'faintest' or 'random' (see `selectSources`).
     n : `int`, optional
         Number of sources.
     positions : `list` [`tuple` [`float`, `float`]], optional
@@ -219,14 +219,14 @@ def plot_source_cutouts(run, how="worst", n=6, positions=None, half=15, width=1,
     sigma : `str`, optional
         'model' (variance plus measured model error), 'effective' or 'pixel'.
     phot : `astropy.table.Table`, optional
-        Output of `lsst.meas.crowd.photometry.measure_photometry` (computed if not given).
-    min_snr : `float`, optional
+        Output of `lsst.meas.crowd.photometry.measurePhotometry` (computed if not given).
+    minSnr : `float`, optional
         Minimum S/N of the sources selected.
     log : `bool`, optional
         Symmetric-log axis for data and model.
-    per_page : `int`, optional
+    perPage : `int`, optional
         Sources per figure.
-    pdf_path : `str`, optional
+    pdfPath : `str`, optional
         Also write all pages to this PDF.
     show : `bool`, optional
         Display the figures.
@@ -241,50 +241,50 @@ def plot_source_cutouts(run, how="worst", n=6, positions=None, half=15, width=1,
     import matplotlib.pyplot as plt
     from matplotlib.backends.backend_pdf import PdfPages
     from matplotlib.colors import ListedColormap, SymLogNorm
-    from .photometry import measure_photometry
+    from .photometry import measurePhotometry
     from .plotting import BAD_PIXEL_COLOR
-    final = run.outer_history[-1]
+    final = run.outerHistory[-1]
     exp, res = final["exposure"], final["result"]
     S = res["S"]
     bb = exp.getBBox()
     X0, Y0 = bb.getMinX(), bb.getMinY()
-    data, model = exp.image.array, res["model_full"]
-    var = _effective_variance(final, model, exp.variance.array, sigma)
-    bad = ((exp.mask.array & run.bad_bitmask) != 0) | ~np.isfinite(data - model) | ~(var > 0)
+    data, model = exp.image.array, res["modelFull"]
+    var = _effectiveVariance(final, model, exp.variance.array, sigma)
+    bad = ((exp.mask.array & run.badBitmask) != 0) | ~np.isfinite(data - model) | ~(var > 0)
     if phot is None:
-        phot = measure_photometry(run, verbose=False)
+        phot = measurePhotometry(run, verbose=False)
     xy = S["xy"]
-    fwhm = phot.meta.get("fwhm_px", 5.0)
-    chi2 = _local_chi2(data, model, var, ~bad, xy, X0, Y0, 2.5 * fwhm)
-    sel = select_sources(phot, how, n, positions, xy, chi2, min_snr)
+    fwhm = phot.meta.get("fwhmPx", 5.0)
+    chi2 = _localChi2(data, model, var, ~bad, xy, X0, Y0, 2.5 * fwhm)
+    sel = selectSources(phot, how, n, positions, xy, chi2, minSnr)
     if not sel:
         print("no sources selected")
         return phot[:0]
     noise = float(np.sqrt(np.nanmedian(exp.variance.array)))
     tree = cKDTree(xy)
-    cm_res = plt.get_cmap("gray" if grayscale else "RdBu_r").copy()
-    pages = [sel[i:i + per_page] for i in range(0, len(sel), per_page)]
-    pdf = PdfPages(pdf_path) if pdf_path else None
+    cmRes = plt.get_cmap("gray" if grayscale else "RdBu_r").copy()
+    pages = [sel[i:i + perPage] for i in range(0, len(sel), perPage)]
+    pdf = PdfPages(pdfPath) if pdfPath else None
     try:
         for page in pages:
             fig = plt.figure(figsize=(26, 4.4 * len(page)))
             outer = fig.add_gridspec(len(page), 1, hspace=0.45)
             for row, j in enumerate(page):
                 x, y = xy[j]
-                cd = source_cutout_data(data, model, var, bad, x, y, X0, Y0, half, width)
+                cd = sourceCutoutData(data, model, var, bad, x, y, X0, Y0, half, width)
                 gs = outer[row].subgridspec(2, 7, height_ratios=[2, 1], hspace=0.05, wspace=0.35)
                 w = cd["window"]
                 ext = (w[0] - .5, w[1] + .5, w[2] - .5, w[3] + .5)
                 lo, hi = np.nanpercentile(cd["data"], 1), np.nanmax(cd["data"])
                 nrm = SymLogNorm(linthresh=max(3 * noise, 1e-6), vmin=lo, vmax=max(hi, lo + 1e-6))
-                good_r = cd["resid"][~cd["bad"]]
-                rs = np.nanpercentile(np.abs(good_r), 99) if good_r.size else 1.0
+                goodR = cd["resid"][~cd["bad"]]
+                rs = np.nanpercentile(np.abs(goodR), 99) if goodR.size else 1.0
                 imgs = [(cd["data"], dict(cmap="viridis", norm=nrm), "data"),
                         (cd["model"], dict(cmap="viridis", norm=nrm), "model"),
                         (np.ma.masked_where(cd["bad"], cd["resid"]),
-                         dict(cmap=cm_res, vmin=-rs, vmax=rs), "data − model"),
+                         dict(cmap=cmRes, vmin=-rs, vmax=rs), "data − model"),
                         (np.ma.masked_where(cd["bad"], cd["z"]),
-                         dict(cmap=cm_res, vmin=-5, vmax=5), "residual / σ")]
+                         dict(cmap=cmRes, vmin=-5, vmax=5), "residual / σ")]
                 near = tree.query_ball_point((x, y), half * 1.42)
                 for c, (img, kw, ttl) in enumerate(imgs):
                     ax = fig.add_subplot(gs[:, c])
@@ -297,7 +297,7 @@ def plot_source_cutouts(run, how="worst", n=6, positions=None, half=15, width=1,
                     mc = "w" if c < 2 else ("#00b4d8" if grayscale else "k")
                     for k in near:
                         px, py = xy[k]
-                        if S["from_gaia"][k]:
+                        if S["fromGaia"][k]:
                             ax.plot(px, py, "o", mfc="none", mec=mc, ms=10 if k == j else 6, mew=1.2)
                         else:
                             ax.plot(px, py, "x", color="#ff3b3b", ms=7, mew=1.5)
@@ -306,13 +306,13 @@ def plot_source_cutouts(run, how="worst", n=6, positions=None, half=15, width=1,
                     ax.set_title(ttl, fontsize=9)
                     if c == 0:
                         p = phot[j]
-                        lab = (f"#{j} ({x:.1f}, {y:.1f})  {'Gaia' if S['from_gaia'][j] else 'non-Gaia'}"
+                        lab = (f"#{j} ({x:.1f}, {y:.1f})  {'Gaia' if S['fromGaia'][j] else 'non-Gaia'}"
                                f"{', extended' if S['ext'][j] > 0 else ''}\n"
-                               f"PSF  {p['psf_mag']:.3f} ± {p['psf_mag_err']:.3f} mag  "
-                               f"(S/N {p['psf_snr']:.0f})\n"
-                               f"ap   {p['ap_mag']:.3f} ± {p['ap_mag_err']:.3f} mag  "
-                               f"(ap−PSF {p['ap_minus_psf']:+.3f})\n"
-                               + (f"Gaia G {p['gaia_G']:.2f}   " if np.isfinite(p["gaia_G"]) else "")
+                               f"PSF  {p['psfMag']:.3f} ± {p['psfMagErr']:.3f} mag  "
+                               f"(S/N {p['psfSnr']:.0f})\n"
+                               f"ap   {p['apMag']:.3f} ± {p['apMagErr']:.3f} mag  "
+                               f"(ap−PSF {p['apMinusPsf']:+.3f})\n"
+                               + (f"Gaia G {p['gaiaG']:.2f}   " if np.isfinite(p["gaiaG"]) else "")
                                + f"χ²/px {chi2[j]:.2f}")
                         ax.set_ylabel(lab, fontsize=8, rotation=0, ha="right", va="center",
                                       labelpad=10)
@@ -341,16 +341,16 @@ def plot_source_cutouts(run, how="worst", n=6, positions=None, half=15, width=1,
                             perp = (xy[k, 1] - y) if key == "xcut" else (xy[k, 0] - x)
                             if abs(perp) <= max(width // 2, 0) + 1.0 and abs(off) <= half:
                                 for a in (a1, a2):
-                                    a.axvline(off, color="C0" if S["from_gaia"][k] else "C3",
-                                              ls=":" if S["from_gaia"][k] else "--", lw=0.9)
+                                    a.axvline(off, color="C0" if S["fromGaia"][k] else "C3",
+                                              ls=":" if S["fromGaia"][k] else "--", lw=0.9)
                     a1.set_title(ttl, fontsize=9)
                     a1.tick_params(labelbottom=False)
                     a2.set_xlabel(xl, fontsize=8)
                     if row == 0 and c == 0:
                         a1.legend(fontsize=7, loc="upper right")
             fig.suptitle(f"{run.name if hasattr(run, 'name') else ''}: source cutouts "
-                         f"(zero point {phot.meta.get('zero_point', np.nan):.3f}, "
-                         f"{phot.meta.get('zero_point_source', '')}); grey band = ±1σ; "
+                         f"(zero point {phot.meta.get('zeroPoint', np.nan):.3f}, "
+                         f"{phot.meta.get('zeroPointSource', '')}); grey band = ±1σ; "
                          f"o Gaia, x found in residual", fontsize=10)
             if pdf is not None:
                 pdf.savefig(fig, bbox_inches="tight")
@@ -361,5 +361,10 @@ def plot_source_cutouts(run, how="worst", n=6, positions=None, half=15, width=1,
     finally:
         if pdf is not None:
             pdf.close()
-            print(f"wrote {len(pages)} page(s) to {pdf_path}")
+            print(f"wrote {len(pages)} page(s) to {pdfPath}")
     return phot[sel]
+
+
+# old snake_case names still work (with a FutureWarning)
+from ._compat import moduleGetattr  # noqa: E402
+__getattr__ = moduleGetattr(globals())

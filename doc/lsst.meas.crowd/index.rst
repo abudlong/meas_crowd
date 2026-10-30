@@ -26,11 +26,11 @@ and units.  ``doc/unit_tests.md``: every unit test, its input and what it checks
 Modules
 =======
 
-``pipeline``      the driver: ``run_session_gaia``, ``run_cutout_gaia``, inner / outer loops
+``pipeline``      the driver: ``runSessionGaia``, ``runCutoutGaia``, inner / outer loops
 ``gaiaCatalog``   Gaia catalogue (Butler refcat or ESA TAP) and starting positions
-``photometry``    PSF and aperture magnitudes with errors (``measure_photometry``)
+``photometry``    PSF and aperture magnitudes with errors (``measurePhotometry``)
 ``plotting``      run-level plots and residual diagnostics
-``sourcePlots``   per-source cutouts, cross-sections and magnitudes (``plot_source_cutouts``)
+``sourcePlots``   per-source cutouts, cross-sections and magnitudes (``plotSourceCutouts``)
 ``stagePlots``    PSF stars, backgrounds, rounds and colour-linked source pages
 ``detector``      whole-detector tiling, stitching and mosaic / tile plots
 ``fastKernels``   C++ (pybind11) / NumPy rendering of PSF stamps for a constant PSF

@@ -26,22 +26,22 @@ partition the detector exactly; each tile is fitted on its interior grown by ``p
 sources near a tile edge are fitted together with their neighbours from the next tile) and only
 its interior is kept:
 
-1. `fit_tiles` fits the tiles (all of them, a region, or one share of them for a Slurm array
+1. `fitTiles` fits the tiles (all of them, a region, or one share of them for a Slurm array
    task) and writes one ``tile_<name>.fits`` per tile -- data, model, variance, bad-pixel mask
    and the photometry table.  Tiles already on disk are skipped, so a job can be restarted.
-2. `stitch_tiles` assembles the interiors into full-detector images (``detector_mosaic.fits``:
+2. `stitchTiles` assembles the interiors into full-detector images (``detector_mosaic.fits``:
    DATA, MODEL, RESIDUAL, VARIANCE, BAD, TILE extensions -- opens in DS9) and merges the
    catalogues (``detector_catalog.fits``), keeping every source once: in the tile whose interior
    contains it.
-3. `plot_detector` shows data | model | residual | residual/sigma for the whole detector or a
+3. `plotDetector` shows data | model | residual | residual/sigma for the whole detector or a
    zoom, with optional tile boundaries.
 
 The image called DATA is the image the fit used (after the pipeline's background subtraction), so
 RESIDUAL = DATA - MODEL.
 """
 
-__all__ = ["tile_specs", "tile_name", "save_tile_products", "fit_tiles", "stitch_tiles",
-           "load_mosaic", "load_tile", "plot_tile", "plot_detector"]
+__all__ = ["tileSpecs", "tileName", "saveTileProducts", "fitTiles", "stitchTiles",
+           "loadMosaic", "loadTile", "plotTile", "plotDetector"]
 
 import glob
 import os
@@ -53,7 +53,7 @@ TILE_PREFIX = "tile_"
 
 
 # ---------------------------------------------------------------- tiling
-def tile_specs(width, height, tile=400, x0=0, y0=0, region=None):
+def tileSpecs(width, height, tile=400, x0=0, y0=0, region=None):
     """Return the interiors of a tile grid that partitions an area exactly.
 
     ``ceil(size / tile)`` tiles per axis with sizes as equal as possible.
@@ -90,7 +90,7 @@ def tile_specs(width, height, tile=400, x0=0, y0=0, region=None):
     return out
 
 
-def tile_name(spec):
+def tileName(spec):
     """Return the name of a tile, e.g. 'x0400_y0000_400x400'.
 
     Parameters
@@ -108,7 +108,7 @@ def tile_name(spec):
 
 
 # ---------------------------------------------------------------- per-tile products
-def save_tile_products(run, path, phot=None, meta=None):
+def saveTileProducts(run, path, phot=None, meta=None):
     """Write one tile's results to a FITS file.
 
     DATA, MODEL, VARIANCE and BAD images over the tile's fit box (header keys X0/Y0 = fit-box
@@ -134,14 +134,14 @@ def save_tile_products(run, path, phot=None, meta=None):
     """
     from astropy.io import fits
     from astropy.table import Table
-    final = run.outer_history[-1]
+    final = run.outerHistory[-1]
     exp, res = final["exposure"], final["result"]
     bb = exp.getBBox()
-    ib = run.interior_bbox
+    ib = run.interiorBbox
     data = np.asarray(exp.image.array, np.float32)
-    model = np.asarray(res["model_full"], np.float32)
+    model = np.asarray(res["modelFull"], np.float32)
     var = np.asarray(exp.variance.array, np.float32)
-    bad = (((exp.mask.array & run.bad_bitmask) != 0) | ~np.isfinite(data)).astype(np.uint8)
+    bad = (((exp.mask.array & run.badBitmask) != 0) | ~np.isfinite(data)).astype(np.uint8)
     hdr = fits.Header()
     hdr["X0"], hdr["Y0"] = bb.getMinX(), bb.getMinY()
     hdr["IX0"], hdr["IY0"] = ib.getMinX(), ib.getMinY()
@@ -150,16 +150,16 @@ def save_tile_products(run, path, phot=None, meta=None):
     for k, v in (meta or {}).items():
         hdr[k[:8].upper()] = v
     if phot is None:
-        from .photometry import measure_photometry
-        phot = measure_photometry(run, verbose=False)
+        from .photometry import measurePhotometry
+        phot = measurePhotometry(run, verbose=False)
     cat = Table(phot, copy=True)
     x, y = np.asarray(cat["x"], float), np.asarray(cat["y"], float)
     # half-open ownership: a source on a tile boundary belongs to exactly one tile
     cat["owned"] = ((x >= ib.getMinX() - 0.5) & (x < ib.getMaxX() + 0.5) &
                     (y >= ib.getMinY() - 0.5) & (y < ib.getMaxY() + 0.5))
     cat["tile"] = run.name
-    from .photometry import fits_meta
-    cat.meta = fits_meta(cat.meta)                         # FITS keywords <= 8 characters
+    from .photometry import fitsMeta
+    cat.meta = fitsMeta(cat.meta)                         # FITS keywords <= 8 characters
     hdus = [fits.PrimaryHDU(header=hdr)]
     for nm, arr in (("DATA", data), ("MODEL", model), ("VARIANCE", var), ("BAD", bad)):
         hdus.append(fits.ImageHDU(arr, header=hdr, name=nm))
@@ -172,23 +172,23 @@ def save_tile_products(run, path, phot=None, meta=None):
 
 
 # ---------------------------------------------------------------- fitting
-def _load_visit_image(visit, detector, repo, collection, instrument, visit_image_collections):
+def _loadVisitImage(visit, detector, repo, collection, instrument, visitImageCollections):
     """Load a visit image through the Butler."""
     from lsst.daf.butler import Butler
     butler = Butler(repo, collections=collection)
     where = f"instrument='{instrument}' AND visit={visit} AND detector={detector}"
-    refs = butler.query_datasets("visit_image", collections=visit_image_collections, where=where,
+    refs = butler.query_datasets("visit_image", collections=visitImageCollections, where=where,
                                  find_first=False)
     if not refs:
         raise RuntimeError(f"no visit_image for visit {visit}, detector {detector}")
-    return butler.get("visit_image", collections=visit_image_collections, dataId=refs[0].dataId)
+    return butler.get("visit_image", collections=visitImageCollections, dataId=refs[0].dataId)
 
 
-def fit_tiles(visit, detector, config=None, out_dir="detector_run", tile=400, pad=30,
-              task_index=0, n_tasks=1, region=None, repo="dp2_prep",
-              collection="LSSTCam/runs/DRP/DP2", instrument="LSSTCam",
-              visit_image_collections="LSSTCam/runs/*", psf_source="visit", overwrite=False,
-              visit_image=None, **overrides):
+def fitTiles(visit, detector, config=None, outDir="detector_run", tile=400, pad=30,
+             taskIndex=0, nTasks=1, region=None, repo="dp2_prep",
+             collection="LSSTCam/runs/DRP/DP2", instrument="LSSTCam",
+             visitImageCollections="LSSTCam/runs/*", psfSource="visit", overwrite=False,
+             visitImage=None, **overrides):
     """Fit this task's share of a detector's tiles and write one file per tile.
 
     Tiles already on disk are skipped, so the job can be restarted; a failing tile is reported
@@ -199,13 +199,13 @@ def fit_tiles(visit, detector, config=None, out_dir="detector_run", tile=400, pa
     visit, detector : `int`
         Visit and detector ids.
     config : `dict`, optional
-        Pipeline configuration (default ``make_config(CROWDED_FIELD_CONFIG)``).
-    out_dir : `str`, optional
+        Pipeline configuration (default ``makeConfig(CROWDED_FIELD_CONFIG)``).
+    outDir : `str`, optional
         Output directory.
     tile, pad : `int`, optional
         Tile interior size and fit padding [px].
-    task_index, n_tasks : `int`, optional
-        This task fits tiles ``task_index``, ``task_index + n_tasks``, ... (one Slurm array task
+    taskIndex, nTasks : `int`, optional
+        This task fits tiles ``taskIndex``, ``taskIndex + nTasks``, ... (one Slurm array task
         each).
     region : `tuple` [`int`, `int`, `int`, `int`], optional
         (xmin, xmax, ymin, ymax): only tiles overlapping it (for tests).
@@ -215,16 +215,16 @@ def fit_tiles(visit, detector, config=None, out_dir="detector_run", tile=400, pa
         Default Butler collection.
     instrument : `str`, optional
         Instrument name.
-    visit_image_collections : `str`, optional
+    visitImageCollections : `str`, optional
         Collections searched for the visit image.
-    psf_source : `str`, optional
-        'visit' or 'refit' (see `lsst.meas.crowd.session.build_detector_psf`).
+    psfSource : `str`, optional
+        'visit' or 'refit' (see `lsst.meas.crowd.session.buildDetectorPsf`).
     overwrite : `bool`, optional
         Refit tiles that already have a file.
-    visit_image : `lsst.afw.image.Exposure`, optional
+    visitImage : `lsst.afw.image.Exposure`, optional
         An already-loaded visit image (skips the Butler).
     **overrides
-        Keyword arguments of ``run_session_gaia`` (e.g. ``max_outer=3, max_inner=15``).
+        Keyword arguments of ``runSessionGaia`` (e.g. ``maxOuter=3, maxInner=15``).
 
     Returns
     -------
@@ -234,46 +234,46 @@ def fit_tiles(visit, detector, config=None, out_dir="detector_run", tile=400, pa
     import contextlib
     import io
     from . import session as cn
-    from .gaiaCatalog import attach_gaia
-    from .photometry import measure_photometry
-    from .pipeline import run_session_gaia
-    os.makedirs(out_dir, exist_ok=True)
-    if visit_image is None:
-        visit_image = _load_visit_image(visit, detector, repo, collection, instrument,
-                                        visit_image_collections)
-    bb = visit_image.getBBox()
-    specs = tile_specs(bb.getWidth(), bb.getHeight(), tile, bb.getMinX(), bb.getMinY(), region)
-    mine = specs[task_index::n_tasks]
-    paths = {tile_name(s): os.path.join(out_dir, f"{TILE_PREFIX}{tile_name(s)}.fits") for s in mine}
-    todo = [s for s in mine if overwrite or not os.path.exists(paths[tile_name(s)])]
+    from .gaiaCatalog import attachGaia
+    from .photometry import measurePhotometry
+    from .pipeline import runSessionGaia
+    os.makedirs(outDir, exist_ok=True)
+    if visitImage is None:
+        visitImage = _loadVisitImage(visit, detector, repo, collection, instrument,
+                                     visitImageCollections)
+    bb = visitImage.getBBox()
+    specs = tileSpecs(bb.getWidth(), bb.getHeight(), tile, bb.getMinX(), bb.getMinY(), region)
+    mine = specs[taskIndex::nTasks]
+    paths = {tileName(s): os.path.join(outDir, f"{TILE_PREFIX}{tileName(s)}.fits") for s in mine}
+    todo = [s for s in mine if overwrite or not os.path.exists(paths[tileName(s)])]
     print(f"detector {detector} of visit {visit}: {len(specs)} tiles of ~{tile} px (pad {pad}); "
-          f"task {task_index + 1}/{n_tasks} has {len(mine)}, {len(todo)} still to fit")
+          f"task {taskIndex + 1}/{nTasks} has {len(mine)}, {len(todo)} still to fit")
     if not todo:
         return sorted(paths.values())
-    cfg = config if config is not None else cn.make_config(cn.CROWDED_FIELD_CONFIG)
-    specs_todo = [dict(x0=s[0], y0=s[1], w=s[2], h=s[3], name=tile_name(s)) for s in todo]
-    sess = cn.prepare_session(visit, detector, specs_todo, pad=pad, psf_source=psf_source,
-                              visit_image=visit_image)
-    attach_gaia(sess, cache_dir=os.path.join(out_dir, "gaia_cache"),
-                **({"repo": repo} if repo else {}))
-    kw = dict(max_outer=3, max_inner=15, psf_polish_cycles=3)
+    cfg = config if config is not None else cn.makeConfig(cn.CROWDED_FIELD_CONFIG)
+    specsTodo = [dict(x0=s[0], y0=s[1], w=s[2], h=s[3], name=tileName(s)) for s in todo]
+    sess = cn.prepareSession(visit, detector, specsTodo, pad=pad, psfSource=psfSource,
+                             visitImage=visitImage)
+    attachGaia(sess, cacheDir=os.path.join(outDir, "gaia_cache"),
+               **({"repo": repo} if repo else {}))
+    kw = dict(maxOuter=3, maxInner=15, psfPolishCycles=3)
     kw.update(overrides)
-    t_all = time.perf_counter()
+    tAll = time.perf_counter()
     for k, s in enumerate(todo):
-        name = tile_name(s)
+        name = tileName(s)
         t0 = time.perf_counter()
         print(f"\n######## tile {k + 1}/{len(todo)}: {name}")
         try:
-            runs = run_session_gaia(sess, cfg, names=[name], plot_final=False, **kw)
+            runs = runSessionGaia(sess, cfg, names=[name], plotFinal=False, **kw)
             run = runs[name]
             with contextlib.redirect_stdout(io.StringIO()):
                 phot = (run.photometry if getattr(run, "photometry", None) is not None
-                        else measure_photometry(run, verbose=False, gaia=getattr(sess, "gaia", None)))
-            save_tile_products(run, paths[name], phot,
-                               meta=dict(visit=visit, detector=detector,
-                                         seconds=time.perf_counter() - t0))
-            n_in = int(np.sum(phot["in_interior"])) if "in_interior" in phot.colnames else len(phot)
-            print(f"######## tile {name}: {n_in} sources in its interior, "
+                        else measurePhotometry(run, verbose=False, gaia=getattr(sess, "gaia", None)))
+            saveTileProducts(run, paths[name], phot,
+                             meta=dict(visit=visit, detector=detector,
+                                       seconds=time.perf_counter() - t0))
+            nIn = int(np.sum(phot["inInterior"])) if "inInterior" in phot.colnames else len(phot)
+            print(f"######## tile {name}: {nIn} sources in its interior, "
                   f"{time.perf_counter() - t0:.0f} s -> {paths[name]}")
         except Exception as e:                       # keep going: one bad tile must not kill the job
             import traceback
@@ -281,26 +281,26 @@ def fit_tiles(visit, detector, config=None, out_dir="detector_run", tile=400, pa
             print(f"######## tile {name} FAILED ({type(e).__name__}: {e}) -- rerun to retry")
         finally:
             sess.jobs.pop(name, None)                # free the cutout
-    print(f"\ntask {task_index + 1}/{n_tasks}: {len(todo)} tile(s) in "
-          f"{time.perf_counter() - t_all:.0f} s")
+    print(f"\ntask {taskIndex + 1}/{nTasks}: {len(todo)} tile(s) in "
+          f"{time.perf_counter() - tAll:.0f} s")
     return sorted(p for p in paths.values() if os.path.exists(p))
 
 
 # ---------------------------------------------------------------- stitching
-def stitch_tiles(out_dir="detector_run", mosaic_name="detector_mosaic.fits",
-                 catalog_name="detector_catalog.fits", verbose=True):
+def stitchTiles(outDir="detector_run", mosaicName="detector_mosaic.fits",
+                catalogName="detector_catalog.fits", verbose=True):
     """Assemble the tile files into full-detector images and one catalogue.
 
     Writes the mosaic (DATA, MODEL, RESIDUAL, VARIANCE, BAD and TILE extensions) and the
-    catalogue (every source once, from the tile whose interior contains it) into ``out_dir``.
+    catalogue (every source once, from the tile whose interior contains it) into ``outDir``.
 
     Parameters
     ----------
-    out_dir : `str`, optional
+    outDir : `str`, optional
         Directory with the tile files.
-    mosaic_name : `str`, optional
+    mosaicName : `str`, optional
         Mosaic file name.
-    catalog_name : `str`, optional
+    catalogName : `str`, optional
         Catalogue file name.
     verbose : `bool`, optional
         Print a summary.
@@ -314,13 +314,13 @@ def stitch_tiles(out_dir="detector_run", mosaic_name="detector_mosaic.fits",
     Raises
     ------
     FileNotFoundError
-        Raised if ``out_dir`` has no tile files.
+        Raised if ``outDir`` has no tile files.
     """
     from astropy.io import fits
     from astropy.table import Table, vstack
-    files = sorted(glob.glob(os.path.join(out_dir, f"{TILE_PREFIX}*.fits")))
+    files = sorted(glob.glob(os.path.join(outDir, f"{TILE_PREFIX}*.fits")))
     if not files:
-        raise FileNotFoundError(f"no {TILE_PREFIX}*.fits in {out_dir}")
+        raise FileNotFoundError(f"no {TILE_PREFIX}*.fits in {outDir}")
     heads = [fits.getheader(f, "DATA") for f in files]
     gx0 = min(h["IX0"] for h in heads)
     gy0 = min(h["IY0"] for h in heads)
@@ -358,48 +358,48 @@ def stitch_tiles(out_dir="detector_run", mosaic_name="detector_mosaic.fits",
     for nm, key in (("DATA", "data"), ("MODEL", "model"), ("RESIDUAL", "resid"),
                     ("VARIANCE", "var"), ("BAD", "bad"), ("TILE", "tile")):
         hdus.append(fits.ImageHDU(out[key], header=hdr, name=nm))
-    fits.HDUList(hdus).writeto(os.path.join(out_dir, mosaic_name), overwrite=True)
-    catalog.write(os.path.join(out_dir, catalog_name), overwrite=True)
+    fits.HDUList(hdus).writeto(os.path.join(outDir, mosaicName), overwrite=True)
+    catalog.write(os.path.join(outDir, catalogName), overwrite=True)
     if verbose:
-        n_missing = int((out["tile"] < 0).sum())
+        nMissing = int((out["tile"] < 0).sum())
         print(f"stitched {len(files)} tile(s) -> {shape[1]} x {shape[0]} px mosaic, "
               f"{len(catalog)} sources"
-              + (f"; {n_missing} px not covered by any finished tile" if n_missing else "")
-              + f"\n  {os.path.join(out_dir, mosaic_name)}\n  {os.path.join(out_dir, catalog_name)}")
+              + (f"; {nMissing} px not covered by any finished tile" if nMissing else "")
+              + f"\n  {os.path.join(outDir, mosaicName)}\n  {os.path.join(outDir, catalogName)}")
     return out
 
 
-def load_mosaic(out_dir="detector_run", mosaic_name="detector_mosaic.fits",
-                catalog_name="detector_catalog.fits"):
-    """Read the files written by `stitch_tiles`.
+def loadMosaic(outDir="detector_run", mosaicName="detector_mosaic.fits",
+               catalogName="detector_catalog.fits"):
+    """Read the files written by `stitchTiles`.
 
     Parameters
     ----------
-    out_dir : `str`, optional
+    outDir : `str`, optional
         Directory.
-    mosaic_name : `str`, optional
+    mosaicName : `str`, optional
         Mosaic file name.
-    catalog_name : `str`, optional
+    catalogName : `str`, optional
         Catalogue file name.
 
     Returns
     -------
     mosaic : `dict`
-        As returned by `stitch_tiles` (without ``tiles`` and ``interiors``).
+        As returned by `stitchTiles` (without ``tiles`` and ``interiors``).
     """
     from astropy.io import fits
     from astropy.table import Table
-    with fits.open(os.path.join(out_dir, mosaic_name)) as hl:
+    with fits.open(os.path.join(outDir, mosaicName)) as hl:
         out = dict(data=hl["DATA"].data, model=hl["MODEL"].data, resid=hl["RESIDUAL"].data,
                    var=hl["VARIANCE"].data, bad=hl["BAD"].data, tile=hl["TILE"].data,
                    x0=hl[0].header["X0"], y0=hl[0].header["Y0"])
-    p = os.path.join(out_dir, catalog_name)
+    p = os.path.join(outDir, catalogName)
     out["catalog"] = Table.read(p) if os.path.exists(p) else None
     return out
 
 
-def load_tile(path):
-    """Read one tile file written by `save_tile_products`.
+def loadTile(path):
+    """Read one tile file written by `saveTileProducts`.
 
     Parameters
     ----------
@@ -409,7 +409,7 @@ def load_tile(path):
     Returns
     -------
     tile : `dict`
-        In the form of `load_mosaic`'s result over the tile's fit box (``data``, ``model``,
+        In the form of `loadMosaic`'s result over the tile's fit box (``data``, ``model``,
         ``resid``, ``var``, ``bad``, ``tile``, ``x0``, ``y0``, ``catalog``), plus ``name`` and
         ``interiors`` (the tile's interior as one (x0, y0, x1, y1) tuple, inclusive).
     """
@@ -427,7 +427,7 @@ def load_tile(path):
     return out
 
 
-def plot_tile(tile, z_clip=5.0, grayscale=False, sources=True, figsize=(24, 6.5), out=None):
+def plotTile(tile, zClip=5.0, grayscale=False, sources=True, figsize=(24, 6.5), out=None):
     """Plot data | model | residual | residual/sigma of one tile over its whole fit box.
 
     The tile's interior (the part kept in the mosaic) is outlined; outside it is the padding,
@@ -436,8 +436,8 @@ def plot_tile(tile, z_clip=5.0, grayscale=False, sources=True, figsize=(24, 6.5)
     Parameters
     ----------
     tile : `dict` or `str`
-        Output of `load_tile`, or the tile file.
-    z_clip : `float`, optional
+        Output of `loadTile`, or the tile file.
+    zClip : `float`, optional
         Colour range of residual/sigma.
     grayscale : `bool`, optional
         Residual panels in greyscale.
@@ -451,12 +451,12 @@ def plot_tile(tile, z_clip=5.0, grayscale=False, sources=True, figsize=(24, 6.5)
     Returns
     -------
     result : `dict`
-        As `plot_detector`'s.
+        As `plotDetector`'s.
     """
     if isinstance(tile, str):
-        tile = load_tile(tile)
-    return plot_detector(tile, binning=1, show_tiles=True, z_clip=z_clip, grayscale=grayscale,
-                         figsize=figsize, sources=sources, out=out)
+        tile = loadTile(tile)
+    return plotDetector(tile, binning=1, showTiles=True, zClip=zClip, grayscale=grayscale,
+                        figsize=figsize, sources=sources, out=out)
 
 
 # ---------------------------------------------------------------- plotting
@@ -468,22 +468,22 @@ def _block(a, b, func=np.nanmean):
     return func(a[:ny, :nx].reshape(ny // b, b, nx // b, b), axis=(1, 3))
 
 
-def plot_detector(mosaic, view=None, binning=None, show_tiles=True, z_clip=5.0, grayscale=False,
-                  figsize=(26, 7.5), sources=False, out=None):
+def plotDetector(mosaic, view=None, binning=None, showTiles=True, zClip=5.0, grayscale=False,
+                 figsize=(26, 7.5), sources=False, out=None):
     """Plot data | model | residual | residual/sigma of a stitched detector or a zoom.
 
     Parameters
     ----------
     mosaic : `dict` or `str`
-        Output of `stitch_tiles` / `load_mosaic`, or the directory to load.
+        Output of `stitchTiles` / `loadMosaic`, or the directory to load.
     view : `tuple` [`float`, `float`, `float`, `float`], optional
         (xmin, xmax, ymin, ymax) zoom in detector pixels.
     binning : `int`, optional
         Display block size (default: about 1000 px across the view); residual/sigma is binned as
         sum / sqrt(n) so its noise stays 1.
-    show_tiles : `bool`, optional
+    showTiles : `bool`, optional
         Draw the tile boundaries.
-    z_clip : `float`, optional
+    zClip : `float`, optional
         Colour range of residual/sigma.
     grayscale : `bool`, optional
         Residual panels in greyscale.
@@ -497,13 +497,13 @@ def plot_detector(mosaic, view=None, binning=None, show_tiles=True, z_clip=5.0, 
     Returns
     -------
     result : `dict`
-        ``residual_sigma`` (robust sigma of residual/sigma over the view) and ``binning``.
+        ``residualSigma`` (robust sigma of residual/sigma over the view) and ``binning``.
     """
     import matplotlib.pyplot as plt
     from matplotlib.colors import ListedColormap
     from astropy.visualization import simple_norm
     if isinstance(mosaic, str):
-        mosaic = load_mosaic(mosaic)
+        mosaic = loadMosaic(mosaic)
     gx0, gy0 = mosaic["x0"], mosaic["y0"]
     ny, nx = mosaic["data"].shape
     if view is None:
@@ -533,13 +533,13 @@ def plot_detector(mosaic, view=None, binning=None, show_tiles=True, z_clip=5.0, 
     zg = z[good]
     q1, q3 = (np.percentile(zg, [25, 75]) if zg.size else (np.nan, np.nan))
     sig = (q3 - q1) / 1.349
-    cm_res = plt.get_cmap("gray" if grayscale else "RdBu_r")
+    cmRes = plt.get_cmap("gray" if grayscale else "RdBu_r")
     panels = [(f"data (fitted image){', binned %dx%d' % (b, b) if b > 1 else ''}", db,
                dict(cmap="viridis", norm=norm)),
               ("model", mb, dict(cmap="viridis", norm=norm)),
-              ("residual = data − model", rb, dict(cmap=cm_res, vmin=-rs, vmax=rs)),
+              ("residual = data − model", rb, dict(cmap=cmRes, vmin=-rs, vmax=rs)),
               (f"residual / σ  (robust σ {sig:.3f} per px)", zb,
-               dict(cmap=cm_res, vmin=-z_clip, vmax=z_clip))]
+               dict(cmap=cmRes, vmin=-zClip, vmax=zClip))]
     fig, axes = plt.subplots(1, 4, figsize=figsize, sharex=True, sharey=True)
     for ax, (ttl, img, kw) in zip(axes, panels):
         im = ax.imshow(img, origin="lower", extent=ext, interpolation="nearest", **kw)
@@ -547,7 +547,7 @@ def plot_detector(mosaic, view=None, binning=None, show_tiles=True, z_clip=5.0, 
         if badb.any():
             ax.imshow(np.ma.masked_where(~badb, np.ones(badb.shape)), origin="lower", extent=ext,
                       cmap=ListedColormap(["#ff00ff"]), interpolation="nearest")
-        if show_tiles and "interiors" in mosaic:
+        if showTiles and "interiors" in mosaic:
             for ix0, iy0, ix1, iy1 in mosaic["interiors"]:
                 ax.add_patch(plt.Rectangle((ix0 - .5, iy0 - .5), ix1 - ix0 + 1, iy1 - iy0 + 1,
                                            fill=False, ec="w" if ax in axes[:2] else "k", lw=0.4,
@@ -561,12 +561,17 @@ def plot_detector(mosaic, view=None, binning=None, show_tiles=True, z_clip=5.0, 
     axes[0].set_ylabel("y [px]")
     axes[0].set_xlim(view[0] - .5, view[1] + .5)
     axes[0].set_ylim(view[2] - .5, view[3] + .5)
-    n_src = len(mosaic["catalog"]) if mosaic.get("catalog") is not None else 0
+    nSrc = len(mosaic["catalog"]) if mosaic.get("catalog") is not None else 0
     what = f"tile {mosaic['name']}" if "name" in mosaic else "stitched detector"
-    fig.suptitle(f"{what}: {n_src} sources; magenta = bad / not fitted"
-                 + ("; lines = tile interiors" if show_tiles else ""), fontsize=11)
+    fig.suptitle(f"{what}: {nSrc} sources; magenta = bad / not fitted"
+                 + ("; lines = tile interiors" if showTiles else ""), fontsize=11)
     plt.tight_layout()
     if out:
         fig.savefig(out, dpi=130, bbox_inches="tight")
     plt.show()
-    return dict(residual_sigma=float(sig), binning=b)
+    return dict(residualSigma=float(sig), binning=b)
+
+
+# old snake_case names still work (with a FutureWarning)
+from ._compat import moduleGetattr  # noqa: E402
+__getattr__ = moduleGetattr(globals())

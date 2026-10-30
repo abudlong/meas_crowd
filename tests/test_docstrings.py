@@ -45,7 +45,7 @@ MODULES = ["adaptive", "detector", "fastKernels", "fitLib", "gaiaCatalog", "phot
 IGNORE = {"SA01", "EX01", "SS06", "GL01", "ES01", "RT02", "SS05", "GL02"}
 
 
-def _public_objects(mod):
+def _publicObjects(mod):
     for name, obj in vars(mod).items():
         if name.startswith("_") or getattr(obj, "__module__", None) != mod.__name__:
             continue
@@ -64,7 +64,7 @@ class DocstringTestCase(unittest.TestCase):
         problems = []
         for m in MODULES:
             mod = importlib.import_module(f"lsst.meas.crowd.{m}")
-            for qual in _public_objects(mod):
+            for qual in _publicObjects(mod):
                 errs = [f"{c} {msg}" for c, msg in validate(qual)["errors"] if c not in IGNORE]
                 if errs:
                     problems.append(f"{qual}: " + "; ".join(errs))
@@ -86,8 +86,8 @@ class FunctionReferenceTestCase(unittest.TestCase):
             warnings.simplefilter("ignore")
             text = gen.build()
         with open(gen.OUT) as fh:
-            on_disk = fh.read()
-        self.assertTrue(text == on_disk, "doc/function_reference.md is out of date: run "
+            onDisk = fh.read()
+        self.assertTrue(text == onDisk, "doc/function_reference.md is out of date: run "
                         "`python doc/make_function_reference.py` from the repository root")
 
 

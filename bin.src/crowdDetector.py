@@ -37,7 +37,7 @@ import os
 import sys
 
 
-def _env_int(name, default):
+def _envInt(name, default):
     v = os.environ.get(name)
     return int(v) if v not in (None, "") else default
 
@@ -52,10 +52,10 @@ def main(argv=None):
     f.add_argument("--out", required=True)
     f.add_argument("--tile", type=int, default=400)
     f.add_argument("--pad", type=int, default=30)
-    array_min = _env_int("SLURM_ARRAY_TASK_MIN", 0)
+    arrayMin = _envInt("SLURM_ARRAY_TASK_MIN", 0)
     f.add_argument("--task-index", type=int,
-                   default=_env_int("SLURM_ARRAY_TASK_ID", array_min) - array_min)
-    f.add_argument("--n-tasks", type=int, default=_env_int("SLURM_ARRAY_TASK_COUNT", 1))
+                   default=_envInt("SLURM_ARRAY_TASK_ID", arrayMin) - arrayMin)
+    f.add_argument("--n-tasks", type=int, default=_envInt("SLURM_ARRAY_TASK_COUNT", 1))
     f.add_argument("--region", type=int, nargs=4, metavar=("XMIN", "XMAX", "YMIN", "YMAX"))
     f.add_argument("--repo", default="dp2_prep")
     f.add_argument("--collection", default="LSSTCam/runs/DRP/DP2")
@@ -79,18 +79,18 @@ def main(argv=None):
     from lsst.meas.crowd import detector
 
     if args.cmd == "fit":
-        detector.fit_tiles(args.visit, args.detector, out_dir=args.out, tile=args.tile, pad=args.pad,
-                           task_index=args.task_index, n_tasks=args.n_tasks, region=args.region,
-                           repo=args.repo, collection=args.collection, overwrite=args.overwrite,
-                           max_outer=args.max_outer, max_inner=args.max_inner)
+        detector.fitTiles(args.visit, args.detector, outDir=args.out, tile=args.tile, pad=args.pad,
+                          taskIndex=args.task_index, nTasks=args.n_tasks, region=args.region,
+                          repo=args.repo, collection=args.collection, overwrite=args.overwrite,
+                          maxOuter=args.max_outer, maxInner=args.max_inner)
     elif args.cmd == "stitch":
-        detector.stitch_tiles(args.out)
+        detector.stitchTiles(args.out)
     else:
-        mosaic = detector.stitch_tiles(args.out, verbose=False)
+        mosaic = detector.stitchTiles(args.out, verbose=False)
         png = args.png or os.path.join(args.out, "detector_view.png")
-        st = detector.plot_detector(mosaic, view=args.view, show_tiles=not args.no_tiles,
-                                    sources=args.sources, out=png)
-        print(f"residual/sigma robust sigma {st['residual_sigma']:.3f}; wrote {png}")
+        st = detector.plotDetector(mosaic, view=args.view, showTiles=not args.no_tiles,
+                                   sources=args.sources, out=png)
+        print(f"residual/sigma robust sigma {st['residualSigma']:.3f}; wrote {png}")
     return 0
 
 

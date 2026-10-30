@@ -40,7 +40,7 @@ GAIA_EPOCH = 2016.0          # Gaia DR3 reference epoch (TCB Julian year)
 # =====================================================================
 # Gaia catalog for a visit image
 # =====================================================================
-def visit_epoch(exposure):
+def visitEpoch(exposure):
     """Return the observation epoch of an exposure.
 
     Parameters
@@ -73,20 +73,20 @@ def _col(tbl, name, fill=np.nan):
     return np.asarray(c, float)
 
 
-def _sky_corners(wcs, bbox):
+def _skyCorners(wcs, bbox):
     """Return the sky positions of a box's corners."""
     pts = [(bbox.getMinX(), bbox.getMinY()), (bbox.getMinX(), bbox.getMaxY()),
            (bbox.getMaxX(), bbox.getMaxY()), (bbox.getMaxX(), bbox.getMinY())]
     return [wcs.pixelToSky(float(x), float(y)) for x, y in pts]
 
 
-def _gaia_from_butler(wcs, bbox, epoch, butler, refcat, collections):
+def _gaiaFromButler(wcs, bbox, epoch, butler, refcat, collections):
     """Load Gaia from the Butler reference catalogue (proper motions applied by the loader)."""
     import lsst.sphgeom as sph
     from lsst.meas.algorithms import ReferenceObjectLoader
     poly = sph.ConvexPolygon.convexHull(
         [sph.UnitVector3d(sph.LonLat.fromDegrees(c.getRa().asDegrees(), c.getDec().asDegrees()))
-         for c in _sky_corners(wcs, bbox)])
+         for c in _skyCorners(wcs, bbox)])
     shards = [i for b, e in sph.HtmPixelization(7).envelope(poly) for i in range(b, e)]
     where = f"htm7 IN ({','.join(map(str, shards))})"
     try:        # the loader needs each shard's region -> data IDs WITH dimension records
@@ -116,14 +116,14 @@ def _gaia_from_butler(wcs, bbox, epoch, butler, refcat, collections):
                    phot_g_mean_mag=mag(res.fluxField),
                    phot_bp_mean_mag=mag("phot_bp_mean_flux"),
                    phot_rp_mean_mag=mag("phot_rp_mean_flux")))
-    t.meta["gaia_mag_system"] = "AB, from the reference catalogue fluxes [nJy]"
+    t.meta["gaiaMagSystem"] = "AB, from the reference catalogue fluxes [nJy]"
     return t
 
 
-def _gaia_from_tap(wcs, bbox, epoch, tap_url):
+def _gaiaFromTap(wcs, bbox, epoch, tapUrl):
     """Query Gaia at the ESA archive and propagate the positions to ``epoch``."""
     import pyvo
-    corners = _sky_corners(wcs, bbox)
+    corners = _skyCorners(wcs, bbox)
     center = wcs.pixelToSky(bbox.getCenter())
     radius = max(center.separation(c).asDegrees() for c in corners) * 1.05
     ra0, dec0 = center.getRa().asDegrees(), center.getDec().asDegrees()
@@ -131,7 +131,7 @@ def _gaia_from_tap(wcs, bbox, epoch, tap_url):
                    phot_rp_mean_mag, ruwe
             FROM gaiadr3.gaia_source
             WHERE 1 = CONTAINS(POINT('ICRS', ra, dec), CIRCLE('ICRS', {ra0}, {dec0}, {radius}))"""
-    svc = pyvo.dal.TAPService(tap_url)
+    svc = pyvo.dal.TAPService(tapUrl)
     try:
         t = svc.run_async(q, maxrec=10 ** 7).to_table()
     except Exception:
@@ -139,20 +139,20 @@ def _gaia_from_tap(wcs, bbox, epoch, tap_url):
     ra, dec = _col(t, "ra"), _col(t, "dec")
     dt = (epoch.jyear - GAIA_EPOCH) if epoch is not None else 0.0
     pmra, pmdec = _col(t, "pmra", 0.0), _col(t, "pmdec", 0.0)     # mas/yr (pmra has cos dec)
-    dec_e = dec + pmdec * dt / 3.6e6
-    ra_e = ra + pmra * dt / 3.6e6 / np.cos(np.radians(dec))
-    out = Table(dict(source_id=np.asarray(t["source_id"], np.int64), ra=ra_e, dec=dec_e,
+    decE = dec + pmdec * dt / 3.6e6
+    raE = ra + pmra * dt / 3.6e6 / np.cos(np.radians(dec))
+    out = Table(dict(source_id=np.asarray(t["source_id"], np.int64), ra=raE, dec=decE,
                      phot_g_mean_mag=_col(t, "phot_g_mean_mag"),
                      phot_bp_mean_mag=_col(t, "phot_bp_mean_mag"),
                      phot_rp_mean_mag=_col(t, "phot_rp_mean_mag"), ruwe=_col(t, "ruwe")))
-    out.meta["gaia_mag_system"] = "Vega (Gaia archive)"
+    out.meta["gaiaMagSystem"] = "Vega (Gaia archive)"
     return out
 
 
-def gaia_catalog(wcs, bbox, epoch=None, source="auto", butler=None, repo="dp2_prep",
-                 refcat="gaia_dr3_20230707", refcat_collections="refcats",
-                 tap_url="https://gea.esac.esa.int/tap-server/tap", cache_path=None,
-                 pad=0, verbose=True):
+def loadGaiaCatalog(wcs, bbox, epoch=None, source="auto", butler=None, repo="dp2_prep",
+                    refcat="gaia_dr3_20230707", refcatCollections="refcats",
+                    tapUrl="https://gea.esac.esa.int/tap-server/tap", cachePath=None,
+                    pad=0, verbose=True):
     """Load the Gaia DR3 stars overlapping a box, with positions at the observation epoch.
 
     Parameters
@@ -171,11 +171,11 @@ def gaia_catalog(wcs, bbox, epoch=None, source="auto", butler=None, repo="dp2_pr
         Butler repository path or alias.
     refcat : `str`, optional
         Reference catalogue dataset type.
-    refcat_collections : `str`, optional
+    refcatCollections : `str`, optional
         Collections of the reference catalogue.
-    tap_url : `str`, optional
+    tapUrl : `str`, optional
         TAP service URL.
-    cache_path : `str`, optional
+    cachePath : `str`, optional
         .ecsv file: read if it exists, written otherwise.
     pad : `int`, optional
         Grow the box by this many px.
@@ -186,17 +186,17 @@ def gaia_catalog(wcs, bbox, epoch=None, source="auto", butler=None, repo="dp2_pr
     -------
     gaia : `astropy.table.Table`
         ``source_id``, ``ra``, ``dec``, ``phot_g_mean_mag``, pixel positions ``x``, ``y`` and
-        further Gaia columns; ``meta['epoch_jyear']`` is the epoch used.
+        further Gaia columns; ``meta['epochJyear']`` is the epoch used.
 
     Raises
     ------
     RuntimeError
         Raised if Gaia could not be loaded from any source.
     """
-    if cache_path and os.path.exists(cache_path):
-        tbl = Table.read(cache_path)
+    if cachePath and os.path.exists(cachePath):
+        tbl = Table.read(cachePath)
         if verbose:
-            print(f"Gaia: {len(tbl)} stars read from cache {cache_path}")
+            print(f"Gaia: {len(tbl)} stars read from cache {cachePath}")
         return tbl
     G = L.geom
     qbox = G.Box2I(bbox)
@@ -209,9 +209,9 @@ def gaia_catalog(wcs, bbox, epoch=None, source="auto", butler=None, repo="dp2_pr
                 if butler is None:
                     from lsst.daf.butler import Butler
                     butler = Butler(repo)
-                tbl = _gaia_from_butler(wcs, qbox, epoch, butler, refcat, refcat_collections)
+                tbl = _gaiaFromButler(wcs, qbox, epoch, butler, refcat, refcatCollections)
             else:
-                tbl = _gaia_from_tap(wcs, qbox, epoch, tap_url)
+                tbl = _gaiaFromTap(wcs, qbox, epoch, tapUrl)
             if verbose:
                 print(f"Gaia: {len(tbl)} stars from {src} ({time.perf_counter() - t0:.1f}s, "
                       f"epoch {epoch.jyear if epoch is not None else GAIA_EPOCH:.2f})")
@@ -228,14 +228,14 @@ def gaia_catalog(wcs, bbox, epoch=None, source="auto", butler=None, repo="dp2_pr
     inside = ((tbl["x"] >= qbox.getMinX() - .5) & (tbl["x"] <= qbox.getMaxX() + .5) &
               (tbl["y"] >= qbox.getMinY() - .5) & (tbl["y"] <= qbox.getMaxY() + .5))
     tbl = tbl[inside]
-    tbl.meta["epoch_jyear"] = float(epoch.jyear) if epoch is not None else GAIA_EPOCH
-    if cache_path:
-        os.makedirs(os.path.dirname(os.path.abspath(cache_path)), exist_ok=True)
-        tbl.write(cache_path, overwrite=True)
+    tbl.meta["epochJyear"] = float(epoch.jyear) if epoch is not None else GAIA_EPOCH
+    if cachePath:
+        os.makedirs(os.path.dirname(os.path.abspath(cachePath)), exist_ok=True)
+        tbl.write(cachePath, overwrite=True)
     return tbl
 
 
-def attach_gaia(session, visit_image=None, pad=64, cache_dir="gaia_cache", **kw):
+def attachGaia(session, visitImage=None, pad=64, cacheDir="gaia_cache", **kw):
     """Load Gaia once for a session and store it as ``session.gaia``.
 
     Covers the whole visit image or, without one, the union of the session's cutouts; the
@@ -245,63 +245,63 @@ def attach_gaia(session, visit_image=None, pad=64, cache_dir="gaia_cache", **kw)
     ----------
     session : `lsst.meas.crowd.session.Session`
         The session (``session.gaia`` is set).
-    visit_image : `lsst.afw.image.Exposure`, optional
+    visitImage : `lsst.afw.image.Exposure`, optional
         The full visit image.
     pad : `int`, optional
         Grow the box by this many px.
-    cache_dir : `str`, optional
+    cacheDir : `str`, optional
         Cache directory (None = no cache).
     **kw
-        Keyword arguments of `gaia_catalog` (e.g. ``repo``).
+        Keyword arguments of `loadGaiaCatalog` (e.g. ``repo``).
 
     Returns
     -------
     gaia : `astropy.table.Table`
-        The Gaia catalogue (see `gaia_catalog`).
+        The Gaia catalogue (see `loadGaiaCatalog`).
     """
     G = L.geom
-    if visit_image is not None:
-        bbox = visit_image.getBBox()
-        epoch = visit_epoch(visit_image)
+    if visitImage is not None:
+        bbox = visitImage.getBBox()
+        epoch = visitEpoch(visitImage)
     else:
         boxes = [j["raw"].getBBox() for j in session.jobs.values()]
         bbox = G.Box2I(boxes[0])
         for b in boxes[1:]:
             bbox.include(b)
-        epoch = visit_epoch(next(iter(session.jobs.values()))["raw"])
+        epoch = visitEpoch(next(iter(session.jobs.values()))["raw"])
     if epoch is None:
         print("WARNING: no visit date found -- Gaia positions are NOT proper-motion corrected")
     cache = None
-    if cache_dir:
-        cache = os.path.join(cache_dir, f"gaia_visit{session.visit}_det{session.detector}_"
-                                        f"{bbox.getMinX()}_{bbox.getMinY()}_{bbox.getWidth()}x"
-                                        f"{bbox.getHeight()}.ecsv")
-    session.gaia = gaia_catalog(session.wcs, bbox, epoch, cache_path=cache, pad=pad, **kw)
+    if cacheDir:
+        cache = os.path.join(cacheDir, f"gaia_visit{session.visit}_det{session.detector}_"
+                             f"{bbox.getMinX()}_{bbox.getMinY()}_{bbox.getWidth()}x"
+                             f"{bbox.getHeight()}.ecsv")
+    session.gaia = loadGaiaCatalog(session.wcs, bbox, epoch, cachePath=cache, pad=pad, **kw)
     return session.gaia
 
 
 # =====================================================================
-# Cutout / session front ends (mirror cutout_notebook.run_cutout / run_session)
+# Gaia starting positions of a cutout
 # =====================================================================
-def select_gaia_sources(gaia_tbl, bbox, fwhm, pad_fwhm=1.5, gmag_max=None, min_sep_px=0.5):
+def selectGaiaSources(gaiaTbl, bbox, fwhm, padFwhm=1.5, gmagMax=None, minSepPx=0.5):
     """Select the Gaia stars whose positions start the fit of a cutout.
 
-    Stars inside the box grown by ``pad_fwhm * fwhm``, brightest first, with near-duplicates
-    (closer than ``min_sep_px``) removed.
+    Stars inside the box grown by ``padFwhm * fwhm``, brightest first, with near-duplicates
+    (closer than ``minSepPx``) removed.
 
     Parameters
     ----------
-    gaia_tbl : `astropy.table.Table` or `None`
+    gaiaTbl : `astropy.table.Table` or `None`
         Gaia catalogue with ``x``, ``y`` (and ``phot_g_mean_mag``).
     bbox : `lsst.geom.Box2I`
         Cutout box.
     fwhm : `float`
         PSF FWHM [px].
-    pad_fwhm : `float`, optional
+    padFwhm : `float`, optional
         Growth of the box [FWHM].
-    gmag_max : `float`, optional
+    gmagMax : `float`, optional
         Only stars brighter than this G magnitude.
-    min_sep_px : `float`, optional
+    minSepPx : `float`, optional
         Drop fainter stars within this many px of a brighter one.
 
     Returns
@@ -309,18 +309,18 @@ def select_gaia_sources(gaia_tbl, bbox, fwhm, pad_fwhm=1.5, gmag_max=None, min_s
     xy : `numpy.ndarray`
         Starting positions, shape (N, 2).
     rows : `numpy.ndarray` [`int`]
-        Their rows in ``gaia_tbl``.
+        Their rows in ``gaiaTbl``.
     """
-    if gaia_tbl is None or len(gaia_tbl) == 0:
+    if gaiaTbl is None or len(gaiaTbl) == 0:
         return np.zeros((0, 2)), np.zeros(0, np.int64)
-    x, y = np.asarray(gaia_tbl["x"], float), np.asarray(gaia_tbl["y"], float)
-    g = np.asarray(gaia_tbl["phot_g_mean_mag"], float) if "phot_g_mean_mag" in gaia_tbl.colnames \
+    x, y = np.asarray(gaiaTbl["x"], float), np.asarray(gaiaTbl["y"], float)
+    g = np.asarray(gaiaTbl["phot_g_mean_mag"], float) if "phot_g_mean_mag" in gaiaTbl.colnames \
         else np.zeros(len(x))
-    pad = pad_fwhm * fwhm
+    pad = padFwhm * fwhm
     ok = (np.isfinite(x) & np.isfinite(y) & (x >= bbox.getMinX() - pad) & (x <= bbox.getMaxX() + pad)
           & (y >= bbox.getMinY() - pad) & (y <= bbox.getMaxY() + pad))
-    if gmag_max is not None:
-        ok &= np.nan_to_num(g, nan=99) <= gmag_max
+    if gmagMax is not None:
+        ok &= np.nan_to_num(g, nan=99) <= gmagMax
     idx = np.flatnonzero(ok)
     idx = idx[np.argsort(np.nan_to_num(g[idx], nan=99))]           # brightest first
     keep = []
@@ -330,7 +330,7 @@ def select_gaia_sources(gaia_tbl, bbox, fwhm, pad_fwhm=1.5, gmag_max=None, min_s
         tree = cKDTree(xy)
         for i in range(len(idx)):
             if alive[i]:
-                for j in tree.query_ball_point(xy[i], min_sep_px):
+                for j in tree.query_ball_point(xy[i], minSepPx):
                     if j > i:
                         alive[j] = False
         keep = idx[alive]
@@ -338,4 +338,9 @@ def select_gaia_sources(gaia_tbl, bbox, fwhm, pad_fwhm=1.5, gmag_max=None, min_s
     return np.column_stack([x[keep], y[keep]]) if len(keep) else np.zeros((0, 2)), keep
 
 
-select_seeds = select_gaia_sources     # the old name, so existing code keeps working
+selectSeeds = selectGaiaSources     # the old name, so existing code keeps working
+
+
+# old snake_case names still work (with a FutureWarning)
+from ._compat import moduleGetattr  # noqa: E402
+__getattr__ = moduleGetattr(globals())

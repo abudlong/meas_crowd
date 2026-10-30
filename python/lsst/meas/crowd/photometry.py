@@ -30,13 +30,13 @@ For every source of a finished run:
   corrected to total flux with the PSF's own curve of growth;
 * AB **magnitudes** for both, through the exposure's PhotoCalib when present, else a zero point.
 
-The numerical pieces (`flux_to_mag`, `aperture_flux`, `aperture_correction`,
-`fisher_flux_errors`) work on plain arrays and are unit tested without the Rubin stack.
+The numerical pieces (`fluxToMag`, `apertureFlux`, `apertureCorrection`,
+`fisherFluxErrors`) work on plain arrays and are unit tested without the Rubin stack.
 """
 
-__all__ = ["AB_NJY_ZERO_POINT", "flux_to_mag", "aperture_flux", "aperture_correction",
-           "fisher_flux_errors", "psf_flux_errors", "zero_point_from_run", "compare_with_gaia",
-           "measure_photometry", "fits_meta", "FITS_META_KEYS"]
+__all__ = ["AB_NJY_ZERO_POINT", "fluxToMag", "apertureFlux", "apertureCorrection",
+           "fisherFluxErrors", "psfFluxErrors", "zeroPointFromRun", "compareWithGaia",
+           "measurePhotometry", "fitsMeta", "FITS_META_KEYS"]
 
 import numpy as np
 from scipy.sparse import coo_matrix
@@ -45,16 +45,16 @@ from scipy.sparse.csgraph import connected_components
 AB_NJY_ZERO_POINT = 31.4      # m_AB = -2.5 log10(flux / nJy) + 31.4
 
 
-def flux_to_mag(flux, flux_err=None, zero_point=AB_NJY_ZERO_POINT):
+def fluxToMag(flux, fluxErr=None, zeroPoint=AB_NJY_ZERO_POINT):
     """Convert fluxes (and errors) to magnitudes.
 
     Parameters
     ----------
     flux : array-like
-        Fluxes, in units where ``zero_point`` applies.
-    flux_err : array-like, optional
+        Fluxes, in units where ``zeroPoint`` applies.
+    fluxErr : array-like, optional
         Flux errors.
-    zero_point : `float`, optional
+    zeroPoint : `float`, optional
         Magnitude of unit flux (default: AB for nJy).
 
     Returns
@@ -62,18 +62,18 @@ def flux_to_mag(flux, flux_err=None, zero_point=AB_NJY_ZERO_POINT):
     mag : `numpy.ndarray`
         Magnitudes (NaN for non-positive fluxes).
     mag_err : `numpy.ndarray`
-        Magnitude errors (only if ``flux_err`` is given).
+        Magnitude errors (only if ``fluxErr`` is given).
     """
     flux = np.asarray(flux, float)
     with np.errstate(divide="ignore", invalid="ignore"):
-        mag = np.where(flux > 0, zero_point - 2.5 * np.log10(np.where(flux > 0, flux, 1.0)), np.nan)
-        if flux_err is None:
+        mag = np.where(flux > 0, zeroPoint - 2.5 * np.log10(np.where(flux > 0, flux, 1.0)), np.nan)
+        if fluxErr is None:
             return mag
-        err = np.where(flux > 0, 2.5 / np.log(10) * np.asarray(flux_err, float) / flux, np.nan)
+        err = np.where(flux > 0, 2.5 / np.log(10) * np.asarray(fluxErr, float) / flux, np.nan)
     return mag, err
 
 
-def _pixel_fractions(dx, dy, radius, sub=5):
+def _pixelFractions(dx, dy, radius, sub=5):
     """Return the fraction of each pixel inside a circle (5x5 sub-sampling at the edge)."""
     d = np.hypot(dx, dy)
     frac = (d <= radius - 0.7072).astype(float)
@@ -86,7 +86,7 @@ def _pixel_fractions(dx, dy, radius, sub=5):
     return frac
 
 
-def aperture_flux(image, variance, good, x, y, radius, x0=0, y0=0):
+def apertureFlux(image, variance, good, x, y, radius, x0=0, y0=0):
     """Sum the flux in a circular aperture.
 
     Parameters
@@ -108,7 +108,7 @@ def aperture_flux(image, variance, good, x, y, radius, x0=0, y0=0):
     -------
     flux : `float`
         Aperture flux (NaN if the aperture misses the image).
-    flux_err : `float`
+    fluxErr : `float`
         Its error.
     coverage : `float`
         Fraction of the aperture area on good pixels.
@@ -121,7 +121,7 @@ def aperture_flux(image, variance, good, x, y, radius, x0=0, y0=0):
     if xb <= xa or yb <= ya:
         return np.nan, np.nan, 0.0
     yy, xx = np.mgrid[ya:yb, xa:xb]
-    f = _pixel_fractions(xx + x0 - x, yy + y0 - y, radius)
+    f = _pixelFractions(xx + x0 - x, yy + y0 - y, radius)
     g = good[ya:yb, xa:xb] & np.isfinite(image[ya:yb, xa:xb]) & (variance[ya:yb, xa:xb] > 0)
     area = f.sum()
     if area <= 0:
@@ -131,7 +131,7 @@ def aperture_flux(image, variance, good, x, y, radius, x0=0, y0=0):
     return fl, err, float(f[g].sum() / area)
 
 
-def aperture_correction(kernel, radius):
+def apertureCorrection(kernel, radius):
     """Return the fraction of a PSF kernel's flux inside a radius.
 
     Parameters
@@ -149,11 +149,11 @@ def aperture_correction(kernel, radius):
     k = np.asarray(kernel, float)
     h = k.shape[0] // 2, k.shape[1] // 2
     yy, xx = np.mgrid[-h[0]:h[0] + 1, -h[1]:h[1] + 1]
-    f = _pixel_fractions(xx.astype(float), yy.astype(float), radius)
+    f = _pixelFractions(xx.astype(float), yy.astype(float), radius)
     return float(np.sum(f * k) / k.sum())
 
 
-def fisher_flux_errors(comps, variance, good, n=None):
+def fisherFluxErrors(comps, variance, good, n=None):
     """Return the 1-sigma errors of jointly fitted amplitudes.
 
     ``sqrt(diag((A^T W A)^-1))``, inverted per group of overlapping sources, so blends get
@@ -211,7 +211,7 @@ def fisher_flux_errors(comps, variance, good, n=None):
     return err
 
 
-def psf_flux_errors(run):
+def psfFluxErrors(run):
     """Return the Fisher errors of the PSF fluxes of a run's final joint fit.
 
     Parameters
@@ -222,14 +222,14 @@ def psf_flux_errors(run):
     Returns
     -------
     err : `numpy.ndarray`
-        Error per source (fit variance, including the sys_frac term).
+        Error per source (fit variance, including the sysFrac term).
     """
-    res = run.outer_history[-1]["result"]
+    res = run.outerHistory[-1]["result"]
     fit = res["snaps"][-1]["fit"]
-    return fisher_flux_errors(fit["comps"], fit["variance"], fit["good"], len(fit["amps"]))
+    return fisherFluxErrors(fit["comps"], fit["variance"], fit["good"], len(fit["amps"]))
 
 
-def zero_point_from_run(run):
+def zeroPointFromRun(run):
     """Return the magnitude zero point of a run's image units.
 
     Parameters
@@ -239,12 +239,12 @@ def zero_point_from_run(run):
 
     Returns
     -------
-    zero_point : `float`
+    zeroPoint : `float`
         Zero point (from the exposure's PhotoCalib, else 31.4 for nJy).
     how : `str`
         Where it came from.
     """
-    exp = run.outer_history[-1]["exposure"]
+    exp = run.outerHistory[-1]["exposure"]
     try:
         pc = exp.getPhotoCalib()
     except Exception:
@@ -259,29 +259,29 @@ def zero_point_from_run(run):
     return AB_NJY_ZERO_POINT, "image units assumed to be nJy"
 
 
-def compare_with_gaia(phot, gaia, match_radius_px=1.0, offset_min_snr=50.0, verbose=True):
+def compareWithGaia(phot, gaia, matchRadiusPx=1.0, offsetMinSnr=50.0, verbose=True):
     """Add Gaia comparison columns to a photometry table.
 
     Every fitted source is paired with a Gaia star: a source started from a Gaia position with
-    that star (``gaia_index``), any other source with the nearest unclaimed Gaia star within
-    ``match_radius_px``.  Positions are compared with Gaia's at the visit epoch (as placed on the
+    that star (``gaiaIndex``), any other source with the nearest unclaimed Gaia star within
+    ``matchRadiusPx``.  Positions are compared with Gaia's at the visit epoch (as placed on the
     detector by the visit WCS); magnitudes with Gaia G.  Gaia G is a much broader band than any
-    LSST filter, so ``gaia_dmag`` contains a zero-point offset and a colour term: the median
-    offset of bright, point-like matches is removed in ``gaia_dmag_rel``, and ``gaia_bp_rp`` is
+    LSST filter, so ``gaiaDmag`` contains a zero-point offset and a colour term: the median
+    offset of bright, point-like matches is removed in ``gaiaDmagRel``, and ``gaiaBpRp`` is
     given to fit the colour term.
 
     Parameters
     ----------
     phot : `astropy.table.Table`
-        Output of `measure_photometry` (``x``, ``y``, ``psf_flux``, ``psf_mag``, ``gaia_index``;
+        Output of `measurePhotometry` (``x``, ``y``, ``psfFlux``, ``psfMag``, ``gaiaIndex``;
         ``ra``, ``dec`` if the exposure had a WCS).
     gaia : `astropy.table.Table`
         The Gaia catalogue the run started from (``session.gaia``: ``source_id``, ``ra``,
         ``dec``, ``x``, ``y``, ``phot_g_mean_mag``, optionally ``phot_bp_mean_mag`` and
         ``phot_rp_mean_mag``).
-    match_radius_px : `float`, optional
+    matchRadiusPx : `float`, optional
         Match radius for sources that did not start from a Gaia position [px].
-    offset_min_snr : `float`, optional
+    offsetMinSnr : `float`, optional
         Minimum PSF S/N of the matches that set the median magnitude offset.
     verbose : `bool`, optional
         Print a summary.
@@ -289,10 +289,10 @@ def compare_with_gaia(phot, gaia, match_radius_px=1.0, offset_min_snr=50.0, verb
     Returns
     -------
     table : `astropy.table.Table`
-        A copy of ``phot`` with ``gaia_match``, ``gaia_match_type``, ``gaia_source_id``,
-        ``gaia_ra``, ``gaia_dec``, ``gaia_x``, ``gaia_y``, ``gaia_dx``, ``gaia_dy``,
-        ``gaia_dra``, ``gaia_ddec``, ``gaia_sep``, ``gaia_G``, ``gaia_bp_rp``, ``gaia_dmag``,
-        ``gaia_dmag_rel``, ``gaia_flux`` and ``gaia_flux_ratio`` (see doc/catalog_columns.md);
+        A copy of ``phot`` with ``gaiaMatch``, ``gaiaMatchType``, ``gaiaSourceId``,
+        ``gaiaRa``, ``gaiaDec``, ``gaiaX``, ``gaiaY``, ``gaiaDx``, ``gaiaDy``,
+        ``gaiaDra``, ``gaiaDdec``, ``gaiaSep``, ``gaiaG``, ``gaiaBpRp``, ``gaiaDmag``,
+        ``gaiaDmagRel``, ``gaiaFlux`` and ``gaiaFluxRatio`` (see doc/catalog_columns.md);
         ``meta`` gets ``GAIAOFF`` (the median offset), ``GAIANOFF`` (stars used),
         ``GAIAUNM`` (Gaia stars in the fitted area without a fitted source) and ``GAIASYS``.
     """
@@ -304,19 +304,19 @@ def compare_with_gaia(phot, gaia, match_radius_px=1.0, offset_min_snr=50.0, verb
     x, y = np.asarray(t["x"], float), np.asarray(t["y"], float)
     row = np.full(n, -1, np.int64)
     kind = np.array([""] * n, dtype="U8")
-    gi = np.asarray(t["gaia_index"], np.int64) if "gaia_index" in t.colnames else np.full(n, -1)
+    gi = np.asarray(t["gaiaIndex"], np.int64) if "gaiaIndex" in t.colnames else np.full(n, -1)
     linked = (gi >= 0) & (gi < len(gaia))
     row[linked], kind[linked] = gi[linked], "linked"
     claimed = set(row[linked].tolist())
     ok = np.isfinite(gx) & np.isfinite(gy)
     if ok.any() and (~linked).any():
-        idx_ok = np.flatnonzero(ok)
+        idxOk = np.flatnonzero(ok)
         tree = cKDTree(np.column_stack([gx[ok], gy[ok]]))
         rest = np.flatnonzero(~linked)
         d, k = tree.query(np.column_stack([x[rest], y[rest]]))
         for j in np.argsort(d):                        # closest pairs first
-            r = int(idx_ok[k[j]])
-            if d[j] <= match_radius_px and r not in claimed:
+            r = int(idxOk[k[j]])
+            if d[j] <= matchRadiusPx and r not in claimed:
                 row[rest[j]], kind[rest[j]] = r, "position"
                 claimed.add(r)
     m = row >= 0
@@ -327,27 +327,27 @@ def compare_with_gaia(phot, gaia, match_radius_px=1.0, offset_min_snr=50.0, verb
             out[m] = np.asarray(gaia[name], dtype)[row[m]]
         return out
 
-    t["gaia_match"] = m
-    t["gaia_match_type"] = kind
-    t["gaia_source_id"] = col("source_id", np.int64, -1)
-    t["gaia_ra"], t["gaia_dec"] = col("ra"), col("dec")
-    t["gaia_x"], t["gaia_y"] = col("x"), col("y")
-    t["gaia_dx"], t["gaia_dy"] = x - t["gaia_x"], y - t["gaia_y"]
+    t["gaiaMatch"] = m
+    t["gaiaMatchType"] = kind
+    t["gaiaSourceId"] = col("source_id", np.int64, -1)
+    t["gaiaRa"], t["gaiaDec"] = col("ra"), col("dec")
+    t["gaiaX"], t["gaiaY"] = col("x"), col("y")
+    t["gaiaDx"], t["gaiaDy"] = x - t["gaiaX"], y - t["gaiaY"]
     if "ra" in t.colnames and "dec" in t.colnames:
-        cosd = np.cos(np.radians(np.asarray(t["gaia_dec"], float)))
-        dra = (np.asarray(t["ra"], float) - t["gaia_ra"] + 180.0) % 360.0 - 180.0
-        t["gaia_dra"] = dra * cosd * 3.6e6
-        t["gaia_ddec"] = (np.asarray(t["dec"], float) - t["gaia_dec"]) * 3.6e6
-        t["gaia_sep"] = np.hypot(t["gaia_dra"], t["gaia_ddec"])
-    t["gaia_G"] = col("phot_g_mean_mag")
-    t["gaia_bp_rp"] = col("phot_bp_mean_mag") - col("phot_rp_mean_mag")
-    t["gaia_dmag"] = np.asarray(t["psf_mag"], float) - t["gaia_G"]
-    use = (m & np.isfinite(t["gaia_dmag"]) & (np.asarray(t["psf_snr"], float) >= offset_min_snr))
+        cosd = np.cos(np.radians(np.asarray(t["gaiaDec"], float)))
+        dra = (np.asarray(t["ra"], float) - t["gaiaRa"] + 180.0) % 360.0 - 180.0
+        t["gaiaDra"] = dra * cosd * 3.6e6
+        t["gaiaDdec"] = (np.asarray(t["dec"], float) - t["gaiaDec"]) * 3.6e6
+        t["gaiaSep"] = np.hypot(t["gaiaDra"], t["gaiaDdec"])
+    t["gaiaG"] = col("phot_g_mean_mag")
+    t["gaiaBpRp"] = col("phot_bp_mean_mag") - col("phot_rp_mean_mag")
+    t["gaiaDmag"] = np.asarray(t["psfMag"], float) - t["gaiaG"]
+    use = (m & np.isfinite(t["gaiaDmag"]) & (np.asarray(t["psfSnr"], float) >= offsetMinSnr))
     if "extended" in t.colnames:
         use &= ~np.asarray(t["extended"], bool)
-    off, n_off = np.nan, int(use.sum())
-    if n_off:
-        v = np.asarray(t["gaia_dmag"], float)[use]
+    off, nOff = np.nan, int(use.sum())
+    if nOff:
+        v = np.asarray(t["gaiaDmag"], float)[use]
         for _ in range(5):                             # 3-sigma clipped median
             med = np.median(v)
             s = 1.4826 * np.median(np.abs(v - med)) or 1e-3
@@ -355,36 +355,36 @@ def compare_with_gaia(phot, gaia, match_radius_px=1.0, offset_min_snr=50.0, verb
             if keep.all() or keep.sum() < 3:
                 break
             v = v[keep]
-        off, n_off = float(np.median(v)), len(v)
-    t["gaia_dmag_rel"] = t["gaia_dmag"] - off
-    zp = float(t.meta.get("zero_point", AB_NJY_ZERO_POINT))
-    t["gaia_flux"] = 10 ** (-0.4 * (t["gaia_G"] + off - zp))
+        off, nOff = float(np.median(v)), len(v)
+    t["gaiaDmagRel"] = t["gaiaDmag"] - off
+    zp = float(t.meta.get("zeroPoint", AB_NJY_ZERO_POINT))
+    t["gaiaFlux"] = 10 ** (-0.4 * (t["gaiaG"] + off - zp))
     with np.errstate(divide="ignore", invalid="ignore"):
-        t["gaia_flux_ratio"] = np.asarray(t["psf_flux"], float) / t["gaia_flux"]
+        t["gaiaFluxRatio"] = np.asarray(t["psfFlux"], float) / t["gaiaFlux"]
     inside = ok & (gx >= x.min() - 0.5) & (gx <= x.max() + 0.5) & (gy >= y.min() - 0.5) \
         & (gy <= y.max() + 0.5) if n else ok & False
-    n_unm = int(np.sum(inside & ~np.isin(np.arange(len(gaia)), row[m])))
-    t.meta.update(GAIAOFF=off, GAIANOFF=n_off, GAIAUNM=n_unm,
-                  GAIASYS=str(gaia.meta.get("gaia_mag_system", "unknown")))
+    nUnm = int(np.sum(inside & ~np.isin(np.arange(len(gaia)), row[m])))
+    t.meta.update(GAIAOFF=off, GAIANOFF=nOff, GAIAUNM=nUnm,
+                  GAIASYS=str(gaia.meta.get("gaiaMagSystem", "unknown")))
     if verbose:
-        rel = np.asarray(t["gaia_dmag_rel"], float)[use]
-        sc = 1.4826 * np.nanmedian(np.abs(rel)) if n_off else np.nan
-        sep = (np.nanmedian(np.asarray(t["gaia_sep"])[m]) if "gaia_sep" in t.colnames and m.any()
+        rel = np.asarray(t["gaiaDmagRel"], float)[use]
+        sc = 1.4826 * np.nanmedian(np.abs(rel)) if nOff else np.nan
+        sep = (np.nanmedian(np.asarray(t["gaiaSep"])[m]) if "gaiaSep" in t.colnames and m.any()
                else np.nan)
         print(f"Gaia comparison: {int(m.sum())} of {n} sources matched "
               f"({int(np.sum(kind == 'linked'))} linked, {int(np.sum(kind == 'position'))} by position); "
-              f"{n_unm} Gaia stars in the area without a fitted source; psf_mag - G median "
-              f"{off:+.3f} from {n_off} stars (S/N >= {offset_min_snr:g}), scatter {sc:.3f} mag; "
+              f"{nUnm} Gaia stars in the area without a fitted source; psfMag - G median "
+              f"{off:+.3f} from {nOff} stars (S/N >= {offsetMinSnr:g}), scatter {sc:.3f} mag; "
               f"median separation {sep:.1f} mas")
     return t
 
 
 # FITS header keywords (<= 8 characters) of the photometry catalogue's metadata
-FITS_META_KEYS = dict(zero_point="ZP", zero_point_source="ZPSRC", aperture_radius_px="APRAD",
-                      aperture_correction="APCORR", fwhm_px="FWHM")
+FITS_META_KEYS = dict(zeroPoint="ZP", zeroPointSource="ZPSRC", apertureRadiusPx="APRAD",
+                      apertureCorrection="APCORR", fwhmPx="FWHM")
 
 
-def fits_meta(meta):
+def fitsMeta(meta):
     """Return catalogue metadata with FITS-compatible keywords and values.
 
     Long names are shortened (`FITS_META_KEYS`, else the first 8 characters, upper case);
@@ -408,57 +408,57 @@ def fits_meta(meta):
     return out
 
 
-def measure_photometry(run, aperture_fwhm=1.5, zero_point=None, verbose=True, gaia=None,
-                       gaia_match_px=1.0):
+def measurePhotometry(run, apertureFwhm=1.5, zeroPoint=None, verbose=True, gaia=None,
+                      gaiaMatchPx=1.0):
     """Measure PSF and aperture magnitudes of a run's sources.
 
     Parameters
     ----------
     run : `lsst.meas.crowd.session.CutoutRun`
-        A finished run (from ``run_session_gaia``).
-    aperture_fwhm : `float`, optional
+        A finished run (from ``runSessionGaia``).
+    apertureFwhm : `float`, optional
         Aperture radius [FWHM]; aperture fluxes are corrected to total.
-    zero_point : `float`, optional
+    zeroPoint : `float`, optional
         Override the zero point (default: PhotoCalib, else 31.4 for nJy).
     verbose : `bool`, optional
         Print a summary.
     gaia : `astropy.table.Table` or `bool`, optional
-        The Gaia catalogue for the Gaia comparison columns of `compare_with_gaia`; None (default)
+        The Gaia catalogue for the Gaia comparison columns of `compareWithGaia`; None (default)
         uses the run's own (``run.gaia``, the catalogue it started from) if it has one, False
         leaves the columns out.
-    gaia_match_px : `float`, optional
+    gaiaMatchPx : `float`, optional
         Gaia match radius for sources that did not start from a Gaia position [px].
 
     Returns
     -------
     table : `astropy.table.Table`
-        ``id``, ``x``, ``y``, ``ra``, ``dec``, ``gaia``, ``gaia_index``, ``gaia_G``,
-        ``extended``, ``in_interior``, ``psf_flux``, ``psf_flux_err``, ``psf_snr``, ``psf_mag``,
-        ``psf_mag_err``, ``ap_flux``, ``ap_flux_err``, ``ap_coverage``, ``ap_mag``,
-        ``ap_mag_err``, ``ap_minus_psf`` (and, with ``gaia``, the `compare_with_gaia`
+        ``id``, ``x``, ``y``, ``ra``, ``dec``, ``gaia``, ``gaiaIndex``, ``gaiaG``,
+        ``extended``, ``inInterior``, ``psfFlux``, ``psfFluxErr``, ``psfSnr``, ``psfMag``,
+        ``psfMagErr``, ``apFlux``, ``apFluxErr``, ``apCoverage``, ``apMag``,
+        ``apMagErr``, ``apMinusPsf`` (and, with ``gaia``, the `compareWithGaia`
         columns); ``meta`` has the zero point and aperture settings.  The columns and their
         units are described in ``doc/catalog_columns.md``.
     """
     from astropy.table import Table
     from . import fitLib as L
-    final = run.outer_history[-1]
+    final = run.outerHistory[-1]
     exp, res = final["exposure"], final["result"]
     S, fit = res["S"], res["snaps"][-1]["fit"]
     bb = exp.getBBox()
     X0, Y0 = bb.getMinX(), bb.getMinY()
-    data, model = exp.image.array, res["model_full"]
+    data, model = exp.image.array, res["modelFull"]
     var = exp.variance.array
     good = fit["good"]
     xy = S["xy"]
     n = len(xy)
     flux = np.asarray(res["amps"], float) if len(res["amps"]) == n else np.asarray(fit["amps"], float)
-    ferr = fisher_flux_errors(fit["comps"], fit["variance"], good, n)
-    zp, how = (zero_point, "given") if zero_point is not None else zero_point_from_run(run)
+    ferr = fisherFluxErrors(fit["comps"], fit["variance"], good, n)
+    zp, how = (zeroPoint, "given") if zeroPoint is not None else zeroPointFromRun(run)
     psf = exp.getPsf()
     c = bb.getCenter()
     fwhm = L._fwhm(psf, c)
-    radius = aperture_fwhm * fwhm
-    apcorr = aperture_correction(psf.computeKernelImage(c).array, radius)
+    radius = apertureFwhm * fwhm
+    apcorr = apertureCorrection(psf.computeKernelImage(c).array, radius)
     resid = data - model
     ap = np.full(n, np.nan)
     ape = np.full(n, np.nan)
@@ -473,12 +473,12 @@ def measure_photometry(run, aperture_fwhm=1.5, zero_point=None, verbose=True, ga
         # star, so the correction light within its stamp is used (exact unless two corrected
         # bright stars overlap)
         img = resid + own
-        if j in res.get("bright_corr", {}):
-            img = img + (res["model_full"] - fit["model_full"]) * (own != 0)
-        fl, er, cv = aperture_flux(img, var, good, xy[j, 0], xy[j, 1], radius, X0, Y0)
+        if j in res.get("brightCorr", {}):
+            img = img + (res["modelFull"] - fit["modelFull"]) * (own != 0)
+        fl, er, cv = apertureFlux(img, var, good, xy[j, 0], xy[j, 1], radius, X0, Y0)
         ap[j], ape[j], cov[j] = fl / apcorr, er / apcorr, cv
-    pm, pme = flux_to_mag(flux, ferr, zp)
-    am, ame = flux_to_mag(ap, ape, zp)
+    pm, pme = fluxToMag(flux, ferr, zp)
+    am, ame = fluxToMag(ap, ape, zp)
     t = Table()
     t["id"] = np.arange(n)
     t["x"], t["y"] = xy[:, 0], xy[:, 1]
@@ -487,31 +487,36 @@ def measure_photometry(run, aperture_fwhm=1.5, zero_point=None, verbose=True, ga
         t["ra"], t["dec"] = np.asarray(ra), np.asarray(dec)
     except Exception:
         pass
-    t["gaia"] = np.asarray(S["from_gaia"], bool)
-    t["gaia_index"] = np.asarray(S["gaia"])
-    t["gaia_G"] = np.asarray(S["g"], float)
+    t["gaia"] = np.asarray(S["fromGaia"], bool)
+    t["gaiaIndex"] = np.asarray(S["gaia"])
+    t["gaiaG"] = np.asarray(S["g"], float)
     t["extended"] = np.asarray(S["ext"]) > 0
-    ib = getattr(run, "interior_bbox", None)
+    ib = getattr(run, "interiorBbox", None)
     if ib is not None:
-        t["in_interior"] = ((xy[:, 0] >= ib.getMinX() - .5) & (xy[:, 0] <= ib.getMaxX() + .5) &
-                            (xy[:, 1] >= ib.getMinY() - .5) & (xy[:, 1] <= ib.getMaxY() + .5))
-    t["psf_flux"], t["psf_flux_err"] = flux, ferr
+        t["inInterior"] = ((xy[:, 0] >= ib.getMinX() - .5) & (xy[:, 0] <= ib.getMaxX() + .5) &
+                           (xy[:, 1] >= ib.getMinY() - .5) & (xy[:, 1] <= ib.getMaxY() + .5))
+    t["psfFlux"], t["psfFluxErr"] = flux, ferr
     with np.errstate(divide="ignore", invalid="ignore"):
-        t["psf_snr"] = np.where(ferr > 0, flux / ferr, 0.0)
-    t["psf_mag"], t["psf_mag_err"] = pm, pme
-    t["ap_flux"], t["ap_flux_err"], t["ap_coverage"] = ap, ape, cov
-    t["ap_mag"], t["ap_mag_err"] = am, ame
-    t["ap_minus_psf"] = am - pm
-    t.meta.update(zero_point=zp, zero_point_source=how, aperture_radius_px=radius,
-                  aperture_correction=apcorr, fwhm_px=fwhm)
+        t["psfSnr"] = np.where(ferr > 0, flux / ferr, 0.0)
+    t["psfMag"], t["psfMagErr"] = pm, pme
+    t["apFlux"], t["apFluxErr"], t["apCoverage"] = ap, ape, cov
+    t["apMag"], t["apMagErr"] = am, ame
+    t["apMinusPsf"] = am - pm
+    t.meta.update(zeroPoint=zp, zeroPointSource=how, apertureRadiusPx=radius,
+                  apertureCorrection=apcorr, fwhmPx=fwhm)
     if verbose:
-        ok = np.isfinite(t["ap_minus_psf"]) & (t["psf_snr"] > 20) & (cov > 0.95) & ~t["extended"]
-        med = np.nanmedian(t["ap_minus_psf"][ok]) if ok.any() else np.nan
+        ok = np.isfinite(t["apMinusPsf"]) & (t["psfSnr"] > 20) & (cov > 0.95) & ~t["extended"]
+        med = np.nanmedian(t["apMinusPsf"][ok]) if ok.any() else np.nan
         print(f"photometry: {n} sources; zero point {zp:.3f} ({how}); aperture r = {radius:.1f} px "
-              f"({aperture_fwhm:g} FWHM, aperture correction {apcorr:.3f}); median ap - PSF "
+              f"({apertureFwhm:g} FWHM, aperture correction {apcorr:.3f}); median ap - PSF "
               f"(S/N > 20, point sources) = {med:+.3f} mag")
     if gaia is None:
         gaia = getattr(run, "gaia", None)
     if gaia is not None and gaia is not False and len(gaia):
-        t = compare_with_gaia(t, gaia, match_radius_px=gaia_match_px, verbose=verbose)
+        t = compareWithGaia(t, gaia, matchRadiusPx=gaiaMatchPx, verbose=verbose)
     return t
+
+
+# old snake_case names still work (with a FutureWarning)
+from ._compat import moduleGetattr  # noqa: E402
+__getattr__ = moduleGetattr(globals())

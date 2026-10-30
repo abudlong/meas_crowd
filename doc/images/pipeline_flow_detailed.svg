@@ -3,21 +3,21 @@
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#9aa0a6"/></marker></defs>
 <rect width="760" height="1271" fill="#ffffff"/>
 <text x="24" y="32" font-size="16" font-weight="bold" fill="#202124" text-anchor="start">meas_crowd pipeline, step by step</text>
-<text x="24" y="52" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">Function names in brackets; configuration options in the text (e.g. bg_mode).</text>
+<text x="24" y="52" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">Function names in brackets; configuration options in the text (e.g. bgMode).</text>
 <rect x="24" y="70" width="712" height="91" rx="8" fill="#ffffff" stroke="#9aa0a6" stroke-width="1.25"/>
-<text x="38" y="93" font-size="14" font-weight="bold" fill="#202124" text-anchor="start">1. Setup  (prepare_session)</text>
+<text x="38" y="93" font-size="14" font-weight="bold" fill="#202124" text-anchor="start">1. Setup  (prepareSession)</text>
 <text x="38" y="113" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">Load the visit_image; cut out each box grown by pad px, before any background subtraction.</text>
-<text x="38" y="130" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">Bad pixels: SAT, CR, BAD, INTRP, EDGE.  PSF: the visit's own (psf_source="visit") or a</text>
+<text x="38" y="130" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">Bad pixels: SAT, CR, BAD, INTRP, EDGE.  PSF: the visit's own (psfSource="visit") or a</text>
 <text x="38" y="147" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">new detector-level PCA PSF ("refit", which also subtracts a detector background).</text>
 <path d="M380 161V183" fill="none" stroke="#9aa0a6" stroke-width="1.4" marker-end="url(#arrow)"/>
 <rect x="24" y="183" width="712" height="91" rx="8" fill="#ffffff" stroke="#9aa0a6" stroke-width="1.25"/>
-<text x="38" y="206" font-size="14" font-weight="bold" fill="#202124" text-anchor="start">2. Gaia catalogue  (attach_gaia, select_gaia_sources)</text>
+<text x="38" y="206" font-size="14" font-weight="bold" fill="#202124" text-anchor="start">2. Gaia catalogue  (attachGaia, selectGaiaSources)</text>
 <text x="38" y="226" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">Gaia DR3 over the detector (Butler reference catalogue or the ESA archive), moved to the</text>
 <text x="38" y="243" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">visit epoch with proper motions, cached on disk.  Starting positions: the Gaia stars in</text>
 <text x="38" y="260" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">the cutout and up to 1.5 FWHM outside it, brightest first, duplicates merged.</text>
 <path d="M380 274V296" fill="none" stroke="#9aa0a6" stroke-width="1.4" marker-end="url(#arrow)"/>
 <rect x="24" y="296" width="712" height="91" rx="8" fill="#ffffff" stroke="#9aa0a6" stroke-width="1.25"/>
-<text x="38" y="319" font-size="14" font-weight="bold" fill="#202124" text-anchor="start">3. Preparation  (start of run_adaptive_pipeline)</text>
+<text x="38" y="319" font-size="14" font-weight="bold" fill="#202124" text-anchor="start">3. Preparation  (start of runAdaptivePipeline)</text>
 <text x="38" y="339" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">Grow the saturated mask by 2 px; mark saturated-star zones.  Extend the PSF kernel from</text>
 <text x="38" y="356" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">41 to 81 px with a Moffat wing and smooth its outer part.  Remove a global offset</text>
 <text x="38" y="373" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">between the Gaia positions and the image.</text>
@@ -25,13 +25,13 @@
 <rect x="24" y="409" width="690" height="482" rx="8" fill="#f3f4f6" stroke="#9aa0a6" stroke-width="1.25"/>
 <text x="40" y="435" font-size="14" font-weight="bold" fill="#202124" text-anchor="start">4. Outer pass: the PSF and background stay fixed</text>
 <rect x="40" y="451" width="640" height="193" rx="8" fill="#e8f0fe" stroke="#3b6fc4" stroke-width="2"/>
-<text x="54" y="474" font-size="14" font-weight="bold" fill="#202124" text-anchor="start">Inner loop  (run_inner_adaptive): find and fit sources until the residual is clean</text>
+<text x="54" y="474" font-size="14" font-weight="bold" fill="#202124" text-anchor="start">Inner loop  (runInnerAdaptive): find and fit sources until the residual is clean</text>
 <text x="54" y="494" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">a. Detect peaks in the residual above the current threshold (5σ when starting from Gaia,</text>
 <text x="54" y="511" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">    then lower).</text>
 <text x="54" y="528" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">b. Add them, skipping edges, duplicates and positions already rejected as fakes.</text>
 <text x="54" y="545" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">c. Joint non-negative fit of all sources; bright and saturated stars get correction terms</text>
 <text x="54" y="562" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">    (shift, width, core and halo profile) so their residual is clean.</text>
-<text x="54" y="579" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">d. Refine centroids; merge close pairs; drop sources below min_snr or with a bad shape</text>
+<text x="54" y="579" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">d. Refine centroids; merge close pairs; drop sources below minSnr or with a bad shape</text>
 <text x="54" y="596" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">    (too broad ones are kept as small galaxies).</text>
 <text x="54" y="613" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">e. Residual check: are there significantly more positive than negative residual peaks?</text>
 <text x="54" y="630" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">    Yes: lower the threshold (down to 3σ) and repeat.  No (or nothing changes): stop.</text>
@@ -47,36 +47,36 @@
 <rect x="40" y="767" width="640" height="108" rx="8" fill="#ffffff" stroke="#9aa0a6" stroke-width="1.25"/>
 <text x="54" y="790" font-size="14" font-weight="bold" fill="#202124" text-anchor="start">Noise and PSF-error check</text>
 <text x="54" y="810" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">Photon noise: if the bright stars' residual is pixel-scale noise, the variance plane is</text>
-<text x="54" y="827" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">missing photon noise; add k × model to the variance for the later fits (auto_poisson).</text>
+<text x="54" y="827" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">missing photon noise; add k × model to the variance for the later fits (autoPoisson).</text>
 <text x="54" y="844" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">PSF error: measure ε, the PSF model error as a fraction of the model per pixel; plots show</text>
-<text x="54" y="861" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">residual / sqrt(variance + (ε × model)²) (model_err_measure).</text>
+<text x="54" y="861" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">residual / sqrt(variance + (ε × model)²) (modelErrMeasure).</text>
 <path d="M380 891V915" fill="none" stroke="#9aa0a6" stroke-width="1.4" marker-end="url(#arrow)"/>
 <polygon points="255,961 380,915 505,961 380,1007" fill="#ffffff" stroke="#9aa0a6" stroke-width="1.25"/>
 <text x="380" y="957" font-size="13" font-weight="bold" fill="#202124" text-anchor="middle">5. Converged?</text>
 <text x="380" y="974" font-size="11" font-weight="normal" fill="#5f6368" text-anchor="middle">sources and PSF changed &lt; 1%</text>
-<text x="248" y="965" font-size="11" font-weight="normal" fill="#5f6368" text-anchor="end">at least 2, at most max_outer passes</text>
+<text x="248" y="965" font-size="11" font-weight="normal" fill="#5f6368" text-anchor="end">at least 2, at most maxOuter passes</text>
 <text x="509" y="953" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">no</text>
 <path d="M505 961H530" fill="none" stroke="#9aa0a6" stroke-width="1.4" marker-end="url(#arrow)"/>
 <rect x="530" y="907" width="206" height="125" rx="8" fill="#ffffff" stroke="#9aa0a6" stroke-width="1.25"/>
 <text x="544" y="930" font-size="14" font-weight="bold" fill="#202124" text-anchor="start">6. Refit for next pass</text>
 <text x="544" y="950" font-size="11" font-weight="normal" fill="#5f6368" text-anchor="start">Background: tilted plane on</text>
 <text x="544" y="967" font-size="11" font-weight="normal" fill="#5f6368" text-anchor="start">the raw cutout, sources masked</text>
-<text x="544" y="984" font-size="11" font-weight="normal" fill="#5f6368" text-anchor="start">(bg_mode).  PSF: residual</text>
+<text x="544" y="984" font-size="11" font-weight="normal" fill="#5f6368" text-anchor="start">(bgMode).  PSF: residual</text>
 <text x="544" y="1001" font-size="11" font-weight="normal" fill="#5f6368" text-anchor="start">stack of up to 25 clean stars,</text>
 <text x="544" y="1018" font-size="11" font-weight="normal" fill="#5f6368" text-anchor="start">wings from bright stars.</text>
 <path d="M736 969.5H748V449H714" fill="none" stroke="#9aa0a6" stroke-width="1.4" marker-end="url(#arrow)"/>
 <text x="390" y="1027" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">yes</text>
 <path d="M380 1007V1043" fill="none" stroke="#9aa0a6" stroke-width="1.4" marker-end="url(#arrow)"/>
 <rect x="24" y="1043" width="712" height="91" rx="8" fill="#ffffff" stroke="#9aa0a6" stroke-width="1.25"/>
-<text x="38" y="1066" font-size="14" font-weight="bold" fill="#202124" text-anchor="start">7. Outputs  (run_cutout_gaia → CutoutRun)</text>
+<text x="38" y="1066" font-size="14" font-weight="bold" fill="#202124" text-anchor="start">7. Outputs  (runCutoutGaia → CutoutRun)</text>
 <text x="38" y="1086" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">run.photometry: PSF and aperture photometry with errors and the Gaia comparison</text>
-<text x="38" y="1103" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">(doc/catalog_columns.md).  run.outer_history: every pass (images, model, PSF, background).</text>
-<text x="38" y="1120" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">With out_dir: photometry.fits / .csv, catalog.fits, images.fits, psf_kernels.fits, summary.</text>
+<text x="38" y="1103" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">(doc/catalog_columns.md).  run.outerHistory: every pass (images, model, PSF, background).</text>
+<text x="38" y="1120" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">With outDir: photometry.fits / .csv, catalog.fits, images.fits, psf_kernels.fits, summary.</text>
 <path d="M380 1134V1156" fill="none" stroke="#9aa0a6" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
 <text x="390" y="1148" font-size="11" font-weight="normal" fill="#5f6368" text-anchor="start">repeated for every tile of a detector</text>
 <rect x="24" y="1156" width="712" height="91" rx="8" fill="#ffffff" stroke="#9aa0a6" stroke-width="1.25"/>
-<text x="38" y="1179" font-size="14" font-weight="bold" fill="#202124" text-anchor="start">8. Whole detector  (fit_tiles → stitch_tiles → plot_detector)</text>
+<text x="38" y="1179" font-size="14" font-weight="bold" fill="#202124" text-anchor="start">8. Whole detector  (fitTiles → stitchTiles → plotDetector)</text>
 <text x="38" y="1199" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">400 px tiles, each fitted with 30 px padding by steps 1 to 7 (a Slurm array shares the</text>
-<text x="38" y="1216" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">tiles; finished tiles are skipped on a restart) → tile_&lt;name&gt;.fits.  stitch_tiles: one</text>
+<text x="38" y="1216" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">tiles; finished tiles are skipped on a restart) → tile_&lt;name&gt;.fits.  stitchTiles: one</text>
 <text x="38" y="1233" font-size="12" font-weight="normal" fill="#5f6368" text-anchor="start">detector_mosaic.fits (data, model, residual, ...) and detector_catalog.fits (each source once).</text>
 </svg>

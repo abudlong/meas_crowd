@@ -40,8 +40,8 @@ plt.show = lambda *a, **k: None
 
 
 def _run(**kw):
-    return fakeRun.make_run(n_side=11, shape=(400, 400), half=15, sigma=1.9, sky=100.0,
-                            flux_range=(3e4, 2e6), seed=5, **kw)
+    return fakeRun.makeRun(nSide=11, shape=(400, 400), half=15, sigma=1.9, sky=100.0,
+                           fluxRange=(3e4, 2e6), seed=5, **kw)
 
 
 class StarResidualTableTestCase(unittest.TestCase):
@@ -49,38 +49,38 @@ class StarResidualTableTestCase(unittest.TestCase):
         plt.close("all")
 
     def testPerfectModel(self):
-        t = plotting.star_residual_table(_run(), plot=False, n_worst=0)
+        t = plotting.starResidualTable(_run(), plot=False, nWorst=0)
         self.assertTrue(any("PHOTON NOISE" in v for v in t["verdict"]))
-        self.assertLess(np.median(t["chi2_final"]), 1.1)
+        self.assertLess(np.median(t["chi2Final"]), 1.1)
 
     def testBrighterFatter(self):
-        run = _run(sigma_fn=lambda f, x, y: 1.9 * (1 + 0.09 * (np.log10(f) - 5)))
-        t = plotting.star_residual_table(run, plot=False, n_worst=0)
+        run = _run(sigmaFn=lambda f, x, y: 1.9 * (1 + 0.09 * (np.log10(f) - 5)))
+        t = plotting.starResidualTable(run, plot=False, nWorst=0)
         self.assertTrue(any("depends on brightness" in v for v in t["verdict"]))
-        self.assertLess(t["core_vs_flux"][0], -0.5)
+        self.assertLess(t["coreVsFlux"][0], -0.5)
 
     def testPositionDependence(self):
-        run = _run(sigma_fn=lambda f, x, y: 1.9 * (1 + 0.06 * (x - 200) / 200))
-        t = plotting.star_residual_table(run, plot=False, n_worst=0)
+        run = _run(sigmaFn=lambda f, x, y: 1.9 * (1 + 0.06 * (x - 200) / 200))
+        t = plotting.starResidualTable(run, plot=False, nWorst=0)
         self.assertTrue(any("POSITION" in v for v in t["verdict"]))
 
     def testPlot(self):
-        plotting.star_residual_table(_run(), plot=True, n_worst=3)
+        plotting.starResidualTable(_run(), plot=True, nWorst=3)
 
 
 class CoreExcessTestCase(unittest.TestCase):
     def testBroadPsf(self):
-        out = plotting.core_excess_diagnostic(_run(model_sigma=1.9 * 1.03), plot=False)
+        out = plotting.coreExcessDiagnostic(_run(modelSigma=1.9 * 1.03), plot=False)
         self.assertTrue(any("too broad" in v for v in out["verdict"]))
         self.assertGreater(np.median(out["excess"]), 0.02)
 
     def testFluxDependent(self):
-        run = _run(sigma_fn=lambda f, x, y: 1.9 * (1 - 0.03 * (np.log10(f) - 4.5)))
-        out = plotting.core_excess_diagnostic(run, plot=False)
+        run = _run(sigmaFn=lambda f, x, y: 1.9 * (1 - 0.03 * (np.log10(f) - 4.5)))
+        out = plotting.coreExcessDiagnostic(run, plot=False)
         self.assertTrue(any("GROWS WITH FLUX" in v for v in out["verdict"]))
 
     def testPerfect(self):
-        out = plotting.core_excess_diagnostic(_run(), plot=False)
+        out = plotting.coreExcessDiagnostic(_run(), plot=False)
         self.assertEqual(out["verdict"], ["no significant central excess"])
 
 
@@ -99,12 +99,12 @@ class UnmodeledMaskTestCase(unittest.TestCase):
         nearsat[47:54, 47:54] = True
         bad |= nearsat
         bad[:, 140:143] = True                                    # a bad column
-        old = pl.unmodeled_near_mask(data - model, var, bad, fw)
-        new = pl.unmodeled_near_mask(data - model, var, bad, fw, modeled=nearsat)
+        old = pl.unmodeledNearMask(data - model, var, bad, fw)
+        new = pl.unmodeledNearMask(data - model, var, bad, fw, modeled=nearsat)
         self.assertGreater(old[30:70, 30:70].sum(), 100)
         self.assertEqual(new[30:70, 30:70].sum(), 0)              # nothing greyed at the core
         self.assertTrue(new[:, 136:140].all())                    # the bad column keeps its pad
-        self.assertFalse(pl.unmodeled_near_mask(data, var, np.zeros((n, n), bool), fw).any())
+        self.assertFalse(pl.unmodeledNearMask(data, var, np.zeros((n, n), bool), fw).any())
 
 
 class PlotSmokeTestCase(unittest.TestCase):
@@ -112,22 +112,22 @@ class PlotSmokeTestCase(unittest.TestCase):
         plt.close("all")
 
     def testFinalComparison(self):
-        run = fakeRun.make_run()
+        run = fakeRun.makeRun()
         for kw in (dict(), dict(grayscale=True), dict(panels="residuals", sigma="pixel"),
-                   dict(circles="none", exclude_near_mask=False)):
-            st = plotting.plot_final_comparison(run, view=None, verbose=False, **kw)
-            self.assertLess(abs(st["residual_over_sigma"]["sigma_iqr"] - 1.0), 0.1)
+                   dict(circles="none", excludeNearMask=False)):
+            st = plotting.plotFinalComparison(run, view=None, verbose=False, **kw)
+            self.assertLess(abs(st["residualOverSigma"]["sigmaIqr"] - 1.0), 0.1)
 
     def testCrossSectionsAndZooms(self):
-        run = fakeRun.make_run()
-        out = plotting.show_cross_sections(run, stars=[(1040, 2040)], half=10)
+        run = fakeRun.makeRun()
+        out = plotting.showCrossSections(run, stars=[(1040, 2040)], half=10)
         self.assertEqual(len(out), 1)
-        plotting.show_star_zooms(run, n=2, half=10)
+        plotting.showStarZooms(run, n=2, half=10)
 
     def testBrightStarStack(self):
-        out = plotting.show_bright_star_stack(_run(), min_snr=100, plot=True)
+        out = plotting.showBrightStarStack(_run(), minSnr=100, plot=True)
         self.assertGreater(out["n"], 5)
-        self.assertLess(np.nanmax(np.abs(out["psf_only"])), 1e-3)
+        self.assertLess(np.nanmax(np.abs(out["psfOnly"])), 1e-3)
 
 
 if __name__ == "__main__":

@@ -56,40 +56,40 @@ def main():
     os.makedirs(figdir, exist_ok=True)
     counter = {"n": 0, "tag": "setup"}
 
-    def save_all(*a, **k):                      # replaces plt.show: save every open figure
+    def saveAll(*a, **k):                      # replaces plt.show: save every open figure
         for num in plt.get_fignums():
             counter["n"] += 1
             plt.figure(num).savefig(os.path.join(figdir, f"{counter['n']:03d}_{counter['tag']}.png"),
                                     dpi=110, bbox_inches="tight")
         plt.close("all")
-    plt.show = save_all
+    plt.show = saveAll
 
     print(f"meas_crowd driver {crowd.pipeline.__version__}; C++ kernels: {crowd.HAVE_CXX}")
-    cfg = crowd.make_config(crowd.CROWDED_FIELD_CONFIG)
-    sess = crowd.prepare_session(visit=args.visit, detector=args.detector, cutouts=args.cutouts,
-                                 pad=args.pad, psf_source="visit", repo=args.repo,
-                                 collection=args.collection)
-    crowd.attach_gaia(sess, repo=args.repo)
+    cfg = crowd.makeConfig(crowd.CROWDED_FIELD_CONFIG)
+    sess = crowd.prepareSession(visit=args.visit, detector=args.detector, cutouts=args.cutouts,
+                                pad=args.pad, psfSource="visit", repo=args.repo,
+                                collection=args.collection)
+    crowd.attachGaia(sess, repo=args.repo)
 
     t0 = time.perf_counter()
-    runs = crowd.run_session_gaia(sess, cfg, out_dir=args.out, max_outer=args.max_outer,
-                                  max_inner=args.max_inner, psf_polish_cycles=3,
-                                  plot_final=False, n_jobs=args.n_jobs)
+    runs = crowd.runSessionGaia(sess, cfg, outDir=args.out, maxOuter=args.max_outer,
+                                maxInner=args.max_inner, psfPolishCycles=3,
+                                plotFinal=False, nJobs=args.n_jobs)
     print(f"fit: {time.perf_counter() - t0:.0f} s")
 
     for name, run in runs.items():
         counter["tag"] = name
-        crowd.plot_final_comparison(run)
+        crowd.plotFinalComparison(run)
         plt.show()
-        crowd.plot_residual_gray(run)
+        crowd.plotResidualGray(run)
         plt.show()
-        phot = crowd.measure_photometry(run)
+        phot = crowd.measurePhotometry(run)
         phot.write(os.path.join(args.out, f"{name}_photometry.fits"), overwrite=True)
-        crowd.plot_source_cutouts(run, how="worst", n=8, phot=phot,
-                                  pdf_path=os.path.join(args.out, f"{name}_worst_sources.pdf"))
-        crowd.diagnose_residual(run)
+        crowd.plotSourceCutouts(run, how="worst", n=8, phot=phot,
+                                pdfPath=os.path.join(args.out, f"{name}_worst_sources.pdf"))
+        crowd.diagnoseResidual(run)
         plt.show()
-        crowd.star_residual_table(run)
+        crowd.starResidualTable(run)
         plt.show()
     print(f"figures in {figdir}/, catalogues and images in {args.out}/")
 

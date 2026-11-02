@@ -22,7 +22,7 @@
 
 # Compare two settings on tiles across one detector at USDF:  OUT=... bash examples/usdf_validate.sh
 set -euo pipefail
-OUT=${OUT:-/sdf/home/a/abudlong/project/repo-main-logs/crowdedFields/october2026/crowded_fields/7-newTest}
+OUT=${OUT:-/sdf/home/a/abudlong/project/repo-main-logs/crowdedFields/october2026/crowded_fields/7a-newTest}
 PKG=${PKG:-$HOME/meas_crowd}
 mkdir -p "$OUT/logs"
 NTASKS=$(python3 "$PKG/examples/validate_settings.py" list | wc -l)   # settings x tiles (12)

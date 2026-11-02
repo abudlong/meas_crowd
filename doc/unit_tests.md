@@ -124,6 +124,13 @@ The joint fit itself is replaced by a plain least-squares fit where the test nee
 | `BackgroundLowFitTestCase.testConstantAndNone` | Constant and no refit; bad mode | the same image | constant = 4.0 ± 0.3 and flat; "none" subtracts nothing; "spline" here raises ValueError |
 | `BackgroundLowFitTestCase.testDefaultIsPlane` | The default | `PIPELINE_DEFAULTS` | `bgMode` is "plane" |
 
+Off-detector Gaia stars (`OffDetectorGaiaTestCase`):
+
+| Test | What it checks | Input | Passes when |
+| --- | --- | --- | --- |
+| `OffDetectorGaiaTestCase.testDropsOnlyBeyondDetectorEdge` | Gaia starting positions beyond the detector edge are dropped, those beyond an ordinary cutout edge kept | 60 × 50 cutout whose right edge is flagged EDGE; four positions | only the one beyond the EDGE-flagged edge is dropped |
+| `OffDetectorGaiaTestCase.testNoEdgeMaskKeepsEverything` | Without an EDGE / NO_DATA flag nothing is dropped | unflagged cutout; empty input | every position (and an empty list) is returned unchanged |
+
 ## test_diagnostics.py
 
 Residual diagnostics and run-level plots (`plotting.py`, `pipeline.unmodeledNearMask`), on

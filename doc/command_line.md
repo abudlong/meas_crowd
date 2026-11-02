@@ -143,6 +143,22 @@ crowd.plotTile(f"{OUT}/tile_x0740_y0800_371x400.fits")      # any tile file (ls 
 extension (DATA, MODEL, RESIDUAL, RESIDUAL_SIGMA, ...) into its own frame; `ds9
 "$OUT/detector_mosaic.fits[RESIDUAL]"` opens one.
 
+## Comparing settings across the detector
+
+Before changing the settings of a whole-detector run, compare old and new settings on tiles
+spread across the detector (corners, centre, an edge) with `examples/validate_settings.py`.
+Each (settings, tile) pair is one Slurm array task, and a compare job follows:
+
+```bash
+OUT=/sdf/data/rubin/user/$USER/crowdedFields/october2026/validate PKG=$PWD bash examples/usdf_validate.sh
+```
+
+`$OUT/validation_summary.txt` (and `.csv`) lists, per tile and settings, the robust σ of
+residual/σ, the number of sources and of extended sources, the median aperture − PSF magnitude
+and the scatter and offset with respect to Gaia; `$OUT/figures/<tile>_<settings>.png` shows
+each fit.  Edit `SETTINGS` and `POINTS` at the top of the script to test other settings or other
+places; `python examples/validate_settings.py list` prints the tasks.
+
 ## Command reference
 
 ```text

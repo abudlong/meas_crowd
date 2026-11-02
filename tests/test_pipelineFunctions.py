@@ -540,5 +540,29 @@ class BackgroundLowFitTestCase(unittest.TestCase):
         self.assertEqual(pl.PIPELINE_DEFAULTS["bgMode"], "plane")
 
 
+class OffDetectorGaiaTestCase(unittest.TestCase):
+    def testDropsOnlyBeyondDetectorEdge(self):
+        img = np.zeros((50, 60))
+        mask = np.zeros((50, 60), int)
+        mask[:, -3:] = lsstStubs.FakeMask.planes["EDGE"]          # right edge = detector edge
+        exp = lsstStubs.FakeExposure(img, img + 1, mask=mask, x0=100, y0=200)
+        xy = np.array([[130.0, 220.0],     # inside -> kept
+                       [165.0, 220.0],     # beyond the right (detector) edge -> dropped
+                       [95.0, 220.0],      # beyond the left edge, real pixels next to it -> kept
+                       [130.0, 255.0]])    # beyond the top edge, real pixels -> kept
+        kept, rows = pl.dropOffDetectorGaia(exp, xy, np.arange(4))
+        self.assertEqual(list(rows), [0, 2, 3])
+        np.testing.assert_array_equal(kept, xy[[0, 2, 3]])
+
+    def testNoEdgeMaskKeepsEverything(self):
+        img = np.zeros((20, 20))
+        exp = lsstStubs.FakeExposure(img, img + 1)
+        xy = np.array([[-5.0, 10.0], [10.0, 10.0]])
+        kept, rows = pl.dropOffDetectorGaia(exp, xy, np.array([7, 8]))
+        self.assertEqual(list(rows), [7, 8])
+        kept, rows = pl.dropOffDetectorGaia(exp, np.zeros((0, 2)), np.zeros(0, int))
+        self.assertEqual(len(kept), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

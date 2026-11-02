@@ -43,7 +43,7 @@ import numpy as np
 SETTINGS = {
     "old": {},
     "new": dict(psfStackIsoFwhm=1.0, psfStackMinSnr=30.0, psfStackN=80,
-                gaiaPadFwhm=0.0, ellipTest=False, keepExtended=False),
+                ellipTest=False, keepExtended=False),
 }
 # one tile around each point (detector px): corners, centre, an edge
 POINTS = {

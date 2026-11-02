@@ -2,7 +2,7 @@
 
 Every public function and class of `lsst.meas.crowd`: what it does, its parameters (with types and defaults) and what it returns.  Generated from the docstrings by `doc/make_function_reference.py`; do not edit by hand (run `python doc/make_function_reference.py` after changing a docstring).  How the pipeline fits together is in [pipeline_guide.md](pipeline_guide.md); the output catalogue in [catalog_columns.md](catalog_columns.md).
 
-176 functions and 4 classes in 11 modules.  Everything listed here can be used as `crowd.<name>` after `import lsst.meas.crowd as crowd`, or from its module (`from lsst.meas.crowd import photometry`).  Names starting with `_` are internal helpers and are not listed.
+177 functions and 4 classes in 11 modules.  Everything listed here can be used as `crowd.<name>` after `import lsst.meas.crowd as crowd`, or from its module (`from lsst.meas.crowd import photometry`).  Names starting with `_` are internal helpers and are not listed.
 
 ## Start here
 
@@ -27,7 +27,7 @@ Every public function and class of `lsst.meas.crowd`: what it does, its paramete
 
 | Module | Role | Public functions / classes |
 | --- | --- | --- |
-| [`pipeline`](#pipeline) | the driver: run the pipeline on cutouts from Gaia starting positions, inner / outer loops, PSF refinement, diagnostics | 39 |
+| [`pipeline`](#pipeline) | the driver: run the pipeline on cutouts from Gaia starting positions, inner / outer loops, PSF refinement, diagnostics | 40 |
 | [`session`](#session) | load a visit, cut out regions, set up the PSF; configuration; saving runs | 19 |
 | [`gaiaCatalog`](#gaiacatalog) | the Gaia catalogue and the starting positions of each cutout | 4 |
 | [`photometry`](#photometry) | PSF and aperture photometry, errors, the Gaia comparison | 9 |
@@ -79,6 +79,7 @@ Adaptive, iterative joint PSF-fitting pipeline starting from Gaia positions.
 | [`refitBackgroundLowfit`](#pipelinerefitbackgroundlowfit) | Fit a constant or tilted-plane background to the unmasked pixels and subtract it in place. |
 | [`printTiming`](#pipelineprinttiming) | Print the time spent per pipeline step. |
 | [`runAdaptivePipeline`](#pipelinerunadaptivepipeline) | Run the adaptive pipeline on a whole cutout, starting from Gaia positions. |
+| [`dropOffDetectorGaia`](#pipelinedropoffdetectorgaia) | Drop Gaia starting positions that lie beyond the detector edge. |
 | [`runCutoutGaia`](#pipelineruncutoutgaia) | Run the adaptive pipeline on one cropped exposure, starting from Gaia positions. |
 | [`checkBrightNeighbours`](#pipelinecheckbrightneighbours) | Test whether sources on the edges of bright stars are real. |
 | [`diagnoseResidual`](#pipelinediagnoseresidual) | Decide whether what is left around bright stars is noise or model error. |
@@ -733,6 +734,24 @@ The replacement for `fitLib.runCutoutPipeline`: outer passes of `runInnerAdaptiv
 | Returns | Type | Description |
 | --- | --- | --- |
 | `outerHistory` | `list` [`dict`] | One dict per outer pass (as `fitLib.runCutoutPipeline`'s, plus ``psfChange``, ``modelErr``, ``bf`` and ``result['adaptive']``). |
+
+### pipeline.dropOffDetectorGaia
+
+`dropOffDetectorGaia(exposure, xy, rows)`
+
+Drop Gaia starting positions that lie beyond the detector edge.
+
+A star outside the cutout whose nearest cutout pixel is flagged EDGE or NO_DATA lies off the detector: no pixel constrains its flux, so the joint fit can give it an absurd value whose wings then spoil the edge of the image.  Stars outside a cutout edge that is not a detector edge are kept (their wings fall on real pixels and their neighbours need them).
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `exposure` | `lsst.afw.image.Exposure` | The cutout. |
+| `xy` | `numpy.ndarray` | Gaia positions (detector px), shape (N, 2). |
+| `rows` | `numpy.ndarray` | Their rows in the Gaia table. |
+
+| Returns | Type | Description |
+| --- | --- | --- |
+| `xy, rows` | `numpy.ndarray` | The positions and rows that are kept. |
 
 ### pipeline.runCutoutGaia
 

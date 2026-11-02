@@ -75,6 +75,8 @@ PIPELINE_DEFAULTS = dict(
     # ---- Gaia starting positions
     protectGaia=True,
     gaiaPadFwhm=1.5,         # use Gaia stars up to this far OUTSIDE the cutout
+    gaiaDropOffDetector=True,  # ... except beyond the DETECTOR edge (the nearest cutout pixel is
+    #   EDGE / NO_DATA): no data constrain their flux, which the fit would push to absurd values
     gaiaMaxDriftPx=1.5,     # max distance a Gaia source may move from its Gaia position
     gaiaMinSepPx=0.5,       # Gaia duplicates closer than this are merged
     fitGaiaOffset=True,      # remove a global WCS-vs-data offset first
@@ -3971,6 +3973,52 @@ def runAdaptivePipeline(exposureCrop, psf, badBitmask, gaiaXy=None, gaiaRows=Non
     return hist
 
 
+def dropOffDetectorGaia(exposure, xy, rows):
+    """Drop Gaia starting positions that lie beyond the detector edge.
+
+    A star outside the cutout whose nearest cutout pixel is flagged EDGE or NO_DATA lies off the
+    detector: no pixel constrains its flux, so the joint fit can give it an absurd value whose
+    wings then spoil the edge of the image.  Stars outside a cutout edge that is not a detector
+    edge are kept (their wings fall on real pixels and their neighbours need them).
+
+    Parameters
+    ----------
+    exposure : `lsst.afw.image.Exposure`
+        The cutout.
+    xy : `numpy.ndarray`
+        Gaia positions (detector px), shape (N, 2).
+    rows : `numpy.ndarray`
+        Their rows in the Gaia table.
+
+    Returns
+    -------
+    xy, rows : `numpy.ndarray`
+        The positions and rows that are kept.
+    """
+    xy = np.asarray(xy, float).reshape(-1, 2)
+    if not len(xy):
+        return xy, rows
+    bb = exposure.getBBox()
+    mk = exposure.mask
+    bits = 0
+    for name in ("EDGE", "NO_DATA"):
+        try:
+            bits |= mk.getPlaneBitMask(name)
+        except Exception:
+            pass
+    if not bits:
+        return xy, rows
+    ix = np.round(xy[:, 0]).astype(int) - bb.getMinX()
+    iy = np.round(xy[:, 1]).astype(int) - bb.getMinY()
+    ny, nx = mk.array.shape
+    outside = (ix < 0) | (ix >= nx) | (iy < 0) | (iy >= ny)
+    nearest = mk.array[np.clip(iy, 0, ny - 1), np.clip(ix, 0, nx - 1)]
+    keep = ~(outside & ((nearest & bits) != 0))
+    if (~keep).any():
+        print(f"  dropped {int((~keep).sum())} Gaia star(s) beyond the detector edge")
+    return xy[keep], np.asarray(rows)[keep]
+
+
 def runCutoutGaia(rawCrop, psf, badBitmask, gaiaTbl=None, config=None, interiorBbox=None,
                   starCat=None, bgImage=None, viz=False, name="cutout", gmagMax=None,
                   **overrides):
@@ -4016,6 +4064,8 @@ def runCutoutGaia(rawCrop, psf, badBitmask, gaiaTbl=None, config=None, interiorB
     interiorBbox = interiorBbox or cb
     gaiaXy, rows = selectGaiaSources(gaiaTbl, cb, L._fwhm(psf, cb.getCenter()),
                                      P["gaiaPadFwhm"], gmagMax, P["gaiaMinSepPx"])
+    if P["gaiaDropOffDetector"]:
+        gaiaXy, rows = dropOffDetectorGaia(rawCrop, gaiaXy, rows)
     t0 = time.perf_counter()
     gm = (np.asarray(gaiaTbl["phot_g_mean_mag"], float)[rows]
           if gaiaTbl is not None and len(rows) and "phot_g_mean_mag" in gaiaTbl.colnames else None)

@@ -72,7 +72,9 @@ iteration, which detection alone cannot do in a blend.
 2. **Starting positions of a cutout:** the Gaia stars inside the fitted box grown by
    `gaiaPadFwhm` = 1.5 FWHM (stars just outside still add light inside), brightest first;
    entries closer than `gaiaMinSepPx` = 0.5 px to a brighter one are dropped as duplicates;
-   optionally only stars brighter than `gmagMax`.
+   optionally only stars brighter than `gmagMax`.  Stars beyond the **detector** edge (the
+   nearest cutout pixel is flagged EDGE or NO_DATA) are dropped (`gaiaDropOffDetector`): no pixel
+   constrains their flux, so the fit would give them absurd values whose wings spoil the edge.
 
 ## 3. Preparation
 

@@ -288,5 +288,4 @@ Still to do
 
 * wrap the driver as an ``lsst.pipe.base`` Task with a ``pex_config`` Config (options are a
   plain dict today, ``PIPELINE_DEFAULTS``);
-* Rubin naming conventions (camelCase) for the public functions;
 * end-to-end tests on a small real cutout (needs data access in CI).

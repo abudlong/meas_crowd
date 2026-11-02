@@ -25,10 +25,21 @@
     crowdDetector.py fit    VISIT DETECTOR [--out DIR] [--tile 400 --pad 30]
                             [--task-index K --n-tasks N]   (default: from SLURM_ARRAY_TASK_*)
                             [--region XMIN XMAX YMIN YMAX]  (test on part of the detector)
+                            [--config stellar|crowded|FILE.json]
+                            [--plots none|sample|all] [--all-source-pages]
     crowdDetector.py stitch [--out DIR]                     (mosaic + merged catalogue)
     crowdDetector.py plot   [--out DIR] [--view XMIN XMAX YMIN YMAX] [--png FILE]
 
 DIR defaults to $MEAS_CROWD_OUT if set, else DEFAULT_OUT below.
+
+--config picks the pipeline settings: 'stellar' (default) = CROWDED_STELLAR_FIELD_CONFIG,
+'crowded' = CROWDED_FIELD_CONFIG (the settings of runs before November 2026), or a JSON file
+(see makeConfig).  `fit` writes the settings it used to DIR/config.json.
+
+--plots writes every diagnostic plot (PSF stars and stamps, PSF per pass, backgrounds, rounds,
+source pages and cutouts, final comparison, ...) of the chosen tiles to DIR/plots/<tile>/:
+'sample' (default) = 7 tiles (corners, centre, two edge midpoints), 'all' = every tile, 'none'.
+Task 0 also writes the detector-level PSF plots to DIR/plots/detector/.
 
 `fit` can be rerun: tiles already written are skipped.  Run `stitch` after all tasks finished
 (or any time, to look at the tiles done so far).
@@ -40,12 +51,20 @@ import sys
 
 # where results go when neither --out nor $MEAS_CROWD_OUT is given
 DEFAULT_OUT = ("/sdf/home/a/abudlong/project/repo-main-logs/crowdedFields/october2026/"
-               "crowded_fields/6-testScript/10.30.26_test2")
+               "crowded_fields/8-detector144-stellarConfig")
+
+# --config names -> preset in lsst.meas.crowd.session
+CONFIGS = {"stellar": "CROWDED_STELLAR_FIELD_CONFIG", "crowded": "CROWDED_FIELD_CONFIG"}
 
 
 def _envInt(name, default):
     v = os.environ.get(name)
     return int(v) if v not in (None, "") else default
+
+
+def _plots(value):
+    """--plots value -> fitTiles(plots=...)."""
+    return value if value in ("none", "sample", "all") else [v.strip() for v in value.split(",")]
 
 
 def main(argv=None):
@@ -69,6 +88,13 @@ def main(argv=None):
     f.add_argument("--collection", default="LSSTCam/runs/DRP/DP2")
     f.add_argument("--max-outer", type=int, default=3)
     f.add_argument("--max-inner", type=int, default=15)
+    f.add_argument("--config", default="stellar",
+                   help="stellar (default), crowded, or a JSON configuration file")
+    f.add_argument("--plots", default="sample",
+                   help="tiles to write all plots for: sample (default), all, none, or tile names "
+                        "separated by commas")
+    f.add_argument("--all-source-pages", action="store_true",
+                   help="a per-source page for every source of a plotted tile (default 4 pages)")
     f.add_argument("--overwrite", action="store_true")
 
     s = sub.add_parser("stitch", help="assemble the tiles into a mosaic + catalogue")
@@ -88,10 +114,17 @@ def main(argv=None):
     from lsst.meas.crowd import detector
 
     if args.cmd == "fit":
-        detector.fitTiles(args.visit, args.detector, outDir=args.out, tile=args.tile, pad=args.pad,
+        from lsst.meas.crowd import session
+        base = getattr(session, CONFIGS[args.config]) if args.config in CONFIGS else args.config
+        os.makedirs(args.out, exist_ok=True)
+        cfg = session.makeConfig(base, saveTo=os.path.join(args.out, "config.json")
+                                 if args.task_index == 0 else None)
+        print(f"configuration: {CONFIGS.get(args.config, args.config)}")
+        detector.fitTiles(args.visit, args.detector, cfg, outDir=args.out, tile=args.tile, pad=args.pad,
                           taskIndex=args.task_index, nTasks=args.n_tasks, region=args.region,
                           repo=args.repo, collection=args.collection, overwrite=args.overwrite,
-                          maxOuter=args.max_outer, maxInner=args.max_inner)
+                          maxOuter=args.max_outer, maxInner=args.max_inner,
+                          plots=_plots(args.plots), allSourcePages=args.all_source_pages)
     elif args.cmd == "stitch":
         detector.stitchTiles(args.out)
     else:
@@ -100,6 +133,15 @@ def main(argv=None):
         st = detector.plotDetector(mosaic, view=args.view, showTiles=not args.no_tiles,
                                    sources=args.sources, out=png)
         print(f"residual/sigma robust sigma {st['residualSigma']:.3f}; wrote {png}")
+        catPath = os.path.join(args.out, "detector_catalog.fits")
+        if args.view is None and os.path.exists(catPath):     # photometry of the whole detector
+            from astropy.table import Table
+            from lsst.meas.crowd.plotting import plotGaiaComparison
+            cat = Table.read(catPath)
+            if "gaiaMatch" in cat.colnames:
+                gpng = os.path.join(args.out, "detector_gaia_comparison.png")
+                plotGaiaComparison(cat, out=gpng)
+                print(f"wrote {gpng}")
     return 0
 
 

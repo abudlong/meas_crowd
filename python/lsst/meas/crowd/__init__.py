@@ -68,10 +68,11 @@ _API = {
     "sourcePlots": ["plotSourceCutouts", "sourceCutoutData"],
     "detector": ["tileSpecs", "fitTiles", "stitchTiles", "loadMosaic", "loadTile",
                  "plotTile", "plotDetector", "saveTileProducts", "addTileResiduals"],
+    "runPlots": ["saveRunPlots", "saveDetectorPlots", "showPsfStarStamps", "sampleTileNames"],
     "stagePlots": ["psfStarPositions", "showPsfStars", "showBackgrounds", "showRounds",
                    "showLinkedSourcePages", "comparePasses"],
     "session": ["makeConfig", "prepareSession", "CROWDED_FIELD_CONFIG", "V5_TESTING_CONFIG",
-                "robustStats",
+                "CROWDED_STELLAR_FIELD_CONFIG", "robustStats",
                 "saveRun", "Session", "CutoutRun"],
     "fastKernels": ["FastPsf", "HAVE_CXX"],
 }
@@ -87,7 +88,7 @@ def __getattr__(name):
         globals()[name] = value
         return value
     if name in ("pipeline", "gaiaCatalog", "plotting", "photometry", "sourcePlots", "session",
-                "fitLib", "adaptive", "fastKernels", "detector", "stagePlots"):
+                "fitLib", "adaptive", "fastKernels", "detector", "stagePlots", "runPlots"):
         return importlib.import_module(f".{name}", __name__)
     if "_" in name.strip("_") and toCamel(name) in _WHERE:   # an old snake_case name
         warnings.warn(f"{name} has been renamed {toCamel(name)}", FutureWarning, stacklevel=2)

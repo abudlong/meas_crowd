@@ -33,7 +33,9 @@ with the configuration option and default for every threshold.  For running the 
   `variance + (sysFrac × model)² + poissonK × model`, with `sysFrac = 0.03` (a 3 % allowance
   for PSF imperfection) and `poissonK` from the noise check (4c, 0 until then).
 - Options are the keys of `crowd.PIPELINE_DEFAULTS` / `CROWDED_FIELD_CONFIG`; the defaults are
-  those of `CROWDED_FIELD_CONFIG` (the recommended configuration).
+  those of `CROWDED_FIELD_CONFIG` (the recommended configuration; for dense stellar fields,
+  `CROWDED_STELLAR_FIELD_CONFIG`, which refits the PSF from less isolated stars and fits point
+  sources only).
 
 ## 1. Setup
 

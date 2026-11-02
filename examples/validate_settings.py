@@ -39,7 +39,7 @@ import sys
 
 import numpy as np
 
-# "old" = CROWDED_FIELD_CONFIG as used in the whole-detector run; "new" = the corner-tile winner
+# "old" = CROWDED_FIELD_CONFIG; "new" = the corner-tile winner, now CROWDED_STELLAR_FIELD_CONFIG
 SETTINGS = {
     "old": {},
     "new": dict(psfStackIsoFwhm=1.0, psfStackMinSnr=30.0, psfStackN=80,

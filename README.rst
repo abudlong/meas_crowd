@@ -73,6 +73,7 @@ The package follows the Rubin DM layout (``sconsUtils`` + ``eups``)::
         sourcePlots.py            per-source cutouts + x / y / radial cross-sections + magnitudes
         stagePlots.py             PSF stars + model PSF, backgrounds, rounds, linked source pages
         detector.py               whole-detector tiling, stitching, mosaic and tile plots
+        runPlots.py               every plot of a run / the detector PSF / chosen tiles, to PNG
         fastKernels.py            fast PSF stamps (C++ via pybind11, NumPy fallback)
         _crowdLib.cc              pybind11 wrapper of src/
         fitLib.py                 core library: joint fit, detection, PSF / background tools
@@ -172,6 +173,9 @@ a run at USDF step by step::
 
 ``--out`` is optional: without it the results go to ``$MEAS_CROWD_OUT`` if that is set, else to
 ``DEFAULT_OUT`` at the top of ``bin.src/crowdDetector.py``.
+``fit`` uses ``CROWDED_STELLAR_FIELD_CONFIG`` (dense stellar fields) unless given
+``--config crowded`` (``CROWDED_FIELD_CONFIG``) or ``--config my_config.json``; the Slurm script
+takes ``CONFIG=``.
 
 Plots
 =====
@@ -218,6 +222,17 @@ Whole detector (``detector``):
 ============================  ==================================================================
 ``plotTile``, ``loadTile``    one tile over its fit box, interior outlined
 ``plotDetector``              the stitched mosaic, binned for display, or a zoom (``view=``)
+============================  ==================================================================
+
+Everything at once (``runPlots``):
+
+============================  ==================================================================
+``saveRunPlots``              every plot of one run (PSF stars, stamps and model per pass,
+                              backgrounds, rounds, source pages and cutouts, final comparison,
+                              bright-star diagnostics, Gaia) as numbered PNGs + ``index.txt``
+``saveDetectorPlots``         the detector-level PSF stars, their stamps and the PSF kernel
+``fitTiles(plots=...)``       the same for chosen tiles of a detector run
+                              (``crowdDetector.py fit --plots sample|all``)
 ============================  ==================================================================
 
 Photometry

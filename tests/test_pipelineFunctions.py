@@ -564,5 +564,32 @@ class OffDetectorGaiaTestCase(unittest.TestCase):
         self.assertEqual(len(kept), 0)
 
 
+class StellarConfigTestCase(unittest.TestCase):
+    """CROWDED_STELLAR_FIELD_CONFIG and the command line's --config names."""
+
+    def testPresetIsCrowdedPlusStellarSettings(self):
+        from lsst.meas.crowd import session
+        stellar = dict(psfStackIsoFwhm=1.0, psfStackMinSnr=30.0, psfStackN=80,
+                       ellipTest=False, keepExtended=False)
+        self.assertEqual(session.CROWDED_STELLAR_FIELD_CONFIG,
+                         dict(session.CROWDED_FIELD_CONFIG, **stellar))
+        cfg = session.makeConfig(session.CROWDED_STELLAR_FIELD_CONFIG)
+        for k, v in stellar.items():
+            self.assertEqual(cfg[k], v)
+        self.assertEqual(cfg["minSnr"], session.CROWDED_FIELD_CONFIG["minSnr"])
+        self.assertTrue(pl.PIPELINE_DEFAULTS["ellipTest"])          # library defaults unchanged
+
+    def testCommandLineConfigNames(self):
+        import os
+        import runpy
+        from lsst.meas.crowd import session
+        script = os.path.join(os.path.dirname(__file__), os.pardir, "bin.src", "crowdDetector.py")
+        ns = runpy.run_path(script, run_name="crowdDetector")
+        self.assertEqual(set(ns["CONFIGS"]), {"stellar", "crowded"})
+        self.assertIs(getattr(session, ns["CONFIGS"]["stellar"]),
+                      session.CROWDED_STELLAR_FIELD_CONFIG)
+        self.assertIs(getattr(session, ns["CONFIGS"]["crowded"]), session.CROWDED_FIELD_CONFIG)
+
+
 if __name__ == "__main__":
     unittest.main()

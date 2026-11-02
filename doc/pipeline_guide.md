@@ -104,6 +104,15 @@ The most important choice is the PSF source; everything else has a working defau
 an unknown name raises an error. `crowd.PIPELINE_DEFAULTS` lists every option with a comment, and
 `crowd.showConfig(cfg, diffOnly=True)` prints what differs from the defaults.
 
+For dense stellar fields (Galactic bulge and plane) use `CROWDED_STELLAR_FIELD_CONFIG`:
+`CROWDED_FIELD_CONFIG` with the PSF residual-stack refit allowed to use less isolated stars
+(`psfStackIsoFwhm=1.0`, `psfStackMinSnr=30`, `psfStackN=80`) and every source fitted as a point
+source (`ellipTest=False`, `keepExtended=False`).  With the default isolation rule only a star or
+two qualify in such a field, so the PSF is never refined; extended models then absorb the PSF
+mismatch.  On LSSTCam detector 144 of visit 2025062100433 it lowered the residual/σ scatter of
+the crowded tiles (e.g. 2.39 → 1.40) and halved the scatter against Gaia, and it is the default
+of the `crowdDetector.py` command line.
+
 **PSF source** (`prepareSession(..., psfSource=...)`, also `fitTiles` and the
 `crowdDetector.py` CLI):
 
@@ -293,6 +302,20 @@ changed in that iteration. Pages for earlier iterations (`snap=...`) need `keepA
 Do not save hundreds of pages into one `PdfPages`: matplotlib keeps every image in memory until
 the PDF is closed (4.5 GB for 144 sources); use `outDir`. For the magnitude-labelled version
 use `crowd.plotSourceCutouts(run, how="worst", n=8, phot=phot)`.
+
+### 5b. Every plot at once
+
+`saveRunPlots` writes all the plots of sections 2-5 (and the final comparison, the bright-star
+diagnostics and the Gaia comparison) of one run to numbered PNG files with an `index.txt`;
+`saveDetectorPlots` does the detector-level PSF stars and kernel:
+
+```python
+crowd.saveRunPlots(run, "results/plots/cutout1", phot=phot, initialBackground=sess.bgImage)
+crowd.saveDetectorPlots(visitImage, "results/plots/detector", catalog=cat)   # cat as in 2b
+```
+
+A detector run does this for chosen tiles with `fitTiles(..., plots="sample")` (or `"all"`, or
+a list of tile names); see [command_line.md](command_line.md#all-the-plots).
 
 ### 6. Individual tiles
 

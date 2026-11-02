@@ -104,6 +104,20 @@ CROWDED_FIELD_CONFIG = dict(
 # the old name, kept so existing notebooks keep working
 V5_TESTING_CONFIG = CROWDED_FIELD_CONFIG
 
+# CROWDED_FIELD_CONFIG for dense stellar fields (Galactic bulge and plane), where almost every
+# source is a star and few stars are isolated, validated on six tiles of LSSTCam detector 144
+# (visit 2025062100433):
+# - the PSF residual-stack refit uses stars with no neighbour within 1 FWHM (instead of 2.5),
+#   at S/N >= 30, up to 80 of them: with the default rule, only a star or two qualify and the
+#   PSF is never refined;
+# - every source is fitted as a point source (no extended-model test), so extended models
+#   cannot absorb PSF mismatch.
+CROWDED_STELLAR_FIELD_CONFIG = dict(
+    CROWDED_FIELD_CONFIG,
+    psfStackIsoFwhm=1.0, psfStackMinSnr=30.0, psfStackN=80,
+    ellipTest=False, keepExtended=False,
+)
+
 
 def _merge(dst, src, deep):
     """Merge ``src`` into ``dst`` (key by key for nested dicts when ``deep``) and return ``dst``."""

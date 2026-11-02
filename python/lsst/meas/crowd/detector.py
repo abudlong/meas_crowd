@@ -240,15 +240,38 @@ def _loadVisitImage(visit, detector, repo, collection, instrument, visitImageCol
     return butler.get("visit_image", collections=visitImageCollections, dataId=refs[0].dataId)
 
 
+# source catalogues with the calib_psf_* flags of the visit PSF, newest pipeline names first
+_PSF_STAR_DATASETS = ("single_visit_star_unstandardized", "initial_stars_detector", "src")
+
+
+def _loadPsfStarCatalog(visit, detector, repo, collection, instrument, visitImageCollections):
+    """Load the visit's source catalogue with PSF-star flags, or None if there is none."""
+    from lsst.daf.butler import Butler
+    butler = Butler(repo, collections=collection)
+    where = f"instrument='{instrument}' AND visit={visit} AND detector={detector}"
+    for name in _PSF_STAR_DATASETS:
+        try:
+            refs = butler.query_datasets(name, collections=visitImageCollections, where=where,
+                                         find_first=False)
+            if refs:
+                return butler.get(refs[0])
+        except Exception:
+            continue
+    return None
+
+
 def fitTiles(visit, detector, config=None, outDir="detector_run", tile=400, pad=30,
              taskIndex=0, nTasks=1, region=None, repo="dp2_prep",
              collection="LSSTCam/runs/DRP/DP2", instrument="LSSTCam",
              visitImageCollections="LSSTCam/runs/*", psfSource="visit", overwrite=False,
-             visitImage=None, **overrides):
+             visitImage=None, plots=None, plotDir=None, allSourcePages=False, **overrides):
     """Fit this task's share of a detector's tiles and write one file per tile.
 
     Tiles already on disk are skipped, so the job can be restarted; a failing tile is reported
-    and the task moves on.
+    and the task moves on.  With ``plots``, every diagnostic plot of the chosen tiles
+    (`lsst.meas.crowd.runPlots.saveRunPlots`) goes to ``<plotDir>/<tile name>/``, and task 0
+    also writes the detector-level PSF plots to ``<plotDir>/detector/``; a chosen tile whose
+    plots are missing is refitted even if its tile file exists.
 
     Parameters
     ----------
@@ -279,6 +302,14 @@ def fitTiles(visit, detector, config=None, outDir="detector_run", tile=400, pad=
         Refit tiles that already have a file.
     visitImage : `lsst.afw.image.Exposure`, optional
         An already-loaded visit image (skips the Butler).
+    plots : `str` or `list` [`str`], optional
+        Tiles to write all plots for: None (no plots), 'sample' (the tiles at the corners, the
+        centre and two edge midpoints, `lsst.meas.crowd.runPlots.sampleTileNames`), 'all', or a
+        list of tile names.
+    plotDir : `str`, optional
+        Directory for the plots (default ``<outDir>/plots``).
+    allSourcePages : `bool`, optional
+        Write a per-source page for every source of a plotted tile (default: 4 pages).
     **overrides
         Keyword arguments of ``runSessionGaia`` (e.g. ``maxOuter=3, maxInner=15``).
 
@@ -301,15 +332,41 @@ def fitTiles(visit, detector, config=None, outDir="detector_run", tile=400, pad=
     specs = tileSpecs(bb.getWidth(), bb.getHeight(), tile, bb.getMinX(), bb.getMinY(), region)
     mine = specs[taskIndex::nTasks]
     paths = {tileName(s): os.path.join(outDir, f"{TILE_PREFIX}{tileName(s)}.fits") for s in mine}
-    todo = [s for s in mine if overwrite or not os.path.exists(paths[tileName(s)])]
+    plotDir = plotDir or os.path.join(outDir, "plots")
+    if plots is None or plots == "none":
+        plotNames = set()
+    elif plots == "all":
+        plotNames = {tileName(s) for s in specs}
+    elif plots == "sample":
+        from .runPlots import sampleTileNames
+        plotNames = set(sampleTileNames(specs, bb.getWidth(), bb.getHeight(), bb.getMinX(),
+                                        bb.getMinY()))
+    else:
+        plotNames = set([plots] if isinstance(plots, str) else plots)
+
+    def _needsPlots(name):
+        return name in plotNames and not os.path.exists(os.path.join(plotDir, name, "index.txt"))
+
+    todo = [s for s in mine if overwrite or not os.path.exists(paths[tileName(s)])
+            or _needsPlots(tileName(s))]
     print(f"detector {detector} of visit {visit}: {len(specs)} tiles of ~{tile} px (pad {pad}); "
-          f"task {taskIndex + 1}/{nTasks} has {len(mine)}, {len(todo)} still to fit")
+          f"task {taskIndex + 1}/{nTasks} has {len(mine)}, {len(todo)} still to fit"
+          + (f"; plots for {len(plotNames)} tile(s) in {plotDir}" if plotNames else ""))
+    detPlotDir = os.path.join(plotDir, "detector")
+    detPlots = (bool(plotNames) and taskIndex == 0
+                and not os.path.exists(os.path.join(detPlotDir, "index.txt")))
+    if detPlots and psfSource == "visit":
+        _detectorPlots(visitImage, detPlotDir, None, visit, detector, repo, collection,
+                       instrument, visitImageCollections)
     if not todo:
         return sorted(paths.values())
     cfg = config if config is not None else cn.makeConfig(cn.CROWDED_FIELD_CONFIG)
     specsTodo = [dict(x0=s[0], y0=s[1], w=s[2], h=s[3], name=tileName(s)) for s in todo]
     sess = cn.prepareSession(visit, detector, specsTodo, pad=pad, psfSource=psfSource,
                              visitImage=visitImage)
+    if detPlots and psfSource != "visit":
+        _detectorPlots(visitImage, detPlotDir, sess, visit, detector, repo, collection,
+                       instrument, visitImageCollections)
     attachGaia(sess, cacheDir=os.path.join(outDir, "gaia_cache"),
                **({"repo": repo} if repo else {}))
     kw = dict(maxOuter=3, maxInner=15, psfPolishCycles=3)
@@ -328,6 +385,14 @@ def fitTiles(visit, detector, config=None, outDir="detector_run", tile=400, pad=
             saveTileProducts(run, paths[name], phot,
                              meta=dict(visit=visit, detector=detector,
                                        seconds=time.perf_counter() - t0))
+            if name in plotNames:
+                from .runPlots import saveRunPlots
+                t1 = time.perf_counter()
+                print(f"######## tile {name}: writing all plots")
+                saveRunPlots(run, os.path.join(plotDir, name), phot=phot,
+                             initialBackground=getattr(sess, "bgImage", None),
+                             allSourcePages=allSourcePages)
+                print(f"######## tile {name}: plots took {time.perf_counter() - t1:.0f} s")
             nIn = int(np.sum(phot["inInterior"])) if "inInterior" in phot.colnames else len(phot)
             print(f"######## tile {name}: {nIn} sources in its interior, "
                   f"{time.perf_counter() - t0:.0f} s -> {paths[name]}")
@@ -340,6 +405,30 @@ def fitTiles(visit, detector, config=None, outDir="detector_run", tile=400, pad=
     print(f"\ntask {taskIndex + 1}/{nTasks}: {len(todo)} tile(s) in "
           f"{time.perf_counter() - tAll:.0f} s")
     return sorted(p for p in paths.values() if os.path.exists(p))
+
+
+def _detectorPlots(visitImage, outDir, session, visit, detector, repo, collection, instrument,
+                   visitImageCollections):
+    """Write the detector-level PSF plots (best effort: a failure is printed, not raised).
+
+    ``session`` is the fit's session for ``psfSource='refit'`` (its PSF stars are shown), None
+    for the visit PSF (whose stars come from the visit's source catalogue).
+    """
+    import matplotlib.pyplot as plt
+    from .runPlots import saveDetectorPlots
+    print(f"detector-level PSF plots -> {outDir}")
+    try:
+        catalog = None
+        if session is None:
+            try:
+                catalog = _loadPsfStarCatalog(visit, detector, repo, collection, instrument,
+                                              visitImageCollections)
+            except Exception as e:
+                print(f"    no PSF-star catalogue ({type(e).__name__}: {e}); plotting the kernel only")
+        saveDetectorPlots(visitImage, outDir, catalog=catalog, session=session)
+    except Exception as e:
+        print(f"    detector-level PSF plots failed: {type(e).__name__}: {e}")
+    plt.close("all")
 
 
 # ---------------------------------------------------------------- stitching

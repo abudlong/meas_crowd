@@ -53,6 +53,7 @@ MODULES = [
     ("stagePlots", "plots of the intermediate stages and pass-to-pass comparison"),
     ("sourcePlots", "per-source cutouts, cross-sections and magnitudes"),
     ("detector", "whole-detector runs: tiles, stitching, mosaic and tile plots"),
+    ("runPlots", "write every plot of a run, of the detector-level PSF, or of chosen tiles"),
     ("fastKernels", "fast PSF stamps (C++ with a NumPy fallback)"),
     ("fitLib", "the core library: joint fit, detection, PSF and background tools, "
                "plots"),
@@ -66,6 +67,7 @@ START_HERE = [
     ("plotting", "plotGaiaComparison"), ("stagePlots", "showRounds"),
     ("stagePlots", "showLinkedSourcePages"), ("stagePlots", "comparePasses"),
     ("detector", "fitTiles"), ("detector", "stitchTiles"), ("detector", "plotDetector"),
+    ("runPlots", "saveRunPlots"),
 ]
 
 

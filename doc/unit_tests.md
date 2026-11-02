@@ -4,7 +4,7 @@ Every unit test in `tests/`: what it checks, what it feeds in, and what it must 
 pass.  How to run them and read the results is in the
 [pipeline guide](pipeline_guide.md#unit-tests-running-them-and-checking-the-results).
 
-The suite has **98 tests in 9 files**.  Without the Rubin stack 96 run and the 2 in
+The suite has **114 tests in 11 files**.  Without the Rubin stack 112 run and the 2 in
 `test_fastStampsStack.py` are skipped; `testCxxEqualsNumpy` is also skipped if the C++ extension
 was not built.  `test_docstrings.py` checks that this page lists every test and that the
 [function reference](function_reference.md) is up to date.
@@ -18,6 +18,8 @@ was not built.  `test_docstrings.py` checks that this page lists every test and 
 - [test_sourcePlots.py](#test_sourceplotspy): per-source cutouts
 - [test_stagePlots.py](#test_stageplotspy): stage plots and pass-to-pass comparison
 - [test_detector.py](#test_detectorpy): whole-detector tiling, stitching and plots
+- [test_compat.py](#test_compatpy): old (snake_case) names still work
+- [test_runPlots.py](#test_runplotspy): every plot of a run, the detector PSF and chosen tiles
 - [test_docstrings.py](#test_docstringspy): documentation checks
 
 ## How the tests work
@@ -131,6 +133,13 @@ Off-detector Gaia stars (`OffDetectorGaiaTestCase`):
 | `OffDetectorGaiaTestCase.testDropsOnlyBeyondDetectorEdge` | Gaia starting positions beyond the detector edge are dropped, those beyond an ordinary cutout edge kept | 60 × 50 cutout whose right edge is flagged EDGE; four positions | only the one beyond the EDGE-flagged edge is dropped |
 | `OffDetectorGaiaTestCase.testNoEdgeMaskKeepsEverything` | Without an EDGE / NO_DATA flag nothing is dropped | unflagged cutout; empty input | every position (and an empty list) is returned unchanged |
 
+Stellar-field configuration (`StellarConfigTestCase`):
+
+| Test | What it checks | Input | Passes when |
+| --- | --- | --- | --- |
+| `StellarConfigTestCase.testPresetIsCrowdedPlusStellarSettings` | `CROWDED_STELLAR_FIELD_CONFIG` is `CROWDED_FIELD_CONFIG` plus the five validated settings, and `makeConfig` keeps them | the two presets | equal to `CROWDED_FIELD_CONFIG` + (psfStackIsoFwhm 1, psfStackMinSnr 30, psfStackN 80, ellipTest and keepExtended off); the library defaults unchanged |
+| `StellarConfigTestCase.testCommandLineConfigNames` | `crowdDetector.py --config` names point at the presets | `CONFIGS` of `bin.src/crowdDetector.py` | "stellar" → `CROWDED_STELLAR_FIELD_CONFIG`, "crowded" → `CROWDED_FIELD_CONFIG` |
+
 ## test_diagnostics.py
 
 Residual diagnostics and run-level plots (`plotting.py`, `pipeline.unmodeledNearMask`), on
@@ -213,6 +222,20 @@ The package switched from snake_case to Rubin's camelCase names; the old names s
 | `SnakeCaseCompatTestCase.testToCamel` | snake_case is turned into camelCase correctly | `runSessionGaia`, `_fitOne`, `PIPELINE_DEFAULTS`, `report` | leading underscores and UPPER_CASE constants are kept |
 | `SnakeCaseCompatTestCase.testOldFunctionNames` | Old function names still find the renamed function | `crowd.runSessionGaia`, `pipeline.runCutoutGaia` | each is the camelCase function and a `FutureWarning` is raised; unknown names still raise `AttributeError` |
 | `SnakeCaseCompatTestCase.testOldConfigKeys` | Old option names in configurations still work | `stackKwargs=dict(nUse=5)`, `seedThresholdStart`, `nCentroidRounds` | the values land in `stackKwargs["nUse"]`, `gaiaThresholdStart` and `nCentroidRounds` |
+
+## test_runPlots.py
+
+Writing every plot of a run, of the detector-level PSF, and of chosen tiles of a detector run.
+
+| Test | What it checks | Input | Passes when |
+| --- | --- | --- | --- |
+| `SampleTilesTestCase.testCornersCentreAndEdges` | The sample tiles of a detector | the 110 tiles of a 4072 × 4000 px detector | 7 different tiles, the bottom-left and top-right corner tiles among them |
+| `SampleTilesTestCase.testOneTileDetector` | A detector smaller than one tile | a 300 × 300 px detector | its single tile, once |
+| `SaveRunPlotsTestCase.testWritesEveryStage` | `saveRunPlots` writes every stage and describes it | a synthetic run with two outer passes and three inner iterations | PSF models, backgrounds, outer and inner rounds and the final comparison exist; every PNG is in `index.txt`; files are numbered in order; `report.txt` exists; no figure left open |
+| `SaveRunPlotsTestCase.testFailingPlotIsSkipped` | A failing plot does not stop the others | one plot function that raises, one that works | the working one is saved; the failure is listed in `index.txt` |
+| `DetectorPlotsTestCase.testStampsAndDetectorPlots` | PSF-star stamps and the detector-level PSF plots | 16 synthetic stars; a catalogue with `calib_psf_*` flags; no catalogue | 5 stamps for `maxStamps=5`, none off the image; stars and stamps written with a catalogue, kernels only without |
+| `FitTilesPlotsTestCase.testSampleTilesAndDetectorPlots` | `fitTiles(plots="sample")` | a synthetic 600 × 500 px detector, plot functions recorded | plots for exactly the sample tiles and one detector-level set; a second call redoes nothing |
+| `FitTilesPlotsTestCase.testPlotsForAnAlreadyFittedTile` | Plots for a tile fitted without them | a finished run, then `plots=[one tile]` | only that tile is refitted and plotted |
 
 ## test_docstrings.py
 

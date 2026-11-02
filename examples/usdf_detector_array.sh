@@ -25,8 +25,10 @@ set -euo pipefail
 VISIT=${VISIT:-2025062100433}
 DETECTOR=${DETECTOR:-144}
 NTASKS=${NTASKS:-25}                  # ~100 tiles of 400 px per LSSTCam detector -> ~4 per task
-OUT=${OUT:-/sdf/home/a/abudlong/project/repo-main-logs/crowdedFields/october2026/crowded_fields/6-testScript/10.30.26_test2}
+OUT=${OUT:-/sdf/home/a/abudlong/project/repo-main-logs/crowdedFields/october2026/crowded_fields/8-detector144-stellarConfig}
 PKG=${PKG:-$HOME/meas_crowd}
+CONFIG=${CONFIG:-stellar}           # stellar | crowded | path to a JSON configuration
+PLOTS=${PLOTS:-sample}              # all plots for: sample (7 tiles) | all (110 tiles, slower) | none
 mkdir -p "$OUT/logs"
 
 SETUP="source /sdf/group/rubin/sw/w_latest/loadLSST.bash && setup lsst_distrib && setup -k -r $PKG && export OMP_NUM_THREADS=1 PYTHONUNBUFFERED=1"
@@ -35,11 +37,11 @@ SETUP="source /sdf/group/rubin/sw/w_latest/loadLSST.bash && setup lsst_distrib &
 FIT=$(sbatch --parsable --job-name=crowd_fit --partition=milano --account=rubin:developers \
   --array=0-$((NTASKS - 1)) --cpus-per-task=1 --mem=8G --time=04:00:00 \
   --output="$OUT/logs/fit_%a.log" \
-  --wrap="$SETUP && python $PKG/bin.src/crowdDetector.py fit $VISIT $DETECTOR --out $OUT")
+  --wrap="$SETUP && python $PKG/bin.src/crowdDetector.py fit $VISIT $DETECTOR --out $OUT --config $CONFIG --plots $PLOTS")
 
 sbatch --dependency=afterany:$FIT --job-name=crowd_stitch --partition=milano \
   --account=rubin:developers --cpus-per-task=1 --mem=16G --time=00:30:00 \
   --output="$OUT/logs/stitch.log" \
-  --wrap="$SETUP && python $PKG/bin.src/crowdDetector.py stitch --out $OUT && python $PKG/bin.src/crowdDetector.py plot --out $OUT"
+  --wrap="$SETUP && python $PKG/bin.src/crowdDetector.py stitch --out $OUT && python $PKG/bin.src/crowdDetector.py plot --out $OUT && python $PKG/bin.src/crowdDetector.py plot --out $OUT --view 1840 2240 1800 2200 --sources --png $OUT/detector_zoom_centre.png"
 
-echo "submitted fit array $FIT ($NTASKS tasks) + stitch; results in $OUT"
+echo "submitted fit array $FIT ($NTASKS tasks, config $CONFIG, plots $PLOTS) + stitch; results in $OUT, plots in $OUT/plots"

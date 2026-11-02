@@ -2,7 +2,7 @@
 
 Every public function and class of `lsst.meas.crowd`: what it does, its parameters (with types and defaults) and what it returns.  Generated from the docstrings by `doc/make_function_reference.py`; do not edit by hand (run `python doc/make_function_reference.py` after changing a docstring).  How the pipeline fits together is in [pipeline_guide.md](pipeline_guide.md); the output catalogue in [catalog_columns.md](catalog_columns.md).
 
-177 functions and 4 classes in 11 modules.  Everything listed here can be used as `crowd.<name>` after `import lsst.meas.crowd as crowd`, or from its module (`from lsst.meas.crowd import photometry`).  Names starting with `_` are internal helpers and are not listed.
+181 functions and 4 classes in 12 modules.  Everything listed here can be used as `crowd.<name>` after `import lsst.meas.crowd as crowd`, or from its module (`from lsst.meas.crowd import photometry`).  Names starting with `_` are internal helpers and are not listed.
 
 ## Start here
 
@@ -22,6 +22,7 @@ Every public function and class of `lsst.meas.crowd`: what it does, its paramete
 | [`detector.fitTiles`](#detectorfittiles) | Fit this task's share of a detector's tiles and write one file per tile. |
 | [`detector.stitchTiles`](#detectorstitchtiles) | Assemble the tile files into full-detector images and one catalogue. |
 | [`detector.plotDetector`](#detectorplotdetector) | Plot data \| model \| residual \| residual/sigma of a stitched detector or a zoom. |
+| [`runPlots.saveRunPlots`](#runplotssaverunplots) | Write every diagnostic plot of one finished run to PNG files. |
 
 ## Modules
 
@@ -35,6 +36,7 @@ Every public function and class of `lsst.meas.crowd`: what it does, its paramete
 | [`stagePlots`](#stageplots) | plots of the intermediate stages and pass-to-pass comparison | 6 |
 | [`sourcePlots`](#sourceplots) | per-source cutouts, cross-sections and magnitudes | 3 |
 | [`detector`](#detector) | whole-detector runs: tiles, stitching, mosaic and tile plots | 10 |
+| [`runPlots`](#runplots) | write every plot of a run, of the detector-level PSF, or of chosen tiles | 4 |
 | [`fastKernels`](#fastkernels) | fast PSF stamps (C++ with a NumPy fallback) | 6 |
 | [`fitLib`](#fitlib) | the core library: joint fit, detection, PSF and background tools, plots | 68 |
 | [`adaptive`](#adaptive) | the residual check deciding whether sources are still missing | 7 |
@@ -2084,11 +2086,11 @@ DATA, MODEL, RESIDUAL, RESIDUAL_SIGMA, VARIANCE and BAD images over the tile's f
 
 ### detector.fitTiles
 
-`fitTiles(visit, detector, config=None, outDir='detector_run', tile=400, pad=30, taskIndex=0, nTasks=1, region=None, repo='dp2_prep', collection='LSSTCam/runs/DRP/DP2', instrument='LSSTCam', visitImageCollections='LSSTCam/runs/*', psfSource='visit', overwrite=False, visitImage=None, **overrides)`
+`fitTiles(visit, detector, config=None, outDir='detector_run', tile=400, pad=30, taskIndex=0, nTasks=1, region=None, repo='dp2_prep', collection='LSSTCam/runs/DRP/DP2', instrument='LSSTCam', visitImageCollections='LSSTCam/runs/*', psfSource='visit', overwrite=False, visitImage=None, plots=None, plotDir=None, allSourcePages=False, **overrides)`
 
 Fit this task's share of a detector's tiles and write one file per tile.
 
-Tiles already on disk are skipped, so the job can be restarted; a failing tile is reported and the task moves on.
+Tiles already on disk are skipped, so the job can be restarted; a failing tile is reported and the task moves on.  With ``plots``, every diagnostic plot of the chosen tiles (`lsst.meas.crowd.runPlots.saveRunPlots`) goes to ``<plotDir>/<tile name>/``, and task 0 also writes the detector-level PSF plots to ``<plotDir>/detector/``; a chosen tile whose plots are missing is refitted even if its tile file exists.
 
 | Parameter | Type | Description |
 | --- | --- | --- |
@@ -2105,6 +2107,9 @@ Tiles already on disk are skipped, so the job can be restarted; a failing tile i
 | `psfSource` | `str`, optional | 'visit' or 'refit' (see `lsst.meas.crowd.session.buildDetectorPsf`). |
 | `overwrite` | `bool`, optional | Refit tiles that already have a file. |
 | `visitImage` | `lsst.afw.image.Exposure`, optional | An already-loaded visit image (skips the Butler). |
+| `plots` | `str` or `list` [`str`], optional | Tiles to write all plots for: None (no plots), 'sample' (the tiles at the corners, the centre and two edge midpoints, `lsst.meas.crowd.runPlots.sampleTileNames`), 'all', or a list of tile names. |
+| `plotDir` | `str`, optional | Directory for the plots (default ``<outDir>/plots``). |
+| `allSourcePages` | `bool`, optional | Write a per-source page for every source of a plotted tile (default: 4 pages). |
 | `**overrides` | – | Keyword arguments of ``runSessionGaia`` (e.g. ``maxOuter=3, maxInner=15``). |
 
 | Returns | Type | Description |
@@ -2204,6 +2209,98 @@ Plot data | model | residual | residual/sigma of a stitched detector or a zoom.
 | Returns | Type | Description |
 | --- | --- | --- |
 | `result` | `dict` | ``residualSigma`` (robust sigma of residual/sigma over the view) and ``binning``. |
+
+## runPlots
+
+`lsst.meas.crowd.runPlots`: write every plot of a run, of the detector-level PSF, or of chosen tiles.
+
+Write every diagnostic plot of a run (or of a detector) to PNG files.
+
+| Name | Summary |
+| --- | --- |
+| [`sampleTileNames`](#runplotssampletilenames) | Return the names of the tiles that contain the sample points. |
+| [`showPsfStarStamps`](#runplotsshowpsfstarstamps) | Plot a stamp around each PSF star, followed by the PSF kernel. |
+| [`saveRunPlots`](#runplotssaverunplots) | Write every diagnostic plot of one finished run to PNG files. |
+| [`saveDetectorPlots`](#runplotssavedetectorplots) | Write the detector-level PSF plots: the PSF stars over the detector, their stamps, the PSF. |
+
+### runPlots.sampleTileNames
+
+`sampleTileNames(specs, width, height, x0=0, y0=0, points=((0.02, 0.02), (0.98, 0.02), (0.02, 0.98), (0.98, 0.98), (0.5, 0.5), (0.5, 0.02), (0.02, 0.5)))`
+
+Return the names of the tiles that contain the sample points.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `specs` | `list` [`tuple` [`int`, `int`, `int`, `int`]] | Tiles as (x0, y0, width, height), from `lsst.meas.crowd.detector.tileSpecs`. |
+| `width, height` | `int` | Detector size [px]. |
+| `x0, y0` | `int`, optional | Detector origin [px]. |
+| `points` | `tuple` [`tuple` [`float`, `float`]], optional | Sample points as fractions of the detector width and height. |
+
+| Returns | Type | Description |
+| --- | --- | --- |
+| `names` | `list` [`str`] | Tile names (`lsst.meas.crowd.detector.tileName`), each once, in the order of ``points``. |
+
+### runPlots.showPsfStarStamps
+
+`showPsfStarStamps(image, xy, half=15, maxStamps=25, psf=None, title='', out=None)`
+
+Plot a stamp around each PSF star, followed by the PSF kernel.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `image` | `lsst.afw.image.Exposure` | Image to cut the stamps from (detector pixel coordinates). |
+| `xy` | `numpy.ndarray` | Star positions [px], shape (N, 2); the first ``maxStamps`` are shown. |
+| `half` | `int`, optional | Half-size of each stamp [px]. |
+| `maxStamps` | `int`, optional | Maximum number of stamps. |
+| `psf` | `lsst.afw.detection.Psf`, optional | PSF whose kernel is shown in the last panel (default: the image's own PSF). |
+| `title` | `str`, optional | Figure title. |
+| `out` | `str`, optional | Also save the figure to this file. |
+
+| Returns | Type | Description |
+| --- | --- | --- |
+| `nShown` | `int` | Number of stamps drawn. |
+
+### runPlots.saveRunPlots
+
+`saveRunPlots(run, outDir, phot=None, initialBackground=None, sourcePages=4, allSourcePages=False, dpi=100, verbose=True)`
+
+Write every diagnostic plot of one finished run to PNG files.
+
+In pipeline order: PSF stars and their stamps for each PSF update, the PSF model and FWHM of each pass, the background of each pass, data | model | residual per outer pass and per inner iteration, the sources gained and lost between passes, the final comparison, per-source pages (brightest first, and spread in magnitude), labelled source cutouts, the bright-star diagnostics and the Gaia comparison.  ``index.txt`` describes every file and ``report.txt`` holds the pass-by-pass report.  A plot that fails is listed in ``index.txt`` and skipped.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `run` | `lsst.meas.crowd.session.CutoutRun` | A finished run. |
+| `outDir` | `str` | Directory for the files (created if needed). |
+| `phot` | `astropy.table.Table`, optional | Photometry of the run (default ``run.photometry`` if present); needed for the magnitude-labelled plots and the Gaia comparison. |
+| `initialBackground` | `lsst.afw.image.Image`, optional | Background subtracted before pass 1 (``session.bgImage``). |
+| `sourcePages` | `int`, optional | Number of per-source pages, brightest sources first. |
+| `allSourcePages` | `bool`, optional | Write a page for every source instead (can be hundreds of files). |
+| `dpi` | `int`, optional | Resolution of the PNG files. |
+| `verbose` | `bool`, optional | Print where the files went and which plots were skipped. |
+
+| Returns | Type | Description |
+| --- | --- | --- |
+| `files` | `list` [`str`] | The files written. |
+
+### runPlots.saveDetectorPlots
+
+`saveDetectorPlots(visitImage, outDir, catalog=None, session=None, dpi=100, verbose=True)`
+
+Write the detector-level PSF plots: the PSF stars over the detector, their stamps, the PSF.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `visitImage` | `lsst.afw.image.Exposure` | The visit image. |
+| `outDir` | `str` | Directory for the files (created if needed). |
+| `catalog` | `lsst.afw.table.SourceCatalog` or `astropy.table.Table`, optional | The visit's source catalogue with ``calib_psf_candidate`` / ``calib_psf_used`` (the stars of the visit PSF). |
+| `session` | `lsst.meas.crowd.session.Session`, optional | A session prepared with ``psfSource='refit'`` (the stars of the refitted PSF), used when no catalogue is given. |
+| `dpi` | `int`, optional | Resolution of the PNG files. |
+| `verbose` | `bool`, optional | Print where the files went. |
+
+| Returns | Type | Description |
+| --- | --- | --- |
+| `files` | `list` [`str`] | The files written. |
 
 ## fastKernels
 

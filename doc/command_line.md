@@ -15,7 +15,12 @@ the same run (`fitTiles`, `stitchTiles`, `plotDetector`) is in the
    tasks → 4–5 tiles each).
 2. **Stitch.** The tile interiors are assembled into one detector image (`detector_mosaic.fits`)
    and the tile catalogues merged into one (`detector_catalog.fits`), each source kept once.
-3. **Plot.** `detector_view.png`: data | model | residual | residual/σ of the whole detector.
+3. **Plot.** `detector_view.png`: data | model | residual | residual/σ of the whole detector,
+   `detector_zoom_centre.png` (a zoom with the sources circled) and
+   `detector_gaia_comparison.png` (the merged catalogue against Gaia).
+
+Every diagnostic plot of 7 sample tiles (corners, centre, two edge midpoints) and of the
+detector-level PSF also goes to `$OUT/plots/` ([All the plots](#all-the-plots)).
 
 The Slurm script runs the stitch and plot steps by itself once every fit task has ended.
 
@@ -42,11 +47,63 @@ directory it uses.  The Slurm script takes the directory from `OUT=`.
 Set it once per terminal:
 
 ```bash
-OUT=/sdf/home/a/abudlong/project/repo-main-logs/crowdedFields/october2026/crowded_fields/6-testScript/10.30.26_test2
+OUT=/sdf/home/a/abudlong/project/repo-main-logs/crowdedFields/october2026/crowded_fields/8-detector144-stellarConfig
 ```
 
 `OUT=... command` on one line sets it for that command only; set it on its own line (as above)
 to use `$OUT` in later commands.  A new folder per test (`..._test3`, ...) keeps runs apart.
+
+## Pipeline settings
+
+`crowdDetector.py fit --config NAME` (and `CONFIG=` for the Slurm script) picks the settings:
+
+| `--config` | Settings | Use for |
+| --- | --- | --- |
+| `stellar` (default) | `CROWDED_STELLAR_FIELD_CONFIG`: `CROWDED_FIELD_CONFIG` with a PSF refit from less isolated stars and point sources only (no extended models) | dense stellar fields such as the bulge (detector 144 of visit 2025062100433) |
+| `crowded` | `CROWDED_FIELD_CONFIG`, the settings of the runs before November 2026 | fields with galaxies, or to reproduce older runs |
+| `my_config.json` | a configuration file (write one with `crowd.makeConfig(..., saveTo="my_config.json")`) | anything else |
+
+`fit` writes the settings it used to `$OUT/config.json`.  Keep one setting per output folder:
+tiles already on disk are skipped, whatever settings they were fitted with.
+
+## All the plots
+
+`crowdDetector.py fit --plots WHICH` (and `PLOTS=` for the Slurm script) writes every diagnostic
+plot of the chosen tiles while they are fitted:
+
+| `--plots` | Tiles |
+| --- | --- |
+| `sample` (default) | 7 tiles: the 4 corners, the centre, the middle of the bottom and left edges |
+| `all` | all 110 tiles (adds a few minutes per tile; raise `--time` in the script) |
+| `none` | no plots |
+| `x0000_y0000_371x400,x1851_y2000_370x400` | these tiles (names as in `ls $OUT/tile_*`) |
+
+`$OUT/plots/<tile name>/`, numbered in the order of the pipeline, with an `index.txt` that says
+what each file shows:
+
+| Files | What they show |
+| --- | --- |
+| `psfStars_passN_positions` | PSF candidates (orange) and stars used (green) by the PSF update after pass N, the resulting kernel and its radial profile |
+| `psfStars_passN_stamps` | a stamp of each star that update used, and the kernel |
+| `psfModels`, `psfFwhm` | the PSF kernel and its FWHM in each outer pass (the iterative PSF) |
+| `backgrounds` | background entering each pass and its change from the previous pass |
+| `rounds_outer`, `rounds_inner_passN` | data \| model \| residual \| residual/σ after each outer pass, and each inner iteration of pass N |
+| `outerLoopSummary`, `comparePasses_NtoM` | residual std and number of sources per pass; sources gained and lost between passes, and why |
+| `final_comparison`, `final_comparison_full`, `final_residual_gray` | final data \| model \| residual \| residual/σ of the tile interior and of the whole fit box; the residual in grayscale |
+| `source_pages/` | per-source pages, brightest first: an overview with one box per source, then data \| model \| residual \| cross-sections per source (4 pages; `--all-source-pages` for every source) |
+| `sourcePages_magnitudeSpread` | the same for 12 sources from the brightest to the faintest |
+| `sourceCutouts_brightest`, `_worst`, `_faintest` | magnitude-labelled cutouts with cross-sections |
+| `starZooms`, `crossSections`, `brightStarStack`, `coreExcess`, `starResidualTable` | bright-star residual diagnostics |
+| `gaiaComparison` | the tile's photometry and positions against Gaia |
+| `report.txt` | what each outer and inner pass did |
+
+`$OUT/plots/detector/` (written by task 0): the detector-level PSF stars over the whole detector
+(from the visit's `calib_psf_candidate` / `calib_psf_used` flags), their stamps, and the visit
+PSF kernel at three places on the detector.
+
+A plot that cannot be drawn for a tile (for example `comparePasses` when no source changed) is
+listed in `index.txt` and skipped.  A chosen tile whose plots are missing is refitted on the
+next submit even if its tile file exists, so `PLOTS=...` on a finished run adds the plots.
 
 ## Step 1: a quick test on a few tiles
 
@@ -62,14 +119,16 @@ python bin.src/crowdDetector.py plot --out $OUT/test_region      # writes detect
 ## Step 2: the whole detector as a Slurm array
 
 ```bash
-OUT=$OUT VISIT=2025062100433 DETECTOR=144 PKG=$PWD bash examples/usdf_detector_array.sh
+OUT=$OUT VISIT=2025062100433 DETECTOR=144 CONFIG=stellar PLOTS=sample PKG=$PWD bash examples/usdf_detector_array.sh
 ```
 
 | Variable | Meaning | Default |
 | --- | --- | --- |
 | `VISIT`, `DETECTOR` | what to fit | 2025062100433, 144 |
 | `NTASKS` | number of array tasks sharing the 110 tiles | 25 |
-| `OUT` | output directory (created if needed) | the October 2026 test directory |
+| `CONFIG` | pipeline settings (see [Pipeline settings](#pipeline-settings)) | `stellar` |
+| `PLOTS` | tiles to write all plots for (see [All the plots](#all-the-plots)) | `sample` |
+| `OUT` | output directory (created if needed) | `.../crowded_fields/8-detector144-stellarConfig` |
 | `PKG` | your meas_crowd checkout | `$HOME/meas_crowd` |
 
 Each fit task gets 1 CPU, 8 GB and 4 hours; the stitch job 16 GB and 30 minutes.  To change them,
@@ -109,6 +168,9 @@ Run the same submit command again.  Tiles already on disk are skipped, so only m
 | `detector_mosaic.fits` | the whole detector: DATA, MODEL, RESIDUAL, RESIDUAL_SIGMA, VARIANCE, BAD, TILE (which tile each pixel came from, −1 = not fitted) |
 | `detector_catalog.fits` | every source once, with the photometry and Gaia columns ([catalog_columns.md](catalog_columns.md)) |
 | `detector_view.png` | data / model / residual / residual/σ of the whole detector |
+| `detector_zoom_centre.png`, `detector_gaia_comparison.png` | a central zoom with the sources circled; the merged catalogue against Gaia |
+| `plots/<tile name>/`, `plots/detector/` | every diagnostic plot of the plotted tiles, and the detector-level PSF ([All the plots](#all-the-plots)) |
+| `config.json` | the pipeline settings of the fit |
 | `logs/fit_<n>.log`, `logs/stitch.log` | one log per task and the stitch log |
 
 DATA is the image the fit used (after the pipeline's background subtraction), RESIDUAL = DATA −
@@ -129,7 +191,7 @@ In Python (stack set up, or the notebook kernel):
 from astropy.table import Table
 import lsst.meas.crowd as crowd
 
-OUT = "/sdf/home/a/abudlong/project/repo-main-logs/crowdedFields/october2026/crowded_fields/6-testScript/10.30.26_test2"
+OUT = "/sdf/home/a/abudlong/project/repo-main-logs/crowdedFields/october2026/crowded_fields/8-detector144-stellarConfig"
 cat = Table.read(f"{OUT}/detector_catalog.fits")
 print(len(cat), "sources;", cat["gaiaMatch"].sum(), "matched to Gaia")
 crowd.plotGaiaComparison(cat)
@@ -165,7 +227,8 @@ places; `python examples/validate_settings.py list` prints the tasks.
 crowdDetector.py fit    VISIT DETECTOR [--out DIR] [--tile 400] [--pad 30]
                         [--region XMIN XMAX YMIN YMAX] [--task-index K --n-tasks N]
                         [--repo dp2_prep] [--collection LSSTCam/runs/DRP/DP2]
-                        [--max-outer 3] [--max-inner 15] [--overwrite]
+                        [--max-outer 3] [--max-inner 15] [--config stellar|crowded|FILE]
+                        [--plots sample|all|none|TILE,TILE] [--all-source-pages] [--overwrite]
 crowdDetector.py stitch [--out DIR]
 crowdDetector.py plot   [--out DIR] [--view XMIN XMAX YMIN YMAX] [--png FILE]
                         [--no-tiles] [--sources]
@@ -173,8 +236,8 @@ crowdDetector.py plot   [--out DIR] [--view XMIN XMAX YMIN YMAX] [--png FILE]
 
 - `--task-index` / `--n-tasks` default to the Slurm array variables, so inside an array each
   task picks its own share of the tiles.
-- The command line always uses the visit's own PSF and `CROWDED_FIELD_CONFIG`.  For other
-  settings, run `fitTiles` from Python with your configuration.
+- The command line always uses the visit's own PSF (`psfSource="visit"`); the pipeline
+  settings come from `--config` (default `stellar`).
 
 ## Troubleshooting
 
